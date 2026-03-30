@@ -72,8 +72,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                         outputs,
                         scheduler.get_lr()[0],
                         include_debug_metrics=getattr(args, 'log_debug_metrics', True),
-                    ),
-                    step=current_steps,
+                    )
                 )
 
             if (n_iter + 1) % log_period == 0:
@@ -93,12 +92,11 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
             experiment_tracker.log(
                 build_train_metrics(
                     epoch,
-                    None,
+                    current_steps,
                     outputs,
                     scheduler.get_lr()[0],
                     include_debug_metrics=getattr(args, 'log_debug_metrics', True),
-                ),
-                step=current_steps,
+                )
             )
 
         scheduler.step()
@@ -125,7 +123,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 top1 = evaluator.eval(model.eval())
             torch.cuda.empty_cache()
             if experiment_tracker is not None:
-                experiment_tracker.log(build_validation_metrics(epoch, evaluator=evaluator), step=current_steps)
+                experiment_tracker.log(build_validation_metrics(epoch, evaluator=evaluator))
             if best_top1 < top1:
                 best_top1 = top1
                 best_epoch = epoch
@@ -145,4 +143,6 @@ def do_inference(model, test_img_loader, test_txt_loader, args):
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
+
+
 

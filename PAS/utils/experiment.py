@@ -38,6 +38,7 @@ class ExperimentTracker:
             config=build_runtime_config(args),
             reinit=True,
         )
+        self._define_default_metrics()
         if getattr(args, 'wandb_log_code', False):
             try:
                 wandb.run.log_code(root=os.path.dirname(output_dir))
@@ -45,8 +46,23 @@ class ExperimentTracker:
                 self.logger.warning('Unable to log code to W&B: %s', exc)
         self.enabled = True
 
+    def _define_default_metrics(self):
+        if self._run is None:
+            return
+        try:
+            wandb.define_metric('train/step')
+            wandb.define_metric('train/*', step_metric='train/step')
+            wandb.define_metric('debug/*', step_metric='train/step')
+            wandb.define_metric('val/epoch')
+            wandb.define_metric('val/*', step_metric='val/epoch')
+        except Exception as exc:  # pragma: no cover
+            self.logger.warning('Unable to define W&B metric axes: %s', exc)
+
     def log(self, metrics: Dict[str, object], step: Optional[int] = None, commit: bool = True):
         if not self.enabled or self._run is None or not metrics:
+            return
+        if step is None:
+            wandb.log(metrics, commit=commit)
             return
         wandb.log(metrics, step=step, commit=commit)
 
@@ -55,4 +71,3 @@ class ExperimentTracker:
             wandb.finish()
             self._run = None
             self.enabled = False
-
