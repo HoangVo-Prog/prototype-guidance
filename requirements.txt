@@ -1,0 +1,22 @@
+# Core ML / DL
+torch
+torchvision
+torchaudio
+
+# Image processing
+scikit-image
+opencv-python
+
+# Logging / visualization
+tensorboard
+matplotlib
+
+# Utils
+tqdm
+easydict
+ftfy
+regex
+prettytable
+
+# Config
+pyyaml
