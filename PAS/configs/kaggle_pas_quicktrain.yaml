@@ -113,7 +113,7 @@ logging:
   entity: null
   run_name: null
   group: kaggle_quicktrain
-  mode: offline
+  mode: online
   tags: [pas, kaggle, quicktrain]
   notes: Lightweight PAS training config for Kaggle P100 or T4x2 sanity training with canonical v1 method defaults.
   log_interval: 10
