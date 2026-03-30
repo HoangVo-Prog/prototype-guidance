@@ -1,7 +1,7 @@
 experiment:
   name: kaggle_pas_quicktrain
   output_dir: runs
-  seed: 13
+  seed: 11
   local_rank: 0
 
 model:
@@ -17,7 +17,7 @@ model:
   projector_type: mlp2
   temperature: 0.07
   learn_logit_scale: true
-  img_size: [256, 128]
+  img_size: [384, 128]
   stride_size: 16
   text_length: 77
   vocab_size: 49408
@@ -31,7 +31,7 @@ prototype:
   prototype_dim: 512
   prototype_init: normalized_random
   prototype_init_path: null
-  routing_type: cosine
+  routing_type: dot
   routing_temperature: 0.07
   contextualization_enabled: true
   contextualization_type: self_attention
@@ -48,7 +48,7 @@ prototype:
 
 text_pooling:
   token_policy: content_only
-  scoring_type: cosine
+  scoring_type: dot
   token_temperature: 0.07
   special_token_ids:
     bos_token_id: 49406
@@ -57,9 +57,9 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 8
-  epochs: 10
-  log_period: 5
+  batch_size: 1
+  epochs: 60
+  log_period: 20
   eval_frequency: 1
   save_interval: 1
   resume: false
@@ -68,12 +68,12 @@ training:
   pretrain: ''
   img_aug: false
   txt_aug: false
-  sampler: random
+  sampler: identity
   num_instance: 2
-  num_workers: 2
+  num_workers: 4
   training: true
-  freeze_image_backbone: true
-  freeze_text_backbone: true
+  freeze_image_backbone: false
+  freeze_text_backbone: false
   grad_clip: 1.0
 
 optimizer:
@@ -82,21 +82,21 @@ optimizer:
   lr_prototype_bank: 0.001
   lr_projectors: 0.001
   lr_logit_scale: 0.0001
-  lr_image_backbone: 0.0
-  lr_text_backbone: 0.0
+  lr_image_backbone: 0.00002
+  lr_text_backbone: 0.00001
   weight_decay: 0.01
   weight_decay_prototype_bank: 0.01
   weight_decay_projectors: 0.05
   weight_decay_logit_scale: 0.0
-  weight_decay_image_backbone: 0.0
-  weight_decay_text_backbone: 0.0
+  weight_decay_image_backbone: 0.01
+  weight_decay_text_backbone: 0.01
   momentum: 0.9
   alpha: 0.9
   beta: 0.999
   milestones: [2]
   gamma: 0.1
   warmup_factor: 0.1
-  warmup_epochs: 0
+  warmup_epochs: 5
   warmup_method: linear
   scheduler: cosine
   target_lr: 0.0
@@ -105,7 +105,7 @@ optimizer:
 dataset:
   dataset_name: RSTPReid
   root_dir: data
-  val_dataset: val
+  val_dataset: test
   num_workers: 4
 
 logging:
@@ -117,7 +117,7 @@ logging:
   mode: online
   tags: [pas, kaggle, quicktrain]
   notes: Lightweight PAS training config for Kaggle P100 or T4x2 sanity training with canonical v1 method defaults.
-  log_interval: 10
+  log_interval: 50
   log_code: false
   log_debug_metrics: true
 
