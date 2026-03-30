@@ -5,7 +5,7 @@
 1. `train.py` loads YAML-backed runtime arguments from `utils/options.py` and `utils/config.py`.
 2. `datasets/build.py` creates the train loader plus image/text retrieval loaders.
 3. `model/build.py` constructs `PASModel` around the CLIP backbone from `model/clip_model.py`.
-4. `solver/build.py` creates explicit optimizer param groups for the prototype bank, contextualizer, projectors, logit scale, and optional unfrozen backbones.
+4. `solver/build.py` creates explicit optimizer param groups for the prototype bank, projectors, logit scale, and optional unfrozen backbones.
 5. `processor/processor.py` runs training, logging, checkpointing, and periodic retrieval evaluation.
 6. `utils/metrics.py` encodes image and text retrieval features through the model’s public retrieval interface and computes retrieval metrics.
 
@@ -43,4 +43,5 @@
 - `solver/build.py`: adjust param-group learning rates and freeze policy behavior.
 - `utils/metric_logging.py`: add new scalar diagnostics without touching the training loop.
 - `configs/*.yaml`: define new experiments and ablations without code changes.
+
 

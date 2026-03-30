@@ -13,7 +13,7 @@
 - Purpose: optional parameter-free prototype self-contextualization.
 - Inputs: `prototypes` `[N, D]`.
 - Outputs: contextualized prototypes `[N, D]`; optional debug `contextualized_prototypes`, `prototype_similarity`, `contextualization_weights`, `prototype_contextualization_entropy`.
-- Config dependencies: `prototype.contextualization_enabled`, `prototype.contextualization_type`, `prototype.contextualization_residual`, `prototype.prototype_normalize`.
+- Config dependencies: `prototype.contextualization_enabled`, `prototype.contextualization_type`, `prototype.contextualization_residual`, `prototype.contextualization_num_layers`, `prototype.prototype_normalize`.
 - Failure conditions: unsupported contextualization type or invalid input rank.
 
 ## model/prototype/router.py
@@ -21,7 +21,7 @@
 - Purpose: routes each image embedding onto the prototype bank.
 - Inputs: `image_embeddings` `[B, D]`, `prototypes` `[N, D]`.
 - Outputs: `alpha` `[B, N]`; optional debug `routing_logits`, `routing_weights`, `routing_max_prob`, `prototype_assignment_entropy`.
-- Config dependencies: `prototype.routing_type`, `prototype.routing_temperature`.
+- Config dependencies: `prototype.routing_type`, `prototype.routing_temperature`, `prototype.assignment_sparse`, `prototype.assignment_topk`.
 - Failure conditions: invalid rank, mismatched feature dimensions, non-positive temperature, or non-finite outputs.
 
 ## model/prototype/aggregator.py
@@ -43,9 +43,9 @@
 ## model/prototype/token_mask.py
 - Class: `TokenMaskBuilder`
 - Purpose: builds the valid-token mask for pooling.
-- Inputs: `token_ids` `[B, L]`, optional `attention_mask` `[B, L]`, optional `special_token_positions` with `cls` and `eos` tensors `[B]`.
+- Inputs: `token_ids` `[B, L]`, optional `attention_mask` `[B, L]`, optional `special_token_positions`, and configured `text_pooling.special_token_ids` metadata.
 - Outputs: `valid_mask` `[B, L]`; optional debug `valid_mask`, `special_token_positions`.
-- Config dependencies: `text_pooling.token_policy`.
+- Config dependencies: `text_pooling.token_policy`, `text_pooling.special_token_ids`, `text_pooling.error_on_empty_kept_tokens`.
 - Failure conditions: unsupported policy, missing special-token metadata, invalid EOS recovery, wrong input rank, or rows with zero valid tokens.
 
 ## model/prototype/token_pooler.py
@@ -61,7 +61,7 @@
 - Purpose: projects image and pooled-text features into the contrastive embedding space.
 - Inputs: `inputs` with last dimension `input_dim`.
 - Outputs: normalized projected features with last dimension `output_dim`; optional debug `projected_features`, `projected_features_pre_norm`.
-- Config dependencies: `model.projection_dim`, `model.projector_hidden_dim`, `model.projector_dropout`.
+- Config dependencies: `model.projection_dim`, `model.projector_hidden_dim`, `model.projector_dropout`, `model.projector_type`.
 - Failure conditions: non-positive dimensional arguments.
 
 ## model/prototype/losses.py
@@ -69,7 +69,7 @@
 - Purpose: provides symmetric InfoNCE plus optional prototype regularizers.
 - Inputs: `image_embeddings` `[B, D]`, `text_embeddings` `[B, D]`, optional `prototypes` `[N, D]`, optional `routing_weights` `[B, N]`.
 - Outputs: `loss_total`, `loss_infonce`, `loss_diversity`, `loss_balance`, `logit_scale`, optional `contrastive_logits` `[B, B]`.
-- Config dependencies: `model.temperature`, `prototype.use_diversity_loss`, `prototype.diversity_loss_weight`, `prototype.balance_loss_weight`.
+- Config dependencies: `model.temperature`, `model.learn_logit_scale`, `prototype.use_diversity_loss`, `prototype.diversity_loss_weight`, `prototype.use_balancing_loss`, `prototype.balance_loss_weight`.
 - Failure conditions: non-positive temperature, image/text shape mismatch, or invalid input rank.
 
 ## model/prototype/head.py
@@ -101,7 +101,7 @@
   - `named_optimizer_groups()` returns explicit optimizer-group buckets.
   - `compute_retrieval_similarity(...)` returns `[N_text, N_image]` similarity blocks.
 - Config dependencies: model activation flags, prototype settings, freeze policy, evaluation chunk sizes.
-- Failure conditions: rejects disabled prototype mode, unsupported sparse routing, unsupported contextualization depth, invalid evaluation chunk sizes, or non-finite loss/similarity outputs.
+- Failure conditions: rejects disabled prototype mode, invalid evaluation chunk sizes, or non-finite loss/similarity outputs.
 
 ## utils/metric_logging.py
 - Functions: `collect_loss_metrics`, `collect_debug_metrics`, `collect_scalar_metrics`, `build_train_metrics`, `build_validation_metrics`
@@ -115,6 +115,7 @@
 - Purpose: constructs optimizer param groups from `named_optimizer_groups()`.
 - Inputs: runtime args with per-group LR settings and a model implementing `named_optimizer_groups()`.
 - Outputs: configured `torch.optim` optimizer.
-- Config dependencies: `optimizer.lr`, `optimizer.lr_prototype_bank`, `optimizer.lr_contextualizer`, `optimizer.lr_projectors`, `optimizer.lr_logit_scale`, `optimizer.lr_image_backbone`, `optimizer.lr_text_backbone`, `optimizer.weight_decay`, optimizer type.
+- Config dependencies: `optimizer.lr`, `optimizer.lr_prototype_bank`, `optimizer.lr_projectors`, `optimizer.lr_logit_scale`, `optimizer.lr_image_backbone`, `optimizer.lr_text_backbone`, `optimizer.weight_decay`, optimizer type.
 - Failure conditions: model missing `named_optimizer_groups()` or unsupported optimizer type.
+
 

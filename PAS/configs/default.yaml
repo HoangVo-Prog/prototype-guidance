@@ -14,8 +14,9 @@ model:
   projection_dim: 256
   projector_hidden_dim: 512
   projector_dropout: 0.0
+  projector_type: mlp2
   temperature: 0.07
-  pooling_mode: image_conditioned
+  learn_logit_scale: true
   img_size: [384, 128]
   stride_size: 16
   text_length: 77
@@ -41,6 +42,7 @@ prototype:
   assignment_topk: 0
   use_diversity_loss: true
   diversity_loss_weight: 0.01
+  use_balancing_loss: false
   balance_loss_weight: 0.0
   dead_prototype_threshold: 0.005
 
@@ -48,9 +50,11 @@ text_pooling:
   token_policy: content_only
   scoring_type: cosine
   token_temperature: 0.07
-  exclude_special_tokens: true
-  eos_as_only_token: false
-  mask_padding_tokens: true
+  special_token_ids:
+    bos_token_id: 49406
+    eos_token_id: 49407
+    pad_token_id: 0
+  error_on_empty_kept_tokens: true
 
 training:
   batch_size: 32
@@ -71,20 +75,17 @@ training:
   freeze_image_backbone: true
   freeze_text_backbone: true
   grad_clip: 1.0
-  amp: false
 
 optimizer:
   type: AdamW
   lr: 0.001
   lr_prototype_bank: 0.001
-  lr_contextualizer: 0.001
   lr_projectors: 0.001
   lr_logit_scale: 0.0001
   lr_image_backbone: 0.0
   lr_text_backbone: 0.0
   weight_decay: 0.01
   weight_decay_prototype_bank: 0.01
-  weight_decay_contextualizer: 0.01
   weight_decay_projectors: 0.05
   weight_decay_logit_scale: 0.0
   weight_decay_image_backbone: 0.0
@@ -129,3 +130,4 @@ evaluation:
   batch_size: 512
   prototype_image_chunk_size: 32
   prototype_text_chunk_size: 128
+

@@ -6,7 +6,7 @@ import torch.nn as nn
 
 from .clip_model import build_CLIP_from_openai_pretrained, convert_weights
 from .interfaces import EncoderOutput
-from .prototype import build_prototype_head
+from .prototype import TokenMaskBuilder, build_prototype_head
 
 
 class PASModel(nn.Module):
@@ -33,32 +33,22 @@ class PASModel(nn.Module):
 
     def _validate_configuration(self):
         if not bool(getattr(self.args, 'use_prototype_bank', True)):
-            raise ValueError('Phase E requires model.use_prototype_bank=true.')
+            raise ValueError('PASModel requires model.use_prototype_bank=true because the active runtime is prototype-based.')
         if not bool(getattr(self.args, 'use_image_conditioned_pooling', True)):
-            raise ValueError('Phase E requires model.use_image_conditioned_pooling=true.')
-        if int(getattr(self.args, 'prototype_contextualization_num_layers', 1) or 1) != 1:
-            raise NotImplementedError('Phase E supports exactly one parameter-free contextualization layer.')
-        if bool(getattr(self.args, 'prototype_sparse_assignment', False)) or int(getattr(self.args, 'prototype_sparse_topk', 0) or 0) > 0:
-            raise NotImplementedError('Sparse prototype routing is still disabled in Phase E.')
+            raise ValueError('PASModel requires model.use_image_conditioned_pooling=true because the active runtime scores text under image-conditioned pooling.')
         if self.prototype_eval_image_chunk_size <= 0 or self.prototype_eval_text_chunk_size <= 0:
             raise ValueError('Prototype evaluation chunk sizes must be positive integers.')
-        if self.prototype_dim != self.embed_dim:
+        special_token_ids = getattr(self.args, 'special_token_ids', None)
+        if special_token_ids is None:
             raise ValueError(
-                'Minimal PAS v1 requires prototype_dim to match the backbone feature dimension so the method uses '
-                'token-level text hidden states without an extra hidden-space redesign.'
+                'special_token_ids must be configured explicitly so token masking does not rely on hardcoded '
+                'tokenizer assumptions.'
             )
-        token_policy = str(getattr(self.args, 'token_policy', 'content_only')).lower()
-        exclude_special_tokens = bool(getattr(self.args, 'exclude_special_tokens', True))
-        eos_as_only_token = bool(getattr(self.args, 'eos_as_only_token', False))
-        mask_padding_tokens = bool(getattr(self.args, 'mask_padding_tokens', True))
-        if not mask_padding_tokens:
-            raise ValueError('Minimal PAS v1 requires padding tokens to be masked out.')
-        if token_policy == 'content_only' and not exclude_special_tokens:
-            raise ValueError('token_policy=content_only conflicts with exclude_special_tokens=false.')
-        if token_policy == 'content_plus_special' and exclude_special_tokens:
-            raise ValueError('token_policy=content_plus_special conflicts with exclude_special_tokens=true.')
-        if token_policy != 'eos_only' and eos_as_only_token:
-            raise ValueError('eos_as_only_token=true conflicts with the active token_policy.')
+        TokenMaskBuilder(
+            token_policy=str(getattr(self.args, 'token_policy', 'content_only')).lower(),
+            special_token_ids=special_token_ids,
+            error_on_empty_kept_tokens=bool(getattr(self.args, 'error_on_empty_kept_tokens', True)),
+        )
 
     def _freeze_module(self, module: nn.Module):
         for parameter in module.parameters():
@@ -78,25 +68,9 @@ class PASModel(nn.Module):
             self.base_model.ln_final.bias.requires_grad = False
             self.base_model.text_projection.requires_grad = False
 
-    def _get_special_token_positions(self, token_ids: torch.Tensor) -> Dict[str, torch.Tensor]:
-        batch_size = token_ids.size(0)
-        device = token_ids.device
-        return {
-            'cls': torch.zeros(batch_size, dtype=torch.long, device=device),
-            'eos': token_ids.argmax(dim=-1),
-        }
-
-    def _build_text_mask(self, token_ids: torch.Tensor) -> torch.Tensor:
-        return token_ids.ne(0)
-
     def _resolve_text_states(self, text_output: EncoderOutput) -> torch.Tensor:
         if text_output.pre_projection_tokens is None:
             raise ValueError('The text encoder must expose last-layer token hidden states before CLIP pooling/projection.')
-        if text_output.pre_projection_tokens.size(-1) != self.prototype_dim:
-            raise ValueError(
-                'Minimal PAS v1 requires text hidden-state dimension to match prototype_dim so routing scores are '
-                'computed over token-level hidden states without a hidden-space detour.'
-            )
         return text_output.pre_projection_tokens
 
     def extract_image_features(self, image: torch.Tensor) -> EncoderOutput:
@@ -130,13 +104,17 @@ class PASModel(nn.Module):
         pre_projection_tokens = text_outputs['pre_projection_tokens']
         if pre_projection_tokens is not None:
             pre_projection_tokens = pre_projection_tokens.float()
-        special_positions = self._get_special_token_positions(text)
-        token_mask = self._build_text_mask(text)
+        token_mask_builder = self.prototype_head.token_mask_builder
+        token_mask = token_mask_builder.build_valid_mask(text.long())
+        special_positions = token_mask_builder.get_special_token_positions(text.long(), attention_mask=token_mask)
         batch_indices = torch.arange(text.size(0), device=text.device)
-        projected_pooled = projected_tokens[batch_indices, special_positions['eos']]
+        projected_pooled = None
         pre_projection_pooled = None
-        if pre_projection_tokens is not None:
-            pre_projection_pooled = pre_projection_tokens[batch_indices, special_positions['eos']]
+        eos_positions = special_positions.get('eos')
+        if eos_positions is not None:
+            projected_pooled = projected_tokens[batch_indices, eos_positions]
+            if pre_projection_tokens is not None:
+                pre_projection_pooled = pre_projection_tokens[batch_indices, eos_positions]
         return EncoderOutput(
             tokens=projected_tokens,
             pooled=projected_pooled,
@@ -219,7 +197,6 @@ class PASModel(nn.Module):
     def named_optimizer_groups(self) -> OrderedDict:
         groups = OrderedDict(
             prototype_bank=[],
-            contextualizer=[],
             projectors=[],
             logit_scale=[],
             image_backbone=[],
@@ -231,8 +208,6 @@ class PASModel(nn.Module):
                 continue
             if name.startswith('prototype_head.prototype_bank'):
                 groups['prototype_bank'].append((name, parameter))
-            elif name.startswith('prototype_head.contextualizer'):
-                groups['contextualizer'].append((name, parameter))
             elif name.startswith('prototype_head.image_projector') or name.startswith('prototype_head.text_projector') or name.startswith('prototype_head.image_adapter') or name.startswith('prototype_head.text_adapter'):
                 groups['projectors'].append((name, parameter))
             elif name.endswith('logit_scale'):

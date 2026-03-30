@@ -51,10 +51,10 @@ Returned fields:
   EOS pooled for the raw encoder path.
 - `pre_projection_tokens`: optional `[B, L, D_pre]`
 - `pre_projection_pooled`: optional `[B, D_pre]`
-- `token_mask`: `[B, L]` boolean mask
+- `token_mask`: `[B, L]` boolean valid-token mask derived from explicit token metadata
 - `special_token_positions`:
-  - `cls`: `[B]`
-  - `eos`: `[B]`
+  - `cls`: optional `[B]` leading special-token positions when configured
+  - `eos`: `[B]` EOS positions derived from explicit token ids or validated metadata
 - `pooling_mode`: `image_conditioned`
 
 ### Retrieval interface
@@ -64,7 +64,7 @@ Returned fields:
   - `text_token_states`: `[B, L, D_proto]`
   - `token_ids`: `[B, L]`
   - `attention_mask`: `[B, L]`
-  - `special_token_positions`: dict with `cls` and `eos`
+  - `special_token_positions`: dict with explicit special-token positions used for deterministic masking
 
 ## 4. Prototype Boundary
 
@@ -120,7 +120,6 @@ Returned fields:
 - Function: `PASModel.named_optimizer_groups()`
 - Returned groups:
   - `prototype_bank`
-  - `contextualizer`
   - `projectors`
   - `logit_scale`
   - `image_backbone`
@@ -180,8 +179,8 @@ Future extensions may assume:
 
 Future extensions must not assume:
 - Patch-token image routing exists in v1.
-- Sparse prototype assignment is active.
-- More than one contextualization layer is supported.
+- Sparse prototype assignment or deeper contextualization require explicit hyperparameter configuration.
 - Legacy ITSELF or GRAB branches are not part of the active model path.
+
 
 

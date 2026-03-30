@@ -24,6 +24,11 @@ class PrototypeLosses(nn.Module):
         self.use_balance_loss = bool(use_balance_loss)
         self.lambda_bal = float(balance_loss_weight)
 
+        if not self.use_balance_loss and self.lambda_bal != 0.0:
+            raise ValueError('lambda_bal must be 0.0 when use_balance_loss is disabled.')
+        if self.use_balance_loss and self.lambda_bal <= 0.0:
+            raise ValueError('use_balance_loss requires lambda_bal to be positive.')
+
         initial_logit_scale = torch.log(torch.tensor(1.0 / temperature_init, dtype=torch.float32))
         if self.learnable_temperature:
             self.logit_scale = nn.Parameter(initial_logit_scale.clone())

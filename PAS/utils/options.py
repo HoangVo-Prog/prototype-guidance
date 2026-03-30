@@ -39,8 +39,9 @@ def build_parser():
     parser.add_argument('--projector_output_dim', '--projection_dim', dest='projection_dim', type=int, default=256)
     parser.add_argument('--projector_hidden_dim', type=int, default=512)
     parser.add_argument('--projector_dropout', type=float, default=0.0)
+    parser.add_argument('--projector_type', type=str, default='mlp2')
     parser.add_argument('--temperature', type=float, default=0.07)
-    parser.add_argument('--pooling_mode', type=str, default='image_conditioned')
+    parser.add_argument('--learn_logit_scale', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--img_size', type=int, nargs=2, default=(384, 128))
     parser.add_argument('--stride_size', type=int, default=16)
     parser.add_argument('--text_length', type=int, default=77)
@@ -63,6 +64,7 @@ def build_parser():
     parser.add_argument('--prototype_normalize', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--prototype_sparse_assignment', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--prototype_sparse_topk', type=int, default=0)
+    parser.add_argument('--use_balancing_loss', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_bal', '--prototype_balance_loss_weight', dest='prototype_balance_loss_weight', type=float, default=0.0)
     parser.add_argument('--prototype_dead_threshold', type=float, default=0.005)
     parser.add_argument('--use_diversity_loss', type=_str2bool, nargs='?', const=True, default=True)
@@ -71,9 +73,7 @@ def build_parser():
     parser.add_argument('--token_policy', type=str, default='content_only')
     parser.add_argument('--token_similarity', '--token_scoring_type', dest='token_scoring_type', type=str, default='cosine')
     parser.add_argument('--tau_t', '--token_pooling_temperature', dest='token_pooling_temperature', type=float, default=0.07)
-    parser.add_argument('--exclude_special_tokens', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--eos_as_only_token', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--mask_padding_tokens', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--error_on_empty_kept_tokens', type=_str2bool, nargs='?', const=True, default=True)
 
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--epochs', '--num_epoch', dest='num_epoch', type=int, default=60)
@@ -81,7 +81,6 @@ def build_parser():
     parser.add_argument('--eval_frequency', '--eval_period', dest='eval_period', default=1, type=int)
     parser.add_argument('--save_interval', type=int, default=1)
     parser.add_argument('--grad_clip', type=float, default=1.0)
-    parser.add_argument('--amp', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--resume', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--resume_ckpt_file', default='', help='Resume from checkpoint path')
     parser.add_argument('--finetune', type=str, default='')
@@ -98,7 +97,6 @@ def build_parser():
     parser.add_argument('--optimizer_type', '--optimizer', dest='optimizer', type=str, default='AdamW', help='[SGD, Adam, AdamW]')
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--lr_prototype_bank', type=float, default=1e-3)
-    parser.add_argument('--lr_contextualizer', type=float, default=1e-3)
     parser.add_argument('--lr_projectors', type=float, default=1e-3)
     parser.add_argument('--lr_logit_scale', type=float, default=1e-4)
     parser.add_argument('--lr_image_backbone', type=float, default=0.0)
@@ -106,7 +104,6 @@ def build_parser():
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=1e-2)
     parser.add_argument('--weight_decay_prototype_bank', type=float, default=1e-2)
-    parser.add_argument('--weight_decay_contextualizer', type=float, default=1e-2)
     parser.add_argument('--weight_decay_projectors', type=float, default=5e-2)
     parser.add_argument('--weight_decay_logit_scale', type=float, default=0.0)
     parser.add_argument('--weight_decay_image_backbone', type=float, default=0.0)
@@ -147,6 +144,7 @@ def build_parser():
     parser.add_argument('--wandb_log_code', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--log_debug_metrics', type=_str2bool, nargs='?', const=True, default=True)
 
+    parser.set_defaults(special_token_ids=None)
     return parser
 
 

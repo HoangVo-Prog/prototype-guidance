@@ -63,6 +63,7 @@ class PrototypeModuleTests(unittest.TestCase):
             projection_dim=4,
             projector_hidden_dim=12,
             projector_dropout=0.0,
+            projector_type='mlp2',
             prototype_init='normalized_random',
             prototype_init_path=None,
             prototype_routing_type='cosine',
@@ -70,13 +71,17 @@ class PrototypeModuleTests(unittest.TestCase):
             token_scoring_type='cosine',
             token_pooling_temperature=0.07,
             token_policy='content_only',
+            special_token_ids={'bos_token_id': 49406, 'eos_token_id': 49407, 'pad_token_id': 0},
+            error_on_empty_kept_tokens=True,
             prototype_contextualization_type='self_attention',
             prototype_contextualization_residual=True,
             prototype_normalize=True,
             use_diversity_loss=True,
             diversity_loss_weight=0.05,
+            use_balancing_loss=True,
             prototype_balance_loss_weight=0.1,
             temperature=0.07,
+            learn_logit_scale=True,
             prototype_dead_threshold=0.01,
         )
         base.update(overrides)
@@ -90,6 +95,7 @@ class PrototypeModuleTests(unittest.TestCase):
             projector_output_dim=4,
             projector_hidden_dim=12,
             projector_dropout=0.0,
+            projector_type='mlp2',
             prototype_init='normalized_random',
             prototype_init_path=None,
             routing_type='cosine',
@@ -97,6 +103,8 @@ class PrototypeModuleTests(unittest.TestCase):
             token_scoring_type='cosine',
             token_temperature=0.07,
             token_policy='content_only',
+            special_token_ids={'bos_token_id': 49406, 'eos_token_id': 49407, 'pad_token_id': 0},
+            error_on_empty_kept_tokens=True,
             contextualization_enabled=True,
             contextualization_type='self_attention',
             contextualization_residual=True,
@@ -138,6 +146,15 @@ class PrototypeModuleTests(unittest.TestCase):
         torch.testing.assert_close(row_sums, torch.ones_like(row_sums), atol=1e-5, rtol=1e-5)
         self.assertTrue(torch.isfinite(contextualized).all())
 
+    def test_contextualizer_supports_multiple_layers(self):
+        prototypes = torch.randn(self.num_prototypes, self.feature_dim)
+        contextualizer = PrototypeContextualizer(enabled=True, contextualization_type='self_attention', num_layers=3)
+        contextualized, debug = contextualizer(prototypes, return_debug=True)
+        self.assertEqual(tuple(contextualized.shape), (self.num_prototypes, self.feature_dim))
+        self.assertEqual(debug['contextualization_num_layers'], 3)
+        self.assertTrue(torch.isfinite(contextualized).all())
+
+
     def test_router_probabilities_sum_to_one(self):
         router = Router(routing_type='cosine', temperature=0.07)
         image_embeddings = torch.randn(self.batch_size, self.feature_dim)
@@ -147,6 +164,18 @@ class PrototypeModuleTests(unittest.TestCase):
         torch.testing.assert_close(alpha.sum(dim=-1), torch.ones(self.batch_size), atol=1e-5, rtol=1e-5)
         self.assertTrue(torch.isfinite(debug['routing_similarity']).all())
         self.assertTrue(torch.isfinite(debug['alpha_logits']).all())
+
+    def test_router_supports_sparse_topk_assignment(self):
+        router = Router(routing_type='cosine', temperature=0.07, sparse_assignment=True, sparse_topk=2)
+        image_embeddings = torch.randn(self.batch_size, self.feature_dim)
+        prototypes = torch.randn(self.num_prototypes, self.feature_dim)
+        alpha, debug = router(image_embeddings, prototypes, return_debug=True)
+        self.assertEqual(tuple(alpha.shape), (self.batch_size, self.num_prototypes))
+        torch.testing.assert_close(alpha.sum(dim=-1), torch.ones(self.batch_size), atol=1e-5, rtol=1e-5)
+        self.assertTrue((alpha.gt(0).sum(dim=-1) <= 2).all())
+        self.assertEqual(debug['routing_sparse_assignment'], 1)
+        self.assertEqual(debug['routing_sparse_topk'], 2)
+
 
     def test_aggregator_changes_with_routing_weights(self):
         prototypes = torch.arange(self.num_prototypes * self.feature_dim, dtype=torch.float32).view(self.num_prototypes, self.feature_dim)
@@ -169,7 +198,10 @@ class PrototypeModuleTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(scores_a).all())
 
     def test_token_mask_builder_policies(self):
-        content_builder = TokenMaskBuilder(token_policy='content_only')
+        content_builder = TokenMaskBuilder(
+            token_policy='content_only',
+            special_token_ids={'bos_token_id': 49406, 'eos_token_id': 49407, 'pad_token_id': 0},
+        )
         content_mask, content_debug = content_builder.build(self.token_ids, attention_mask=self.attention_mask, return_debug=True)
         expected_content = torch.tensor(
             [
@@ -182,11 +214,17 @@ class PrototypeModuleTests(unittest.TestCase):
         torch.testing.assert_close(content_debug['token_valid_mask'], self.attention_mask)
         torch.testing.assert_close(content_debug['token_keep_mask'], expected_content)
 
-        all_builder = TokenMaskBuilder(token_policy='content_plus_special')
+        all_builder = TokenMaskBuilder(
+            token_policy='content_plus_special',
+            special_token_ids={'bos_token_id': 49406, 'eos_token_id': 49407, 'pad_token_id': 0},
+        )
         all_mask = all_builder.build(self.token_ids, attention_mask=self.attention_mask)
         torch.testing.assert_close(all_mask, self.attention_mask)
 
-        eos_builder = TokenMaskBuilder(token_policy='eos_only')
+        eos_builder = TokenMaskBuilder(
+            token_policy='eos_only',
+            special_token_ids={'bos_token_id': 49406, 'eos_token_id': 49407, 'pad_token_id': 0},
+        )
         eos_mask = eos_builder.build(self.token_ids, attention_mask=self.attention_mask)
         expected_eos = torch.tensor(
             [
@@ -197,11 +235,63 @@ class PrototypeModuleTests(unittest.TestCase):
         )
         torch.testing.assert_close(eos_mask, expected_eos)
 
+    def test_token_mask_builder_uses_configured_ids_not_positions_or_argmax(self):
+        token_ids = torch.tensor([[11, 12, 7, 13, 5, 0]], dtype=torch.long)
+        attention_mask = torch.tensor([[True, True, True, True, True, False]])
+        builder = TokenMaskBuilder(
+            token_policy='content_only',
+            special_token_ids={'bos_token_id': 7, 'eos_token_id': 5, 'pad_token_id': 0},
+        )
+        token_keep_mask = builder.build(token_ids, attention_mask=attention_mask)
+        expected = torch.tensor([[True, True, False, True, False, False]])
+        torch.testing.assert_close(token_keep_mask, expected)
+
+        eos_only_builder = TokenMaskBuilder(
+            token_policy='eos_only',
+            special_token_ids={'bos_token_id': 7, 'eos_token_id': 5, 'pad_token_id': 0},
+        )
+        eos_only_mask = eos_only_builder.build(token_ids, attention_mask=attention_mask)
+        expected_eos = torch.tensor([[False, False, False, False, True, False]])
+        torch.testing.assert_close(eos_only_mask, expected_eos)
+
+    def test_token_mask_builder_requires_explicit_special_token_metadata(self):
+        token_ids = torch.tensor([[49406, 10, 49407, 0]], dtype=torch.long)
+        builder = TokenMaskBuilder(
+            token_policy='content_only',
+            special_token_ids={'pad_token_id': 0},
+        )
+        with self.assertRaises(ValueError):
+            builder.build(token_ids, attention_mask=torch.tensor([[True, True, True, False]]))
+
     def test_token_mask_builder_raises_when_no_content_token_remains(self):
         token_ids = torch.tensor([[49406, 49407, 0, 0]], dtype=torch.long)
-        builder = TokenMaskBuilder(token_policy='content_only')
+        builder = TokenMaskBuilder(
+            token_policy='content_only',
+            special_token_ids={'bos_token_id': 49406, 'eos_token_id': 49407, 'pad_token_id': 0},
+        )
         with self.assertRaises(ValueError):
             builder.build(token_ids, attention_mask=token_ids.ne(0))
+
+    def test_token_mask_builder_requires_required_special_tokens_per_sample(self):
+        token_ids = torch.tensor(
+            [
+                [49406, 10, 49407, 0],
+                [20, 21, 22, 0],
+            ],
+            dtype=torch.long,
+        )
+        attention_mask = torch.tensor(
+            [
+                [True, True, True, False],
+                [True, True, True, False],
+            ]
+        )
+        builder = TokenMaskBuilder(
+            token_policy='content_only',
+            special_token_ids={'bos_token_id': 49406, 'eos_token_id': 49407, 'pad_token_id': 0},
+        )
+        with self.assertRaises(ValueError):
+            builder.build(token_ids, attention_mask=attention_mask)
 
     def test_masked_token_pooler_masks_invalid_positions(self):
         pooler = MaskedTokenPooler()
@@ -237,6 +327,12 @@ class PrototypeModuleTests(unittest.TestCase):
         self.assertIsNotNone(projector.net[3].weight.grad)
         self.assertIn('projected_features_raw', debug)
 
+    def test_projector_supports_linear_variant(self):
+        projector = MLPProjector(input_dim=self.feature_dim, hidden_dim=12, output_dim=4, projector_type='linear')
+        outputs, debug = projector(torch.randn(self.batch_size, self.feature_dim), return_debug=True)
+        self.assertEqual(tuple(outputs.shape), (self.batch_size, 4))
+        self.assertEqual(debug['projector_type'], 'linear')
+
     def test_loss_module_reports_raw_and_weighted_components(self):
         losses = PrototypeLosses(
             temperature_init=0.07,
@@ -254,6 +350,16 @@ class PrototypeModuleTests(unittest.TestCase):
         torch.testing.assert_close(outputs['loss_total'], expected_total)
         torch.testing.assert_close(outputs['loss_diversity_weighted'], 0.05 * outputs['loss_diversity'])
         torch.testing.assert_close(outputs['loss_balance_weighted'], 0.1 * outputs['loss_balance'])
+
+    def test_loss_module_can_disable_logit_scale_learning(self):
+        losses = PrototypeLosses(temperature_init=0.07, learnable_temperature=False)
+        self.assertEqual(list(losses.named_parameters()), [])
+        self.assertTrue(hasattr(losses, 'logit_scale'))
+
+    def test_build_head_requires_balance_flag_and_weight_to_agree(self):
+        args = self._build_args(use_balancing_loss=False, prototype_balance_loss_weight=0.1)
+        with self.assertRaises(ValueError):
+            build_prototype_head(args, input_dim=self.feature_dim)
 
     def test_builder_and_flag_detection(self):
         disabled_args = self._build_args(
@@ -324,3 +430,9 @@ class PrototypeModuleTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+
+
+
+
+
+

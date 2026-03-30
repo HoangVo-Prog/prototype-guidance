@@ -5,7 +5,6 @@ from .lr_scheduler import LRSchedulerWithWarmup
 
 GROUP_TO_LR_ATTR = {
     'prototype_bank': 'lr_prototype_bank',
-    'contextualizer': 'lr_contextualizer',
     'projectors': 'lr_projectors',
     'logit_scale': 'lr_logit_scale',
     'image_backbone': 'lr_image_backbone',
@@ -15,7 +14,6 @@ GROUP_TO_LR_ATTR = {
 
 GROUP_TO_WD_ATTR = {
     'prototype_bank': 'weight_decay_prototype_bank',
-    'contextualizer': 'weight_decay_contextualizer',
     'projectors': 'weight_decay_projectors',
     'logit_scale': 'weight_decay_logit_scale',
     'image_backbone': 'weight_decay_image_backbone',

@@ -20,8 +20,9 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'projection_dim'): 'projection_dim',
     ('model', 'projector_hidden_dim'): 'projector_hidden_dim',
     ('model', 'projector_dropout'): 'projector_dropout',
+    ('model', 'projector_type'): 'projector_type',
     ('model', 'temperature'): 'temperature',
-    ('model', 'pooling_mode'): 'pooling_mode',
+    ('model', 'learn_logit_scale'): 'learn_logit_scale',
     ('model', 'img_size'): 'img_size',
     ('model', 'stride_size'): 'stride_size',
     ('model', 'text_length'): 'text_length',
@@ -44,6 +45,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'prototype_normalize'): 'prototype_normalize',
     ('prototype', 'assignment_sparse'): 'prototype_sparse_assignment',
     ('prototype', 'assignment_topk'): 'prototype_sparse_topk',
+    ('prototype', 'use_balancing_loss'): 'use_balancing_loss',
     ('prototype', 'balance_loss_weight'): 'prototype_balance_loss_weight',
     ('prototype', 'dead_prototype_threshold'): 'prototype_dead_threshold',
     ('prototype', 'use_diversity_loss'): 'use_diversity_loss',
@@ -52,9 +54,8 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('text_pooling', 'token_policy'): 'token_policy',
     ('text_pooling', 'scoring_type'): 'token_scoring_type',
     ('text_pooling', 'token_temperature'): 'token_pooling_temperature',
-    ('text_pooling', 'exclude_special_tokens'): 'exclude_special_tokens',
-    ('text_pooling', 'eos_as_only_token'): 'eos_as_only_token',
-    ('text_pooling', 'mask_padding_tokens'): 'mask_padding_tokens',
+    ('text_pooling', 'special_token_ids'): 'special_token_ids',
+    ('text_pooling', 'error_on_empty_kept_tokens'): 'error_on_empty_kept_tokens',
 
     ('training', 'batch_size'): 'batch_size',
     ('training', 'epochs'): 'num_epoch',
@@ -74,19 +75,16 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'freeze_image_backbone'): 'freeze_image_backbone',
     ('training', 'freeze_text_backbone'): 'freeze_text_backbone',
     ('training', 'grad_clip'): 'grad_clip',
-    ('training', 'amp'): 'amp',
 
     ('optimizer', 'type'): 'optimizer',
     ('optimizer', 'lr'): 'lr',
     ('optimizer', 'lr_prototype_bank'): 'lr_prototype_bank',
-    ('optimizer', 'lr_contextualizer'): 'lr_contextualizer',
     ('optimizer', 'lr_projectors'): 'lr_projectors',
     ('optimizer', 'lr_logit_scale'): 'lr_logit_scale',
     ('optimizer', 'lr_image_backbone'): 'lr_image_backbone',
     ('optimizer', 'lr_text_backbone'): 'lr_text_backbone',
     ('optimizer', 'weight_decay'): 'weight_decay',
     ('optimizer', 'weight_decay_prototype_bank'): 'weight_decay_prototype_bank',
-    ('optimizer', 'weight_decay_contextualizer'): 'weight_decay_contextualizer',
     ('optimizer', 'weight_decay_projectors'): 'weight_decay_projectors',
     ('optimizer', 'weight_decay_logit_scale'): 'weight_decay_logit_scale',
     ('optimizer', 'weight_decay_image_backbone'): 'weight_decay_image_backbone',
@@ -146,7 +144,6 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('text_pooling', 'token_similarity'): 'token_scoring_type',
     ('text_pooling', 'tau_t'): 'token_pooling_temperature',
     ('optimizer', 'weight_decay_prototypes'): 'weight_decay_prototype_bank',
-    ('optimizer', 'weight_decay_projectors'): 'weight_decay_projectors',
 }
 
 
@@ -164,6 +161,25 @@ SECTION_TEMPLATE = {
 
 
 SECTION_KEYS = set(SECTION_TEMPLATE.keys())
+SUPPORTED_SPECIAL_TOKEN_ID_KEYS = {
+    'bos_token_id',
+    'cls_token_id',
+    'eos_token_id',
+    'pad_token_id',
+}
+UNSUPPORTED_CONFIG_PATHS = {
+    ('model', 'pooling_mode'): 'model.pooling_mode was removed because PAS only supports image-conditioned pooling.',
+    ('text_pooling', 'exclude_special_tokens'): 'text_pooling.exclude_special_tokens was removed. Use text_pooling.token_policy.',
+    ('text_pooling', 'eos_as_only_token'): 'text_pooling.eos_as_only_token was removed. Use text_pooling.token_policy.',
+    ('text_pooling', 'mask_padding_tokens'): 'text_pooling.mask_padding_tokens was removed. Use text_pooling.special_token_ids / attention masks.',
+    ('optimizer', 'lr_contextualizer'): 'optimizer.lr_contextualizer was removed because the contextualizer is parameter-free.',
+    ('optimizer', 'weight_decay_contextualizer'): 'optimizer.weight_decay_contextualizer was removed because the contextualizer is parameter-free.',
+    ('training', 'amp'): 'training.amp was removed because AMP was a no-op in the PAS runtime.',
+    ('model', 'normalize_projector_outputs'): 'model.normalize_projector_outputs is not supported as a runtime override in PAS v1.',
+    ('prototype', 'normalize_for_self_interaction'): 'prototype.normalize_for_self_interaction is not supported as a runtime override in PAS v1.',
+    ('prototype', 'normalize_for_routing'): 'prototype.normalize_for_routing is not supported as a runtime override in PAS v1.',
+    ('text_pooling', 'normalize_for_token_scoring'): 'text_pooling.normalize_for_token_scoring is not supported as a runtime override in PAS v1.',
+}
 
 
 def _read_yaml(path: str) -> Dict[str, Any]:
@@ -184,12 +200,63 @@ def deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str
     return merged
 
 
+def _path_exists(config_data: Dict[str, Any], path: Tuple[str, ...]) -> bool:
+    current: Any = config_data
+    for key in path:
+        if not isinstance(current, dict) or key not in current:
+            return False
+        current = current[key]
+    return True
+
+
+def _validate_known_sections(config_data: Dict[str, Any]) -> None:
+    for key in config_data.keys():
+        if key not in SECTION_KEYS:
+            raise ValueError(f'Unknown config section `{key}`. Supported sections: {sorted(SECTION_KEYS)}')
+
+
+def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
+    supported_paths = set(PRIMARY_CONFIG_KEY_MAP.keys()) | set(READ_ALIAS_CONFIG_KEY_MAP.keys())
+    supported_leafs = {(path[0], path[1]) for path in supported_paths if len(path) == 2}
+
+    for section_name, section_value in config_data.items():
+        if not isinstance(section_value, dict):
+            raise ValueError(f'Config section `{section_name}` must contain a mapping.')
+        for key, value in section_value.items():
+            path = (section_name, key)
+            if path == ('text_pooling', 'special_token_ids'):
+                if not isinstance(value, dict):
+                    raise ValueError('text_pooling.special_token_ids must be a mapping of token names to ids.')
+                unknown_keys = sorted(set(value.keys()) - SUPPORTED_SPECIAL_TOKEN_ID_KEYS)
+                if unknown_keys:
+                    raise ValueError(
+                        'Unsupported text_pooling.special_token_ids keys: '
+                        f'{unknown_keys}. Supported keys: {sorted(SUPPORTED_SPECIAL_TOKEN_ID_KEYS)}'
+                    )
+                continue
+            if isinstance(value, dict):
+                raise ValueError(f'Unsupported nested config mapping at `{section_name}.{key}`.')
+            if path not in supported_leafs and path not in UNSUPPORTED_CONFIG_PATHS:
+                raise ValueError(f'Unknown config key `{section_name}.{key}`.')
+
+
+def validate_config_data(config_data: Dict[str, Any]) -> None:
+    if not config_data:
+        return
+    _validate_known_sections(config_data)
+    _validate_supported_keys(config_data)
+    for path, message in UNSUPPORTED_CONFIG_PATHS.items():
+        if _path_exists(config_data, path):
+            raise ValueError(message)
+
+
 def load_yaml_config(default_path: Optional[str] = None, override_path: Optional[str] = None) -> Dict[str, Any]:
     config = {}
     if default_path:
         config = deep_merge_dicts(config, _read_yaml(default_path))
     if override_path:
         config = deep_merge_dicts(config, _read_yaml(override_path))
+    validate_config_data(config)
     return config
 
 

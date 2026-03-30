@@ -23,6 +23,7 @@ class PrototypeConditionedTextHead(nn.Module):
         projector_output_dim: int,
         projector_hidden_dim: Optional[int] = None,
         projector_dropout: float = 0.0,
+        projector_type: str = 'mlp2',
         prototype_init: str = 'normalized_random',
         prototype_init_path: Optional[str] = None,
         routing_type: str = 'cosine',
@@ -30,10 +31,15 @@ class PrototypeConditionedTextHead(nn.Module):
         token_scoring_type: str = 'cosine',
         token_temperature: float = 0.07,
         token_policy: str = 'content_only',
+        special_token_ids: Optional[Dict[str, object]] = None,
+        error_on_empty_kept_tokens: bool = True,
         contextualization_enabled: bool = False,
         contextualization_type: str = 'none',
         contextualization_residual: bool = True,
+        contextualization_num_layers: int = 1,
         prototype_normalize: bool = True,
+        sparse_assignment: bool = False,
+        sparse_topk: int = 0,
         use_diversity_loss: bool = False,
         diversity_loss_weight: float = 0.0,
         use_balance_loss: bool = False,
@@ -62,12 +68,22 @@ class PrototypeConditionedTextHead(nn.Module):
             enabled=contextualization_enabled,
             contextualization_type=contextualization_type,
             residual=contextualization_residual,
+            num_layers=contextualization_num_layers,
             normalize=prototype_normalize,
         )
-        self.router = Router(routing_type=routing_type, temperature=routing_temperature)
+        self.router = Router(
+            routing_type=routing_type,
+            temperature=routing_temperature,
+            sparse_assignment=sparse_assignment,
+            sparse_topk=sparse_topk,
+        )
         self.aggregator = PrototypeAggregator()
         self.token_scorer = TokenScorer(scoring_type=token_scoring_type, temperature=token_temperature)
-        self.token_mask_builder = TokenMaskBuilder(token_policy=token_policy)
+        self.token_mask_builder = TokenMaskBuilder(
+            token_policy=token_policy,
+            special_token_ids=special_token_ids,
+            error_on_empty_kept_tokens=error_on_empty_kept_tokens,
+        )
         self.token_pooler = MaskedTokenPooler()
         self.image_projector = MLPProjector(
             input_dim=prototype_dim,
@@ -75,6 +91,7 @@ class PrototypeConditionedTextHead(nn.Module):
             output_dim=self.projector_output_dim,
             dropout=projector_dropout,
             normalize_output=True,
+            projector_type=projector_type,
         )
         self.text_projector = MLPProjector(
             input_dim=prototype_dim,
@@ -82,6 +99,7 @@ class PrototypeConditionedTextHead(nn.Module):
             output_dim=self.projector_output_dim,
             dropout=projector_dropout,
             normalize_output=True,
+            projector_type=projector_type,
         )
         self.losses = PrototypeLosses(
             temperature_init=contrastive_temperature_init,
@@ -94,9 +112,17 @@ class PrototypeConditionedTextHead(nn.Module):
 
     def _compute_special_mass(self, token_weights: torch.Tensor, special_token_positions: Dict[str, torch.Tensor]) -> torch.Tensor:
         batch_index = torch.arange(token_weights.size(0), device=token_weights.device)
-        cls_mass = token_weights[batch_index, special_token_positions['cls']].mean()
-        eos_mass = token_weights[batch_index, special_token_positions['eos']].mean()
-        return cls_mass + eos_mass
+        total_mass = torch.zeros((), device=token_weights.device, dtype=token_weights.dtype)
+        has_special_positions = False
+        for key in ('cls', 'eos'):
+            positions = special_token_positions.get(key)
+            if positions is None:
+                continue
+            total_mass = total_mass + token_weights[batch_index, positions].mean()
+            has_special_positions = True
+        if has_special_positions:
+            return total_mass
+        return torch.zeros((), device=token_weights.device, dtype=token_weights.dtype)
 
     def _compute_usage_metrics(self, routing_weights: torch.Tensor) -> Dict[str, torch.Tensor]:
         usage = routing_weights.mean(dim=0)
@@ -160,6 +186,8 @@ class PrototypeConditionedTextHead(nn.Module):
         if router_debug:
             metrics['routing_max_prob'] = router_debug['routing_max_prob']
             metrics['prototype_assignment_entropy'] = router_debug['prototype_assignment_entropy']
+            if 'routing_active_count' in router_debug:
+                metrics['routing_active_count'] = router_debug['routing_active_count']
         if pooler_debug:
             metrics['token_pool_entropy'] = pooler_debug['token_pool_entropy']
             metrics['beta_max_prob'] = pooler_debug['beta_max_prob']

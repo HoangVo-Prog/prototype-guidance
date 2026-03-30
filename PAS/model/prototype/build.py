@@ -22,6 +22,11 @@ def build_prototype_head(args, input_dim: int) -> PrototypeConditionedTextHead:
     token_temperature = getattr(args, 'tau_t', getattr(args, 'token_pooling_temperature', 0.07))
     diversity_loss_weight = getattr(args, 'lambda_div', getattr(args, 'diversity_loss_weight', 0.01))
     balance_loss_weight = getattr(args, 'lambda_bal', getattr(args, 'prototype_balance_loss_weight', 0.0))
+    use_balancing_loss = bool(getattr(args, 'use_balancing_loss', False))
+    if use_balancing_loss and balance_loss_weight <= 0.0:
+        raise ValueError('use_balancing_loss=true requires lambda_bal / balance_loss_weight to be positive.')
+    if not use_balancing_loss and balance_loss_weight != 0.0:
+        raise ValueError('lambda_bal / balance_loss_weight must be 0.0 when use_balancing_loss is disabled.')
     return PrototypeConditionedTextHead(
         input_dim=input_dim,
         num_prototypes=getattr(args, 'prototype_num_prototypes', 32),
@@ -29,6 +34,7 @@ def build_prototype_head(args, input_dim: int) -> PrototypeConditionedTextHead:
         projector_output_dim=projector_output_dim,
         projector_hidden_dim=getattr(args, 'projector_hidden_dim', getattr(args, 'prototype_dim', input_dim)),
         projector_dropout=getattr(args, 'projector_dropout', 0.0),
+        projector_type=getattr(args, 'projector_type', 'mlp2'),
         prototype_init=getattr(args, 'prototype_init', 'normalized_random'),
         prototype_init_path=getattr(args, 'prototype_init_path', None),
         routing_type=routing_type,
@@ -36,15 +42,20 @@ def build_prototype_head(args, input_dim: int) -> PrototypeConditionedTextHead:
         token_scoring_type=token_scoring_type,
         token_temperature=token_temperature,
         token_policy=getattr(args, 'token_policy', 'content_only'),
+        special_token_ids=getattr(args, 'special_token_ids', None),
+        error_on_empty_kept_tokens=getattr(args, 'error_on_empty_kept_tokens', True),
         contextualization_enabled=contextualization_enabled,
         contextualization_type=getattr(args, 'prototype_contextualization_type', 'none'),
         contextualization_residual=getattr(args, 'prototype_contextualization_residual', True),
+        contextualization_num_layers=getattr(args, 'prototype_contextualization_num_layers', 1),
         prototype_normalize=getattr(args, 'prototype_normalize', True),
+        sparse_assignment=getattr(args, 'prototype_sparse_assignment', False),
+        sparse_topk=getattr(args, 'prototype_sparse_topk', 0),
         use_diversity_loss=getattr(args, 'use_diversity_loss', True),
         diversity_loss_weight=diversity_loss_weight,
-        use_balance_loss=balance_loss_weight > 0,
+        use_balance_loss=use_balancing_loss,
         balance_loss_weight=balance_loss_weight,
         contrastive_temperature_init=getattr(args, 'temperature', 0.07),
-        learnable_contrastive_temperature=True,
+        learnable_contrastive_temperature=getattr(args, 'learn_logit_scale', True),
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
     )

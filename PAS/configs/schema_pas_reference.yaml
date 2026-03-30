@@ -56,14 +56,17 @@ model:
   # Projector dropout probability. Typical range: 0.0 to 0.5.
   projector_dropout: 0.0
 
+  # Supported projector variants:
+  # - mlp2
+  # - linear
+  projector_type: mlp2
+
   # Global contrastive temperature inverse factor uses this through the model/loss stack.
   # Must be positive.
   temperature: 0.07
 
-  # Pooling mode label.
-  # Active PAS runtime requires: image_conditioned.
-  # Historical/interface-only label that appears in internals: cls.
-  pooling_mode: image_conditioned
+  # If true, learn the CLIP-style contrastive logit scale parameter.
+  learn_logit_scale: true
 
   # Input image size as [height, width]. Any positive integer pair is accepted.
   img_size: [384, 128]
@@ -159,8 +162,11 @@ prototype:
   # Diversity loss coefficient. Non-negative float.
   diversity_loss_weight: 0.01
 
+  # Enables the optional prototype balancing loss.
+  use_balancing_loss: false
+
   # Balance loss coefficient. Non-negative float.
-  # Placeholder-supported in the loss dict; typically left at 0.0.
+  # Must be positive when use_balancing_loss=true and 0.0 otherwise.
   balance_loss_weight: 0.0
 
   # Threshold used by debug metrics for counting low-usage prototypes.
@@ -187,19 +193,15 @@ text_pooling:
   # Token-scoring temperature. Must be positive.
   token_temperature: 0.07
 
-  # If true, special tokens are removed from candidate pooling positions.
-  # Must stay consistent with token_policy:
-  # - content_only        requires true
-  # - content_plus_special requires false
-  exclude_special_tokens: true
+  # Explicit token ids used to build valid-token masks and special-token masks.
+  # Provide the ids that match the active tokenizer / preprocessing contract.
+  special_token_ids:
+    bos_token_id: 49406
+    eos_token_id: 49407
+    pad_token_id: 0
 
-  # If true, only EOS is kept.
-  # In practice this should only be true together with token_policy: eos_only.
-  eos_as_only_token: false
-
-  # If true, padding tokens are masked.
-  # Phase E active runtime requires: true.
-  mask_padding_tokens: true
+  # If true, raise when the token policy removes every candidate token in a sample.
+  error_on_empty_kept_tokens: true
 
 training:
   # Train batch size per process. Positive integer.
@@ -258,9 +260,6 @@ training:
   # Gradient clipping norm. 0.0 disables clipping.
   grad_clip: 1.0
 
-  # Automatic mixed precision flag. true/false.
-  amp: false
-
 optimizer:
   # Supported optimizers:
   # - SGD
@@ -273,9 +272,6 @@ optimizer:
 
   # Learning rate for prototype bank params.
   lr_prototype_bank: 0.001
-
-  # Learning rate for contextualizer params.
-  lr_contextualizer: 0.001
 
   # Learning rate for image/text projector params.
   lr_projectors: 0.001
@@ -296,7 +292,6 @@ optimizer:
 
   # Weight decay overrides per parameter group.
   weight_decay_prototype_bank: 0.01
-  weight_decay_contextualizer: 0.01
   weight_decay_projectors: 0.05
   weight_decay_logit_scale: 0.0
   weight_decay_image_backbone: 0.0
@@ -423,3 +418,4 @@ evaluation:
 
   # Chunk size used by PAS blockwise text-side retrieval similarity computation.
   prototype_text_chunk_size: 128
+

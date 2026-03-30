@@ -122,8 +122,8 @@ class PhaseEIntegrationTests(unittest.TestCase):
             (torch.tensor([0, 1], dtype=torch.long), torch.randn(2, 3, 4, 4)),
         ]
 
-    def _build_args(self, freeze_backbones=True):
-        return SimpleNamespace(
+    def _build_args(self, freeze_backbones=True, **overrides):
+        base = dict(
             pretrain_choice='dummy',
             img_size=(4, 4),
             stride_size=1,
@@ -135,8 +135,9 @@ class PhaseEIntegrationTests(unittest.TestCase):
             projection_dim=4,
             projector_hidden_dim=8,
             projector_dropout=0.0,
+            projector_type='mlp2',
             temperature=0.07,
-            pooling_mode='image_conditioned',
+            learn_logit_scale=True,
             text_length=77,
             vocab_size=50010,
             use_prototype_bank=True,
@@ -156,6 +157,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
             prototype_normalize=True,
             prototype_sparse_assignment=False,
             prototype_sparse_topk=0,
+            use_balancing_loss=False,
             prototype_balance_loss_weight=0.0,
             prototype_dead_threshold=0.005,
             use_diversity_loss=True,
@@ -163,9 +165,8 @@ class PhaseEIntegrationTests(unittest.TestCase):
             token_policy='content_only',
             token_scoring_type='cosine',
             token_pooling_temperature=0.07,
-            exclude_special_tokens=True,
-            eos_as_only_token=False,
-            mask_padding_tokens=True,
+            special_token_ids={'bos_token_id': 49406, 'eos_token_id': 49407, 'pad_token_id': 0},
+            error_on_empty_kept_tokens=True,
             freeze_image_backbone=freeze_backbones,
             freeze_text_backbone=freeze_backbones,
             prototype_eval_image_chunk_size=2,
@@ -173,14 +174,12 @@ class PhaseEIntegrationTests(unittest.TestCase):
             optimizer='AdamW',
             lr=0.01,
             lr_prototype_bank=0.02,
-            lr_contextualizer=0.03,
             lr_projectors=0.04,
             lr_logit_scale=0.005,
             lr_image_backbone=0.001,
             lr_text_backbone=0.001,
             weight_decay=0.01,
             weight_decay_prototype_bank=0.02,
-            weight_decay_contextualizer=0.03,
             weight_decay_projectors=0.04,
             weight_decay_logit_scale=0.0,
             weight_decay_image_backbone=0.05,
@@ -189,6 +188,8 @@ class PhaseEIntegrationTests(unittest.TestCase):
             alpha=0.9,
             beta=0.999,
         )
+        base.update(overrides)
+        return SimpleNamespace(**base)
 
     def test_forward_returns_structured_losses_and_lightweight_debug_metrics(self):
         model = PASModel(self._build_args(), num_classes=2)
@@ -255,6 +256,54 @@ class PhaseEIntegrationTests(unittest.TestCase):
             optimizer.step()
             losses.append(loss.detach().item())
         self.assertLess(min(losses[1:]), losses[0])
+
+    def test_inference_similarity_depends_on_prototype_bank(self):
+        model = PASModel(self._build_args(), num_classes=2).eval()
+        images = self.batch['images'][:2]
+        text = self.batch['caption_ids'][:2]
+        image_features_a = model.encode_image_for_retrieval(images)
+        text_features = model.encode_text_for_retrieval(text)
+        similarity_a = model.compute_retrieval_similarity(image_features_a, text_features)
+
+        with torch.no_grad():
+            replacement_bank = torch.randn_like(model.prototype_head.prototype_bank.prototypes)
+            replacement_bank = torch.nn.functional.normalize(replacement_bank, dim=-1)
+            model.prototype_head.prototype_bank.prototypes.copy_(replacement_bank)
+
+        image_features_b = model.encode_image_for_retrieval(images)
+        similarity_b = model.compute_retrieval_similarity(image_features_b, text_features)
+        self.assertFalse(torch.allclose(similarity_a, similarity_b))
+
+    def test_model_supports_non_matching_prototype_dim(self):
+        model = PASModel(self._build_args(prototype_dim=6, projector_hidden_dim=10), num_classes=2)
+        outputs = model(self.batch, return_debug=True)
+        self.assertEqual(tuple(outputs['debug']['Q'].shape), (4, 6))
+        self.assertEqual(tuple(outputs['debug']['Theta_v'].shape), (4, 6))
+        self.assertEqual(tuple(outputs['debug']['text_tokens'].shape), (4, 6, 8))
+        self.assertTrue(torch.isfinite(outputs['loss_total']))
+
+    def test_model_supports_multi_layer_contextualization_and_sparse_routing(self):
+        model = PASModel(
+            self._build_args(
+                prototype_contextualization_num_layers=3,
+                prototype_sparse_assignment=True,
+                prototype_sparse_topk=2,
+            ),
+            num_classes=2,
+        )
+        outputs = model(self.batch, return_debug=True)
+        self.assertEqual(outputs['debug']['contextualization_num_layers'], 3)
+        self.assertTrue((outputs['debug']['alpha'].gt(0).sum(dim=-1) <= 2).all())
+        self.assertTrue(torch.isfinite(outputs['loss_total']))
+
+    def test_retrieval_text_interface_reuses_training_text_state_family(self):
+        model = PASModel(self._build_args(), num_classes=2)
+        text = self.batch['caption_ids'][:2]
+        training_text = model.extract_text_features(text)
+        retrieval_text = model.encode_text_for_retrieval(text)
+        torch.testing.assert_close(retrieval_text['text_token_states'], model._resolve_text_states(training_text))
+        torch.testing.assert_close(retrieval_text['attention_mask'], training_text.token_mask)
+        self.assertEqual(set(retrieval_text['special_token_positions'].keys()), set(training_text.special_token_positions.keys()))
 
 
 if __name__ == '__main__':  # pragma: no cover
