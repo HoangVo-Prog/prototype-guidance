@@ -1,0 +1,59 @@
+# PAS Retrieval
+
+This repository is the active research codebase for the PAS image-text retrieval model built on top of an inherited CLIP-based retrieval project.
+
+The primary training path is now the PAS method:
+- image encoder -> global image embedding
+- learnable prototype bank with optional contextualization
+- routing and prototype aggregation
+- image-conditioned text token scoring and masked pooling
+- symmetric contrastive training with optional prototype regularization
+
+## Main entrypoints
+
+- `train.py`: PAS training entrypoint
+- `test.py`: retrieval evaluation entrypoint
+- `configs/train_pas_v1.yaml`: main experiment config
+- `configs/debug_pas_v1.yaml`: short debug config
+- `configs/ablation_pas_no_context.yaml`: contextualization ablation
+- `configs/ablation_pas_no_diversity.yaml`: diversity-loss ablation
+- `scripts/phase_e_smoke.py`: synthetic end-to-end smoke harness
+
+## Repository layout
+
+- `datasets/`: dataset parsing, tokenization, transforms, samplers, dataloader builder
+- `model/`: CLIP wrapper plus PAS retrieval model and modules
+- `processor/`: train and inference loops
+- `solver/`: optimizer and LR scheduler construction
+- `utils/`: config IO, logging, metrics, checkpointing, distributed helpers
+- `tests/`: module and integration tests
+
+## Wandb setup
+
+Create a local `.env` file in the repo root before any tracked run:
+
+```bash
+WANDB_API_KEY=your_wandb_api_key_here
+```
+
+`train.py` and `test.py` load `.env` automatically at startup, so tracked runs should rely on `WANDB_API_KEY` from `.env` instead of an interactive `wandb login` step.
+
+## Typical commands
+
+```bash
+python train.py --config_file configs/train_pas_v1.yaml
+python train.py --config_file configs/debug_pas_v1.yaml
+python train.py --config_file configs/kaggle_pas_quicktrain.yaml
+python test.py --config_file configs/train_pas_v1.yaml --output_dir <run_dir>
+```
+
+## Notes
+
+- `README.upstream.md` is kept as a historical snapshot of the inherited upstream project.
+- Phase reports document the staged integration history and cleanup decisions.
+
+
+
+
+
+

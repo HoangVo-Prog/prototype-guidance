@@ -1,0 +1,131 @@
+experiment:
+  name: debug_pas_v1
+  output_dir: runs
+  seed: 7
+  local_rank: 0
+
+model:
+  name: PAS
+  variant: pas_debug
+  pretrain_choice: ViT-B/16
+  image_backbone: clip_visual
+  text_backbone: clip_text_transformer
+  embedding_dim: 512
+  projection_dim: 256
+  projector_hidden_dim: 512
+  projector_dropout: 0.0
+  temperature: 0.07
+  pooling_mode: image_conditioned
+  img_size: [256, 128]
+  stride_size: 16
+  text_length: 77
+  vocab_size: 49408
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+  use_prototype_contextualization: true
+  return_debug_outputs: true
+
+prototype:
+  num_prototypes: 32
+  prototype_dim: 512
+  prototype_init: normalized_random
+  prototype_init_path: null
+  routing_type: cosine
+  routing_temperature: 0.07
+  contextualization_enabled: true
+  contextualization_type: self_attention
+  contextualization_residual: true
+  contextualization_num_layers: 1
+  prototype_normalize: true
+  assignment_sparse: false
+  assignment_topk: 0
+  use_diversity_loss: true
+  diversity_loss_weight: 0.01
+  balance_loss_weight: 0.0
+  dead_prototype_threshold: 0.005
+
+text_pooling:
+  token_policy: content_only
+  scoring_type: cosine
+  token_temperature: 0.07
+  exclude_special_tokens: true
+  eos_as_only_token: false
+  mask_padding_tokens: true
+
+training:
+  batch_size: 4
+  epochs: 2
+  log_period: 1
+  eval_frequency: 1
+  save_interval: 1
+  resume: false
+  resume_ckpt_file: ''
+  finetune: ''
+  pretrain: ''
+  img_aug: false
+  txt_aug: false
+  sampler: random
+  num_instance: 2
+  num_workers: 0
+  training: true
+  freeze_image_backbone: true
+  freeze_text_backbone: true
+  grad_clip: 1.0
+  amp: false
+
+optimizer:
+  type: AdamW
+  lr: 0.001
+  lr_prototype_bank: 0.001
+  lr_contextualizer: 0.001
+  lr_projectors: 0.001
+  lr_logit_scale: 0.0001
+  lr_image_backbone: 0.0
+  lr_text_backbone: 0.0
+  weight_decay: 0.01
+  weight_decay_prototype_bank: 0.01
+  weight_decay_contextualizer: 0.01
+  weight_decay_projectors: 0.05
+  weight_decay_logit_scale: 0.0
+  weight_decay_image_backbone: 0.0
+  weight_decay_text_backbone: 0.0
+  momentum: 0.9
+  alpha: 0.9
+  beta: 0.999
+  milestones: [1]
+  gamma: 0.1
+  warmup_factor: 0.1
+  warmup_epochs: 0
+  warmup_method: linear
+  scheduler: cosine
+  target_lr: 0.0
+  power: 0.9
+
+dataset:
+  dataset_name: CUHK-PEDES
+  root_dir: data
+  val_dataset: val
+  num_workers: 0
+
+logging:
+  use_wandb: false
+  project: PAS
+  entity: null
+  run_name: null
+  group: debug
+  mode: offline
+  tags: [pas, debug]
+  notes: Small debug run with canonical v1 method defaults and full diagnostics.
+  log_interval: 1
+  log_code: false
+  log_debug_metrics: true
+
+evaluation:
+  checkpoint_path: ''
+  device: cuda
+  cross_domain_generalization: false
+  target_domain: RSTPReid
+  retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
+  batch_size: 16
+  prototype_image_chunk_size: 4
+  prototype_text_chunk_size: 8

@@ -1,0 +1,81 @@
+# CONFLICT_RESOLUTION
+
+## CR-01
+- Files: `PAS/model/build.py`
+- Expected behavior: only the CLIP backbone should be fp16-converted; the prototype path should remain compatible with the float32 tensors emitted by the wrappers.
+- Observed behavior: `build_model()` called `convert_weights(model)` on the entire model, so prototype-head linears were also half-cast.
+- Chosen resolution: changed `build_model()` to call `convert_weights(model.base_model)` and then explicitly keep `model.prototype_head` in `float32`.
+- Why this follows the canonical docs: the implementation spec requires numerically safe prototype-bank and similarity behavior and never authorizes half-casting the prototype path.
+- Code patched: yes.
+
+## CR-02
+- Files: `PAS/model/build.py`, `PAS/configs/debug_pas_v1.yaml`, `PAS/configs/kaggle_pas_quicktrain.yaml`
+- Expected behavior: text pooling must use token-level hidden states from the last text layer before pooling, with `prototype_dim == feature_dim` in minimal v1.
+- Observed behavior: `_resolve_text_states()` could fall back to CLIP-projected token features if dimensions differed, and shipped configs set `prototype_dim` to `256`, triggering that drift.
+- Chosen resolution: enforced `prototype_dim == embed_dim` in the model validator, made `_resolve_text_states()` require `pre_projection_tokens`, and repaired the drifting configs.
+- Why this follows the canonical docs: `IMPLEMENTATION_SPEC.md` explicitly fixes “token-level hidden states from the last text layer” and “prototype dimension equals the backbone feature dimension `D`”.
+- Code patched: yes.
+
+## CR-03
+- Files: `PAS/utils/options.py`, `PAS/model/prototype/build.py`, `PAS/configs/default.yaml`, `PAS/configs/train_pas_v1.yaml`, `PAS/configs/debug_pas_v1.yaml`, `PAS/configs/ablation_pas_no_context.yaml`, `PAS/configs/ablation_pas_no_diversity.yaml`, `PAS/configs/kaggle_pas_quicktrain.yaml`
+- Expected behavior: default projector output dimension must be `256`.
+- Observed behavior: parser and default/train configs used `512`.
+- Chosen resolution: reset parser and config defaults to `256` and made the prototype-head builder default to `256` when no override is present.
+- Why this follows the canonical docs: projector output dim `256` is fixed in both the technical spec and the implementation contract.
+- Code patched: yes.
+
+## CR-04
+- Files: `PAS/model/prototype/losses.py`
+- Expected behavior: `L_div = ||G - I||_F^2`, `L_bal = ((usage - target)**2).sum()`, and total loss should apply `lambda_div` / `lambda_bal` at the `L_total` boundary while returning raw sub-losses separately.
+- Observed behavior: diversity used a mean reduction, and the loss weights were multiplied inside the component functions, so `loss_diversity` / `loss_balance` were already weighted.
+- Chosen resolution: changed diversity to Frobenius-squared sum, kept balancing as sum, returned raw sub-losses, and exposed weighted terms separately as `loss_diversity_weighted` and `loss_balance_weighted`.
+- Why this follows the canonical docs: `IMPLEMENTATION_SPEC.md` explicitly defines the raw tensor semantics and the final weighted objective.
+- Code patched: yes.
+
+## CR-05
+- Files: `PAS/model/prototype/token_mask.py`, `PAS/model/prototype/token_pooler.py`, `PAS/model/prototype/head.py`, `PAS/model/build.py`
+- Expected behavior: separate `token_valid_mask` and `token_keep_mask`, explicit `-inf` masking before token softmax, zero beta on invalid positions, and exposed `beta_logits_masked`.
+- Observed behavior: only one ambiguous mask was exposed and the masked-softmax logic was less explicit than the contract requested.
+- Chosen resolution: split the masks, exposed both in outputs/debug, implemented explicit masked logits with `-inf`, and surfaced `beta_logits_masked` end-to-end.
+- Why this follows the canonical docs: the implementation contract names these tensors explicitly and treats their semantics as part of the required audit/debug surface.
+- Code patched: yes.
+
+## CR-06
+- Files: `PAS/model/prototype/head.py`, `PAS/model/build.py`, `PAS/utils/metric_logging.py`
+- Expected behavior: alpha entropy, beta entropy, prototype usage, geometry, and norm diagnostics should be available during normal training without requiring full tensor dumps.
+- Observed behavior: with `return_debug_outputs=false`, normal training returned no debug metrics at all, so `log_debug_metrics=true` had little effect.
+- Chosen resolution: added always-on lightweight scalar metrics under `outputs['debug']`, while keeping large tensor payloads gated behind `return_debug=True`.
+- Why this follows the canonical docs: the spec requires cheap normal-training diagnostics and richer opt-in debug mode.
+- Code patched: yes.
+
+## CR-07
+- Files: `PAS/utils/options.py`, `PAS/utils/config.py`, `PAS/solver/build.py`, `PAS/configs/*.yaml`
+- Expected behavior: parser defaults, YAML defaults, and optimizer group behavior should reflect the canonical v1 defaults.
+- Observed behavior: several defaults drifted (`prototype_init`, learning rates, grad clip), and there was no per-group weight-decay surface.
+- Chosen resolution: aligned parser/YAML defaults, added canonical aliases (`tau_p`, `tau_t`, `lambda_div`, `lambda_bal`, etc.), and introduced per-group weight-decay keys for optimizer construction.
+- Why this follows the canonical docs: the implementation contract explicitly lists these config fields and expects their defaults to be documented and aligned.
+- Code patched: yes.
+
+## CR-08
+- Files: `PAS/model/prototype/prototype_bank.py`
+- Expected behavior: the default init surface should match the documented options, including `normalized_random`, `sampled_image_embeddings`, and `kmeans_centroids`.
+- Observed behavior: only `random` / `xavier` / path-loading were exposed directly, even though the default behavior was effectively normalized random.
+- Chosen resolution: added canonical init-mode aliases and made external sampled/k-means modes route through `prototype_init_path` cleanly.
+- Why this follows the canonical docs: the docs treat normalized random as the default and sampled/k-means as explicit supported ablations.
+- Code patched: yes.
+
+## CR-09
+- Files: `PAS/configs/debug_pas_v1.yaml`, `PAS/configs/ablation_pas_no_context.yaml`, `PAS/configs/ablation_pas_no_diversity.yaml`, `PAS/configs/kaggle_pas_quicktrain.yaml`
+- Expected behavior: ablation/debug configs should preserve the canonical v1 defaults except for their named ablation or debugging-only training knobs.
+- Observed behavior: some shipped configs silently changed core method defaults such as `num_prototypes`, `prototype_dim`, and token policy.
+- Chosen resolution: rewrote those configs so they keep the canonical method defaults and differ only where their filename says they should differ.
+- Why this follows the canonical docs: the instructions explicitly say not to change defaults by accident and not to let ablation-only paths become de facto defaults.
+- Code patched: yes.
+
+## CR-10
+- Files: `PAS/tests/test_prototype_modules.py`, `PAS/tests/test_phase_e_integration.py`, `PAS/scripts/phase_e_smoke.py`
+- Expected behavior: tests/smoke coverage should check shapes, masks, alpha/beta normalization, gradient flow to the prototype bank, finite loss, and canonical debug outputs.
+- Observed behavior: prior tests did not fully cover the new contract surfaces such as raw-vs-weighted losses, separate masks, or always-on scalar diagnostics.
+- Chosen resolution: expanded module/integration/smoke checks to cover the repaired contract.
+- Why this follows the canonical docs: the implementation spec explicitly requires these tests and diagnostics.
+- Code patched: yes.
