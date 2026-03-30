@@ -1,0 +1,425 @@
+# PAS commented config schema reference.
+#
+# This file is a copy/edit template, not the only valid config.
+# It documents the active YAML keys consumed by utils/config.py and utils/options.py.
+#
+# Notes:
+# - Values shown below are examples.
+# - Comments list supported values where the code validates them.
+# - Some fields accept arbitrary strings/paths because they are only used for naming or file locations.
+# - Phase E runtime constraints are called out inline when a key exists but only a subset is currently supported.
+
+experiment:
+  # Any experiment/run name string. Used in output directory naming and logs.
+  name: example_pas_run
+
+  # Any writable output root. train.py creates <output_dir>/<dataset>/<timestamp>_<name>.
+  output_dir: runs
+
+  # Any integer random seed.
+  seed: 1
+
+  # Integer local GPU rank. Usually set by torch.distributed launcher; keep 0 for single-GPU runs.
+  local_rank: 0
+
+model:
+  # Active model family name. Practical active value: PAS.
+  name: PAS
+
+  # Free-form variant tag used for naming/logging.
+  variant: pas_v1
+
+  # CLIP checkpoint name passed into build_CLIP_from_openai_pretrained(...).
+  # Tested/default value in this repo: ViT-B/16.
+  pretrain_choice: ViT-B/16
+
+  # Logical image-backbone name for logging/metadata.
+  # Active implementation value: clip_visual.
+  image_backbone: clip_visual
+
+  # Logical text-backbone name for logging/metadata.
+  # Active implementation value: clip_text_transformer.
+  text_backbone: clip_text_transformer
+
+  # Backbone feature dimension before PAS projectors.
+  # For the shipped ViT-B/16 setup this is typically 512.
+  embedding_dim: 512
+
+  # Output dimension of image/text projectors.
+  # Any positive integer is accepted.
+  projection_dim: 256
+
+  # Hidden dimension inside the projector MLPs.
+  # Any positive integer is accepted.
+  projector_hidden_dim: 512
+
+  # Projector dropout probability. Typical range: 0.0 to 0.5.
+  projector_dropout: 0.0
+
+  # Global contrastive temperature inverse factor uses this through the model/loss stack.
+  # Must be positive.
+  temperature: 0.07
+
+  # Pooling mode label.
+  # Active PAS runtime requires: image_conditioned.
+  # Historical/interface-only label that appears in internals: cls.
+  pooling_mode: image_conditioned
+
+  # Input image size as [height, width]. Any positive integer pair is accepted.
+  img_size: [384, 128]
+
+  # Vision patch stride. Positive integer.
+  stride_size: 16
+
+  # Maximum token sequence length for text inputs.
+  text_length: 77
+
+  # Tokenizer vocabulary size. Keep aligned with the tokenizer/BPE file.
+  vocab_size: 49408
+
+  # Enables PAS prototype routing branch.
+  # Phase E active runtime requires: true.
+  use_prototype_bank: true
+
+  # Enables image-conditioned text pooling.
+  # Phase E active runtime requires: true.
+  use_image_conditioned_pooling: true
+
+  # Enables prototype contextualization module.
+  # true/false are both allowed.
+  use_prototype_contextualization: true
+
+  # If true, forward(...) may return larger debug tensors.
+  # true/false.
+  return_debug_outputs: false
+
+prototype:
+  # Number of learnable prototypes. Positive integer.
+  num_prototypes: 32
+
+  # Prototype feature dimension.
+  # Phase E minimal PAS runtime currently requires this to match model.embedding_dim.
+  prototype_dim: 512
+
+  # Supported init values:
+  # - random                -> alias for normalized_random
+  # - normalized_random     -> random Gaussian then row-normalized
+  # - xavier                -> Xavier uniform init
+  # - sampled_image_embeddings -> load from prototype_init_path
+  # - kmeans_centroids         -> load from prototype_init_path
+  prototype_init: normalized_random
+
+  # null or path to a .pt/.pth tensor/checkpoint used by sampled_image_embeddings or kmeans_centroids.
+  prototype_init_path: null
+
+  # Supported routing values:
+  # - cosine
+  # - dot
+  # Accepted aliases:
+  # - normalized_dot -> cosine
+  # - softmax        -> cosine
+  routing_type: cosine
+
+  # Routing temperature. Must be positive.
+  routing_temperature: 0.07
+
+  # Enables prototype contextualization.
+  # true/false.
+  contextualization_enabled: true
+
+  # Supported contextualization values:
+  # - self_attention
+  # - none
+  # Accepted aliases:
+  # - off                   -> none
+  # - similarity            -> self_attention
+  # - similarity_residual   -> self_attention
+  # - transformer           -> self_attention
+  contextualization_type: self_attention
+
+  # If true, use residual contextualization: Theta_tilde = Theta + softmax(sim) @ Theta.
+  contextualization_residual: true
+
+  # Positive integer in schema, but Phase E currently supports exactly: 1.
+  contextualization_num_layers: 1
+
+  # If true, normalize prototypes before similarity-style operations.
+  prototype_normalize: true
+
+  # Sparse routing switch exists in schema, but Phase E runtime currently requires: false.
+  assignment_sparse: false
+
+  # Top-k sparse routing count.
+  # Phase E runtime currently supports only: 0.
+  assignment_topk: 0
+
+  # Enables prototype diversity regularization.
+  use_diversity_loss: true
+
+  # Diversity loss coefficient. Non-negative float.
+  diversity_loss_weight: 0.01
+
+  # Balance loss coefficient. Non-negative float.
+  # Placeholder-supported in the loss dict; typically left at 0.0.
+  balance_loss_weight: 0.0
+
+  # Threshold used by debug metrics for counting low-usage prototypes.
+  dead_prototype_threshold: 0.005
+
+text_pooling:
+  # Supported token policies:
+  # - content_only
+  # - content_plus_special
+  # - eos_only
+  # Accepted aliases:
+  # - content, non_special -> content_only
+  # - all                  -> content_plus_special
+  token_policy: content_only
+
+  # Supported token scoring values:
+  # - cosine
+  # - dot
+  # Accepted aliases:
+  # - normalized_dot       -> cosine
+  # - prototype_summary_dot -> dot
+  scoring_type: cosine
+
+  # Token-scoring temperature. Must be positive.
+  token_temperature: 0.07
+
+  # If true, special tokens are removed from candidate pooling positions.
+  # Must stay consistent with token_policy:
+  # - content_only        requires true
+  # - content_plus_special requires false
+  exclude_special_tokens: true
+
+  # If true, only EOS is kept.
+  # In practice this should only be true together with token_policy: eos_only.
+  eos_as_only_token: false
+
+  # If true, padding tokens are masked.
+  # Phase E active runtime requires: true.
+  mask_padding_tokens: true
+
+training:
+  # Train batch size per process. Positive integer.
+  batch_size: 32
+
+  # Total number of epochs. Positive integer.
+  epochs: 60
+
+  # Console/TensorBoard logging period in training iterations. Positive integer.
+  log_period: 20
+
+  # Validation frequency in epochs. Positive integer.
+  eval_frequency: 1
+
+  # Checkpoint save frequency in epochs. 0 disables periodic epoch_* checkpoints.
+  save_interval: 1
+
+  # Resume flag. true/false.
+  resume: false
+
+  # Path to checkpoint used when resume=true.
+  resume_ckpt_file: ''
+
+  # Optional finetune checkpoint path loaded into model weights before optimizer creation.
+  finetune: ''
+
+  # Optional pretrain checkpoint path hook retained in schema.
+  pretrain: ''
+
+  # Image augmentation flag for training transforms.
+  img_aug: true
+
+  # Text augmentation flag retained in schema.
+  txt_aug: true
+
+  # Supported sampler values:
+  # - identity
+  # - random
+  sampler: identity
+
+  # Instances per identity for identity sampler. Positive integer.
+  num_instance: 2
+
+  # DataLoader worker count. Non-negative integer.
+  num_workers: 4
+
+  # true for training mode, false for evaluation-mode config usage.
+  training: true
+
+  # Freeze CLIP visual backbone parameters. true/false.
+  freeze_image_backbone: true
+
+  # Freeze CLIP text backbone parameters. true/false.
+  freeze_text_backbone: true
+
+  # Gradient clipping norm. 0.0 disables clipping.
+  grad_clip: 1.0
+
+  # Automatic mixed precision flag. true/false.
+  amp: false
+
+optimizer:
+  # Supported optimizers:
+  # - SGD
+  # - Adam
+  # - AdamW
+  type: AdamW
+
+  # Base/default learning rate for any params not overridden by group-specific lr values.
+  lr: 0.001
+
+  # Learning rate for prototype bank params.
+  lr_prototype_bank: 0.001
+
+  # Learning rate for contextualizer params.
+  lr_contextualizer: 0.001
+
+  # Learning rate for image/text projector params.
+  lr_projectors: 0.001
+
+  # Learning rate for logit_scale param.
+  lr_logit_scale: 0.0001
+
+  # Learning rate for image backbone params.
+  # 0.0 is common when freeze_image_backbone=true.
+  lr_image_backbone: 0.0
+
+  # Learning rate for text backbone params.
+  # 0.0 is common when freeze_text_backbone=true.
+  lr_text_backbone: 0.0
+
+  # Default weight decay for params without group-specific override.
+  weight_decay: 0.01
+
+  # Weight decay overrides per parameter group.
+  weight_decay_prototype_bank: 0.01
+  weight_decay_contextualizer: 0.01
+  weight_decay_projectors: 0.05
+  weight_decay_logit_scale: 0.0
+  weight_decay_image_backbone: 0.0
+  weight_decay_text_backbone: 0.0
+
+  # SGD momentum when optimizer=SGD.
+  momentum: 0.9
+
+  # First Adam/AdamW beta term.
+  alpha: 0.9
+
+  # Second Adam/AdamW beta term.
+  beta: 0.999
+
+  # Epoch milestones for step scheduler. Sorted integer list.
+  milestones: [40, 50]
+
+  # Scheduler decay factor used by step/exp modes.
+  gamma: 0.1
+
+  # Warmup multiplier start factor.
+  warmup_factor: 0.1
+
+  # Number of warmup epochs. Non-negative integer.
+  warmup_epochs: 5
+
+  # Supported warmup methods:
+  # - linear
+  # - constant
+  warmup_method: linear
+
+  # Supported scheduler modes:
+  # - step
+  # - exp
+  # - poly
+  # - cosine
+  # - linear
+  scheduler: cosine
+
+  # Target learning rate used by cosine/poly/linear-style schedules.
+  target_lr: 0.0
+
+  # Power/exponent used by exp/poly schedules.
+  power: 0.9
+
+dataset:
+  # Supported dataset names in the current factory:
+  # - CUHK-PEDES
+  # - ICFG-PEDES
+  # - RSTPReid
+  dataset_name: RSTPReid
+
+  # Dataset root directory. The loader expects dataset subfolders under this path.
+  root_dir: data
+
+  # Validation split selection during training.
+  # Supported values in current dataloader:
+  # - val
+  # - test
+  val_dataset: test
+
+  # Dataset worker count copied into args.num_workers by config mapping.
+  # Keep aligned with training.num_workers unless you have a reason to separate them.
+  num_workers: 4
+
+logging:
+  # Enable Weights & Biases logging. true/false.
+  use_wandb: false
+
+  # wandb project name string.
+  project: PAS
+
+  # wandb entity/team name or null.
+  entity: null
+
+  # Explicit wandb run name or null to let train.py/use output dir naming handle it.
+  run_name: null
+
+  # Optional wandb group label or null.
+  group: null
+
+  # wandb mode passed through to wandb.init(...).
+  # Common values: online, offline, disabled.
+  mode: online
+
+  # List of wandb tags.
+  tags: []
+
+  # Optional notes string or null.
+  notes: null
+
+  # Train-side wandb logging interval in iterations.
+  log_interval: 50
+
+  # If true, try to upload source code snapshot to wandb.
+  log_code: false
+
+  # If true, include PAS debug scalars in logging payloads.
+  log_debug_metrics: true
+
+evaluation:
+  # Optional checkpoint path for standalone test.py evaluation.
+  checkpoint_path: ''
+
+  # Torch device string. Examples: cuda, cpu.
+  device: cuda
+
+  # If true, test.py switches dataset_name to target_domain during cross-domain evaluation.
+  cross_domain_generalization: false
+
+  # Cross-domain target dataset name.
+  # In practice use one of: CUHK-PEDES, ICFG-PEDES, RSTPReid.
+  target_domain: RSTPReid
+
+  # Retrieval metric names to keep/report.
+  # Current evaluator computes/logs: R1, R5, R10, mAP, mINP, rSum.
+  retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
+
+  # Evaluation batch size for image/text retrieval loaders. Positive integer.
+  batch_size: 512
+
+  # Chunk size used by PAS blockwise image-side retrieval similarity computation.
+  prototype_image_chunk_size: 32
+
+  # Chunk size used by PAS blockwise text-side retrieval similarity computation.
+  prototype_text_chunk_size: 128
