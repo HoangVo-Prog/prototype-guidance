@@ -102,7 +102,7 @@ optimizer:
   power: 0.9
 
 dataset:
-  dataset_name: CUHK-PEDES
+  dataset_name: RSTPReid
   root_dir: data
   val_dataset: val
   num_workers: 2
