@@ -9,7 +9,7 @@ import regex as re
 
 @lru_cache()
 def default_bpe():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "../data/bpe_simple_vocab_16e6.txt.gz")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "../model/bpe_simple_vocab_16e6.txt.gz")
 
 
 @lru_cache()
@@ -133,3 +133,4 @@ class SimpleTokenizer(object):
         text = ''.join([self.decoder[token] for token in tokens])
         text = bytearray([self.byte_decoder[c] for c in text]).decode('utf-8', errors="replace").replace('</w>', ' ')
         return text
+
