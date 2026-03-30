@@ -4,7 +4,7 @@ from datasets import build_dataloader
 from model import build_model
 from processor.processor import do_inference
 from utils.checkpoint import Checkpointer
-from utils.env import load_dotenv_if_present
+from utils.env import load_runtime_environment
 from utils.iotools import load_train_configs
 from utils.logger import setup_logger
 from utils.options import get_args
@@ -29,7 +29,7 @@ def _maybe_load_saved_run_config(args):
 
 
 if __name__ == '__main__':
-    load_dotenv_if_present()
+    load_runtime_environment()
     args = get_args()
     args = _maybe_load_saved_run_config(args)
     args.training = False
@@ -54,6 +54,7 @@ if __name__ == '__main__':
     checkpointer.load(f=checkpoint_path)
     model = model.to(device)
     do_inference(model, test_img_loader, test_txt_loader, args)
+
 
 
 

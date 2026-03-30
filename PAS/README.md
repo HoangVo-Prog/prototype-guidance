@@ -36,7 +36,7 @@ Create a local `.env` file in the repo root before any tracked run:
 WANDB_API_KEY=your_wandb_api_key_here
 ```
 
-`train.py` and `test.py` load `.env` automatically at startup, so tracked runs should rely on `WANDB_API_KEY` from `.env` instead of an interactive `wandb login` step.
+`train.py` and `test.py` load `.env` automatically at startup. If `WANDB_API_KEY` is still unset, they also try to read a Kaggle Secret named `WANDB_API_KEY`, so local runs and Kaggle notebook runs both work without an interactive `wandb login` step.
 
 ## Typical commands
 
@@ -51,6 +51,7 @@ python test.py --config_file configs/train_pas_v1.yaml --output_dir <run_dir>
 
 - `README.upstream.md` is kept as a historical snapshot of the inherited upstream project.
 - Phase reports document the staged integration history and cleanup decisions.
+
 
 
 

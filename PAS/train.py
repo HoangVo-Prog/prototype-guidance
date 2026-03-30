@@ -13,7 +13,7 @@ from processor.processor import do_train
 from solver import build_lr_scheduler, build_optimizer
 from utils.checkpoint import Checkpointer
 from utils.comm import get_rank, synchronize
-from utils.env import load_dotenv_if_present
+from utils.env import load_runtime_environment
 from utils.experiment import ExperimentTracker
 from utils.iotools import save_train_configs
 from utils.logger import setup_logger
@@ -40,7 +40,7 @@ def _build_run_name(args):
 
 
 if __name__ == '__main__':
-    load_dotenv_if_present()
+    load_runtime_environment()
     args = get_args()
     set_seed(args.seed + get_rank())
 
@@ -103,6 +103,7 @@ if __name__ == '__main__':
         do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker=experiment_tracker)
     finally:
         experiment_tracker.finish()
+
 
 
 

@@ -108,7 +108,7 @@ dataset:
   num_workers: 2
 
 logging:
-  use_wandb: false
+  use_wandb: true
   project: PAS
   entity: null
   run_name: null
