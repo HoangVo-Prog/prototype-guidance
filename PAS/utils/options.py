@@ -165,9 +165,9 @@ def _finalize_args(args):
     args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling)
     legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)
     authoritative_contextualization = getattr(args, 'prototype_contextualization_enabled', None)
-    config_data = getattr(args, 'config_data', {}) or {}
-    model_config = config_data.get('model', {}) if isinstance(config_data.get('model', {}), dict) else {}
-    prototype_config = config_data.get('prototype', {}) if isinstance(config_data.get('prototype', {}), dict) else {}
+    override_config_data = getattr(args, 'override_config_data', {}) or {}
+    model_config = override_config_data.get('model', {}) if isinstance(override_config_data.get('model', {}), dict) else {}
+    prototype_config = override_config_data.get('prototype', {}) if isinstance(override_config_data.get('prototype', {}), dict) else {}
     authoritative_from_config = 'contextualization_enabled' in prototype_config
     legacy_from_config = 'use_prototype_contextualization' in model_config
     if authoritative_contextualization is None:
@@ -191,7 +191,9 @@ def get_args(argv=None):
     default_config_path = DEFAULT_CONFIG_PATH if os.path.exists(DEFAULT_CONFIG_PATH) else None
     override_config_path = args.config_file or None
     config_data = load_yaml_config(default_config_path, override_config_path)
+    override_config_data = load_yaml_config(None, override_config_path) if override_config_path else {}
     args = apply_config_to_args(parser, args, config_data, argv if argv is not None else sys.argv[1:])
+    args.override_config_data = override_config_data
     args = _finalize_args(args)
     validate_runtime_args_namespace(args)
     return args
