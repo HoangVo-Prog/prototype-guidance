@@ -389,6 +389,7 @@ def _iter_config_value_paths(config_key_map: Dict[Tuple[str, ...], str], config_
 
 def apply_config_to_args(parser, args, config_data: Dict[str, Any], argv: Optional[List[str]] = None):
     cli_dests = _extract_cli_destinations(parser, argv or [])
+    args.cli_dests = set(cli_dests)
     applied_dests = set()
     for mapping in (PRIMARY_CONFIG_KEY_MAP, READ_ALIAS_CONFIG_KEY_MAP):
         for _, dest, value in _iter_config_value_paths(mapping, config_data):

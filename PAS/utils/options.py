@@ -170,7 +170,11 @@ def _finalize_args(args):
     prototype_config = override_config_data.get('prototype', {}) if isinstance(override_config_data.get('prototype', {}), dict) else {}
     authoritative_from_config = 'contextualization_enabled' in prototype_config
     legacy_from_config = 'use_prototype_contextualization' in model_config
-    if authoritative_contextualization is None:
+    cli_dests = getattr(args, 'cli_dests', set())
+    authoritative_from_cli = 'prototype_contextualization_enabled' in cli_dests
+    if authoritative_from_cli:
+        authoritative_contextualization = bool(authoritative_contextualization)
+    elif authoritative_contextualization is None:
         authoritative_contextualization = True if legacy_contextualization is None else bool(legacy_contextualization)
     elif legacy_from_config and not authoritative_from_config:
         authoritative_contextualization = bool(legacy_contextualization)
