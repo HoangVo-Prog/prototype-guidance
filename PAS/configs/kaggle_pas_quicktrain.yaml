@@ -33,7 +33,7 @@ prototype:
   prototype_dim: 512
   prototype_init: normalized_random
   prototype_init_path: null
-  routing_type: consine
+  routing_type: cosine
   routing_temperature: 0.07
   contextualization_enabled: true
   contextualization_type: self_attention
@@ -50,7 +50,7 @@ prototype:
 
 text_pooling:
   token_policy: content_only
-  scoring_type: consine
+  scoring_type: cosine
   token_temperature: 0.07
   special_token_ids:
     bos_token_id: 49406
