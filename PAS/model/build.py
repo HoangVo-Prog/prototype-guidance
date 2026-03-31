@@ -7,6 +7,12 @@ import torch.nn as nn
 from .clip_model import build_CLIP_from_openai_pretrained, convert_weights
 from .interfaces import EncoderOutput
 from .prototype import TokenMaskBuilder, build_prototype_head
+from utils.precision import (
+    canonicalize_amp_dtype,
+    canonicalize_backbone_precision,
+    canonicalize_prototype_precision,
+    precision_to_torch_dtype,
+)
 
 
 class PASModel(nn.Module):
@@ -23,6 +29,8 @@ class PASModel(nn.Module):
         self.text_backbone = getattr(args, 'text_backbone', 'clip_text_transformer')
         self.projection_dim = getattr(args, 'projection_dim', self.embed_dim)
         self.prototype_dim = getattr(args, 'prototype_dim', self.embed_dim)
+        self.backbone_precision = canonicalize_backbone_precision(getattr(args, 'backbone_precision', 'fp16'))
+        self.prototype_precision = canonicalize_prototype_precision(getattr(args, 'prototype_precision', 'fp32'))
         self.return_debug_outputs = bool(getattr(args, 'return_debug_outputs', False))
         self.prototype_eval_image_chunk_size = int(getattr(args, 'prototype_eval_image_chunk_size', 32) or 32)
         self.prototype_eval_text_chunk_size = int(getattr(args, 'prototype_eval_text_chunk_size', 128) or 128)
@@ -44,6 +52,17 @@ class PASModel(nn.Module):
                 'special_token_ids must be configured explicitly so token masking does not rely on hardcoded '
                 'tokenizer assumptions.'
             )
+        if self.backbone_precision == 'fp16' and bool(getattr(self.args, 'amp', False)):
+            if canonicalize_amp_dtype(getattr(self.args, 'amp_dtype', 'fp16')) != 'fp16':
+                raise ValueError('model.backbone_precision=fp16 requires training.amp_dtype=fp16 when AMP is enabled.')
+        if self.prototype_precision == 'fp16' and bool(getattr(self.args, 'amp', False)):
+            if canonicalize_amp_dtype(getattr(self.args, 'amp_dtype', 'fp16')) != 'fp16':
+                raise ValueError('model.prototype_precision=fp16 requires training.amp_dtype=fp16 when AMP is enabled.')
+        if bool(getattr(self.args, 'training', True)) and self.backbone_precision == 'fp16':
+            if (not bool(getattr(self.args, 'freeze_image_backbone', True)) or not bool(getattr(self.args, 'freeze_text_backbone', True))) and not bool(getattr(self.args, 'amp', False)):
+                raise ValueError('Unfrozen fp16 backbone training requires training.amp=true so the backbone is updated under proper AMP scaling.')
+        if bool(getattr(self.args, 'training', True)) and self.prototype_precision == 'fp16' and not bool(getattr(self.args, 'amp', False)):
+            raise ValueError('model.prototype_precision=fp16 requires training.amp=true so prototype modules are updated under proper AMP scaling.')
         TokenMaskBuilder(
             token_policy=str(getattr(self.args, 'token_policy', 'content_only')).lower(),
             special_token_ids=special_token_ids,
@@ -73,6 +92,12 @@ class PASModel(nn.Module):
             raise ValueError('The text encoder must expose last-layer token hidden states before CLIP pooling/projection.')
         return text_output.pre_projection_tokens
 
+    def _prototype_dtype(self) -> torch.dtype:
+        return precision_to_torch_dtype(self.prototype_precision)
+
+    def _cast_to_prototype_dtype(self, tensor: torch.Tensor) -> torch.Tensor:
+        return tensor.to(dtype=self._prototype_dtype())
+
     def extract_image_features(self, image: torch.Tensor) -> EncoderOutput:
         image_outputs = self.base_model.encode_image_intermediates(image, return_all=False, average_attn_weights=True)
         projected_tokens = image_outputs['projected_tokens'].float()
@@ -95,6 +120,8 @@ class PASModel(nn.Module):
             metadata={
                 'encoder': 'image',
                 'backbone': self.image_backbone,
+                'backbone_precision': self.backbone_precision,
+                'prototype_precision': self.prototype_precision,
             },
         )
 
@@ -129,21 +156,23 @@ class PASModel(nn.Module):
             metadata={
                 'encoder': 'text',
                 'backbone': self.text_backbone,
+                'backbone_precision': self.backbone_precision,
+                'prototype_precision': self.prototype_precision,
             },
         )
 
     def encode_image_for_retrieval(self, image: torch.Tensor) -> Dict[str, torch.Tensor]:
         image_output = self.extract_image_features(image)
-        prototype_outputs = self.prototype_head.encode_image_branch(image_output.projected_pooled, return_debug=False)
+        prototype_outputs = self.prototype_head.encode_image_branch(self._cast_to_prototype_dtype(image_output.projected_pooled), return_debug=False)
         return {
-            'image_projected': prototype_outputs['image_projected'].float(),
-            'summary': prototype_outputs['summary'].float(),
+            'image_projected': prototype_outputs['image_projected'],
+            'summary': prototype_outputs['summary'],
         }
 
     def encode_text_for_retrieval(self, text: torch.Tensor) -> Dict[str, torch.Tensor]:
         text_output = self.extract_text_features(text)
         return {
-            'text_token_states': self._resolve_text_states(text_output).float(),
+            'text_token_states': self._cast_to_prototype_dtype(self._resolve_text_states(text_output)),
             'token_ids': text.long(),
             'attention_mask': text_output.token_mask,
             'special_token_positions': {key: value for key, value in text_output.special_token_positions.items()},
@@ -151,9 +180,9 @@ class PASModel(nn.Module):
 
     def compute_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
         similarity = self.prototype_head.compute_pairwise_similarity(
-            image_projected=image_features['image_projected'],
-            summaries=image_features['summary'],
-            text_token_states=text_features['text_token_states'],
+            image_projected=self._cast_to_prototype_dtype(image_features['image_projected']),
+            summaries=self._cast_to_prototype_dtype(image_features['summary']),
+            text_token_states=self._cast_to_prototype_dtype(text_features['text_token_states']),
             token_ids=text_features['token_ids'],
             attention_mask=text_features.get('attention_mask'),
             special_token_positions=text_features.get('special_token_positions'),
@@ -162,7 +191,7 @@ class PASModel(nn.Module):
         )
         if not torch.isfinite(similarity).all():
             raise FloatingPointError('Retrieval similarity contains NaN or Inf values.')
-        return similarity
+        return similarity.float()
 
     def _build_debug_outputs(
         self,
@@ -228,8 +257,8 @@ class PASModel(nn.Module):
         text_output = self.extract_text_features(caption_ids)
         should_return_debug = self.return_debug_outputs if return_debug is None else bool(return_debug)
         prototype_outputs = self.prototype_head(
-            image_embeddings=image_output.projected_pooled,
-            text_token_states=self._resolve_text_states(text_output),
+            image_embeddings=self._cast_to_prototype_dtype(image_output.projected_pooled),
+            text_token_states=self._cast_to_prototype_dtype(self._resolve_text_states(text_output)),
             token_ids=caption_ids,
             attention_mask=text_output.token_mask,
             special_token_positions=text_output.special_token_positions,
@@ -267,6 +296,12 @@ Model = PASModel
 
 def build_model(args, num_classes=0):
     model = PASModel(args, num_classes=num_classes)
-    convert_weights(model.base_model)
-    model.prototype_head.float()
+    if model.backbone_precision == 'fp16':
+        convert_weights(model.base_model)
+    else:
+        model.base_model.float()
+    if model.prototype_precision == 'fp16':
+        model.prototype_head.half()
+    else:
+        model.prototype_head.float()
     return model

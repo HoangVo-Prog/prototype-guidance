@@ -136,6 +136,8 @@ class PhaseEIntegrationTests(unittest.TestCase):
             projector_hidden_dim=8,
             projector_dropout=0.0,
             projector_type='mlp2',
+            backbone_precision='fp16',
+            prototype_precision='fp32',
             temperature=0.07,
             learn_logit_scale=True,
             text_length=77,
@@ -229,10 +231,36 @@ class PhaseEIntegrationTests(unittest.TestCase):
         self.assertEqual(groups['projectors']['weight_decay'], args.weight_decay_projectors)
         self.assertEqual(groups['logit_scale']['weight_decay'], args.weight_decay_logit_scale)
 
-    def test_build_model_keeps_prototype_head_in_float32(self):
-        model = build_model(self._build_args(), num_classes=2)
-        prototype_dtypes = {parameter.dtype for parameter in model.prototype_head.parameters()}
-        self.assertEqual(prototype_dtypes, {torch.float32})
+    def test_build_model_respects_prototype_precision_setting(self):
+        model_fp32 = build_model(self._build_args(prototype_precision='fp32'), num_classes=2)
+        prototype_dtypes_fp32 = {parameter.dtype for parameter in model_fp32.prototype_head.parameters()}
+        self.assertEqual(prototype_dtypes_fp32, {torch.float32})
+
+        model_fp16 = build_model(self._build_args(prototype_precision='fp16', amp=True, amp_dtype='fp16'), num_classes=2)
+        prototype_dtypes_fp16 = {parameter.dtype for parameter in model_fp16.prototype_head.parameters()}
+        self.assertEqual(prototype_dtypes_fp16, {torch.float16})
+
+    def test_build_model_respects_backbone_precision_setting(self):
+        model_fp16 = build_model(self._build_args(backbone_precision='fp16'), num_classes=2)
+        self.assertEqual(model_fp16.base_model.visual.weight.dtype, torch.float16)
+        model_fp32 = build_model(self._build_args(backbone_precision='fp32'), num_classes=2)
+        self.assertEqual(model_fp32.base_model.visual.weight.dtype, torch.float32)
+
+    def test_unfrozen_fp16_backbone_requires_amp(self):
+        with self.assertRaisesRegex(ValueError, r'Unfrozen fp16 backbone training requires training\.amp=true'):
+            build_model(self._build_args(freeze_backbones=False, backbone_precision='fp16', amp=False), num_classes=2)
+
+    def test_fp16_backbone_rejects_bf16_amp(self):
+        with self.assertRaisesRegex(ValueError, r'model\.backbone_precision=fp16 requires training\.amp_dtype=fp16'):
+            build_model(self._build_args(backbone_precision='fp16', amp=True, amp_dtype='bf16'), num_classes=2)
+
+    def test_fp16_prototype_requires_amp(self):
+        with self.assertRaisesRegex(ValueError, r'model\.prototype_precision=fp16 requires training\.amp=true'):
+            build_model(self._build_args(prototype_precision='fp16', amp=False), num_classes=2)
+
+    def test_fp16_prototype_rejects_bf16_amp(self):
+        with self.assertRaisesRegex(ValueError, r'model\.prototype_precision=fp16 requires training\.amp_dtype=fp16'):
+            build_model(self._build_args(prototype_precision='fp16', amp=True, amp_dtype='bf16'), num_classes=2)
 
     def test_evaluator_runs_end_to_end(self):
         args = self._build_args()

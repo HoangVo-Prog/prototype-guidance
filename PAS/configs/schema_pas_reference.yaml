@@ -61,6 +61,20 @@ model:
   # - linear
   projector_type: mlp2
 
+  # Precision used when storing CLIP backbone parameters.
+  # Supported values:
+  # - fp16
+  # - fp32
+  # If you unfreeze an fp16 backbone for training, enable training.amp=true.
+  backbone_precision: fp32
+
+  # Precision used when storing prototype-bank, routing, pooling, projector, and loss-module parameters.
+  # Supported values:
+  # - fp16
+  # - fp32
+  # If you train with prototype_precision=fp16, enable training.amp=true.
+  prototype_precision: fp32
+
   # Global contrastive temperature inverse factor uses this through the model/loss stack.
   # Must be positive.
   temperature: 0.07
@@ -101,7 +115,7 @@ prototype:
   num_prototypes: 32
 
   # Prototype feature dimension.
-  # Phase E minimal PAS runtime currently requires this to match model.embedding_dim.
+  # Any positive integer is accepted; adapters bridge backbone and prototype dimensions when needed.
   prototype_dim: 512
 
   # Supported init values:
@@ -143,17 +157,16 @@ prototype:
   # If true, use residual contextualization: Theta_tilde = Theta + softmax(sim) @ Theta.
   contextualization_residual: true
 
-  # Positive integer in schema, but Phase E currently supports exactly: 1.
+  # Number of contextualization refinement layers. Positive integer.
   contextualization_num_layers: 1
 
   # If true, normalize prototypes before similarity-style operations.
   prototype_normalize: true
 
-  # Sparse routing switch exists in schema, but Phase E runtime currently requires: false.
+  # If true, keep only the top-k prototype assignments before renormalization.
   assignment_sparse: false
 
-  # Top-k sparse routing count.
-  # Phase E runtime currently supports only: 0.
+  # Top-k sparse routing count. Positive integer when assignment_sparse=true, otherwise 0.
   assignment_topk: 0
 
   # Enables prototype diversity regularization.
@@ -259,6 +272,15 @@ training:
 
   # Gradient clipping norm. 0.0 disables clipping.
   grad_clip: 1.0
+
+  # Enable AMP autocast plus gradient scaling during training/evaluation on CUDA.
+  amp: false
+
+  # Supported AMP compute dtypes:
+  # - fp16
+  # - bf16
+  # fp16 backbones may only be trained with amp_dtype=fp16.
+  amp_dtype: fp16
 
 optimizer:
   # Supported optimizers:

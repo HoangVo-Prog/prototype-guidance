@@ -9,6 +9,7 @@ from utils.experiment import ExperimentTracker
 from utils.metric_logging import TRACKED_SCALAR_KEYS, build_train_metrics, build_validation_metrics, collect_scalar_metrics
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
+from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
 
 
 METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key != 'loss_total')
@@ -31,6 +32,16 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
 
     logger = logging.getLogger('pas.train')
     logger.info('start training')
+    if bool(getattr(args, 'amp', False)) and not is_cuda_device(device):
+        raise ValueError('training.amp=true requires a CUDA device.')
+    scaler = build_grad_scaler(args, device)
+    logger.info(
+        'Precision config: backbone_precision=%s, prototype_precision=%s, amp=%s, amp_dtype=%s',
+        getattr(args, 'backbone_precision', 'fp16'),
+        getattr(args, 'prototype_precision', 'fp32'),
+        is_amp_enabled(args, device),
+        canonicalize_amp_dtype(getattr(args, 'amp_dtype', 'fp16')),
+    )
     meters = _make_meters()
     tb_writer = SummaryWriter(log_dir=args.output_dir)
 
@@ -47,14 +58,23 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
         for n_iter, batch in enumerate(train_loader):
             current_steps += 1
             batch = {key: value.to(device) for key, value in batch.items()}
-            outputs = model(batch)
-            total_loss = outputs['loss_total']
+            optimizer.zero_grad(set_to_none=True)
+            with build_autocast_context(args, device):
+                outputs = model(batch)
+                total_loss = outputs['loss_total']
 
-            optimizer.zero_grad()
-            total_loss.backward()
-            if grad_clip > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            optimizer.step()
+            if scaler.is_enabled():
+                scaler.scale(total_loss).backward()
+                if grad_clip > 0:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                total_loss.backward()
+                if grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
             synchronize()
 
             scalar_metrics = collect_scalar_metrics(outputs, include_debug_metrics=getattr(args, 'log_debug_metrics', True))
@@ -140,9 +160,8 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
 def do_inference(model, test_img_loader, test_txt_loader, args):
     logger = logging.getLogger('pas.eval')
     logger.info('Enter inferencing')
+    if bool(getattr(args, 'amp', False)) and not is_cuda_device(getattr(args, 'device', 'cuda')):
+        raise ValueError('training.amp=true requires a CUDA device.')
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
-
-
-

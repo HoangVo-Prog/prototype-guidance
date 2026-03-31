@@ -3,6 +3,8 @@ import logging
 from prettytable import PrettyTable
 import torch
 
+from utils.precision import build_autocast_context, is_cuda_device
+
 
 
 def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
@@ -59,6 +61,8 @@ class Evaluator:
     def _compute_similarity(self, model):
         model = model.eval()
         device = next(model.parameters()).device
+        if bool(getattr(self.args, 'amp', False)) and not is_cuda_device(device):
+            raise ValueError('training.amp=true requires a CUDA device.')
 
         text_ids, image_ids = [], []
         text_batches, image_batches = [], []
@@ -66,7 +70,8 @@ class Evaluator:
         for pid, caption in self.txt_loader:
             caption = caption.to(device)
             with torch.no_grad():
-                text_features = model.encode_text_for_retrieval(caption)
+                with build_autocast_context(self.args, device):
+                    text_features = model.encode_text_for_retrieval(caption)
             text_ids.append(pid.view(-1))
             text_batches.append({
                 key: value.detach().cpu() if isinstance(value, torch.Tensor) else {sub_key: sub_value.detach().cpu() for sub_key, sub_value in value.items()}
@@ -76,7 +81,8 @@ class Evaluator:
         for pid, image in self.img_loader:
             image = image.to(device)
             with torch.no_grad():
-                image_features = model.encode_image_for_retrieval(image)
+                with build_autocast_context(self.args, device):
+                    image_features = model.encode_image_for_retrieval(image)
             image_ids.append(pid.view(-1))
             image_batches.append({key: value.detach().cpu() for key, value in image_features.items()})
 
@@ -92,7 +98,8 @@ class Evaluator:
         image_features = {key: value.to(device) for key, value in image_features.items()}
 
         with torch.no_grad():
-            similarity = model.compute_retrieval_similarity(image_features, text_features).cpu()
+            with build_autocast_context(self.args, device):
+                similarity = model.compute_retrieval_similarity(image_features, text_features).cpu()
 
         return similarity, text_ids, image_ids
 
@@ -118,4 +125,3 @@ class Evaluator:
         self.logger.info('\n' + str(table))
         self.logger.info('\nbest R1 = ' + str(row[1]))
         return row[1]
-

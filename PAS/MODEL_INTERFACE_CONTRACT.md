@@ -12,6 +12,13 @@ This document describes the active Phase E model interface for the PAS retrieval
 
 The model owns the CLIP backbone, prototype head, freeze policy, optimizer-group exposure, retrieval encoding helpers, and training forward path.
 
+Precision controls:
+- `model.backbone_precision` selects whether CLIP backbone parameters are kept in `fp16` or `fp32`.
+- `model.prototype_precision` selects whether prototype-head parameters are kept in `fp16` or `fp32`.
+- `training.amp` and `training.amp_dtype` control CUDA autocast/scaler usage during training and retrieval evaluation.
+- Unfrozen `fp16` backbone training is only supported when `training.amp=true`.
+- `prototype_precision=fp16` training is only supported when `training.amp=true`.
+
 ## 2. Image-Side Interface
 
 ### Training and feature extraction

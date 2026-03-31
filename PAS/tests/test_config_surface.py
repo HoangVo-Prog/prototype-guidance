@@ -32,11 +32,6 @@ class ConfigSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'model.pooling_mode'):
             load_yaml_config(None, path)
 
-    def test_removed_amp_surface_is_rejected(self):
-        path = self._write_config({'training': {'amp': True}})
-        with self.assertRaisesRegex(ValueError, 'training.amp'):
-            load_yaml_config(None, path)
-
     def test_removed_contextualizer_optimizer_surface_is_rejected(self):
         path = self._write_config({'optimizer': {'lr_contextualizer': 1e-3}})
         with self.assertRaisesRegex(ValueError, 'optimizer.lr_contextualizer'):
@@ -47,12 +42,14 @@ class ConfigSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'prototype.normalize_for_routing'):
             load_yaml_config(None, path)
 
-    def test_valid_runtime_surface_loads_special_token_ids_and_new_knobs(self):
+    def test_valid_runtime_surface_loads_special_token_ids_precision_and_amp_knobs(self):
         path = self._write_config(
             {
                 'model': {
                     'projector_type': 'linear',
                     'learn_logit_scale': False,
+                    'backbone_precision': 'fp32',
+                    'prototype_precision': 'fp32',
                 },
                 'prototype': {
                     'use_balancing_loss': True,
@@ -69,15 +66,23 @@ class ConfigSurfaceTests(unittest.TestCase):
                     },
                     'error_on_empty_kept_tokens': True,
                 },
+                'training': {
+                    'amp': True,
+                    'amp_dtype': 'bf16',
+                },
             }
         )
         args = get_args(['--config_file', path])
         self.assertEqual(args.projector_type, 'linear')
         self.assertFalse(args.learn_logit_scale)
+        self.assertEqual(args.backbone_precision, 'fp32')
+        self.assertEqual(args.prototype_precision, 'fp32')
         self.assertTrue(args.use_balancing_loss)
         self.assertEqual(args.prototype_balance_loss_weight, 0.1)
         self.assertEqual(args.special_token_ids['bos_token_id'], 49406)
         self.assertTrue(args.error_on_empty_kept_tokens)
+        self.assertTrue(args.amp)
+        self.assertEqual(args.amp_dtype, 'bf16')
 
 
 if __name__ == '__main__':  # pragma: no cover

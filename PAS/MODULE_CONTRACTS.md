@@ -100,7 +100,7 @@
   - `forward(...)` returns `loss_total`, loss breakdown, `temperature`, `logit_scale`, optional `logits`, optional `debug`.
   - `named_optimizer_groups()` returns explicit optimizer-group buckets.
   - `compute_retrieval_similarity(...)` returns `[N_text, N_image]` similarity blocks.
-- Config dependencies: model activation flags, prototype settings, freeze policy, evaluation chunk sizes.
+- Config dependencies: model activation flags, `model.backbone_precision`, `model.prototype_precision`, prototype settings, freeze policy, evaluation chunk sizes, `training.amp`, and `training.amp_dtype`.
 - Failure conditions: rejects disabled prototype mode, invalid evaluation chunk sizes, or non-finite loss/similarity outputs.
 
 ## utils/metric_logging.py
