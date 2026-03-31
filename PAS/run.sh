@@ -11,6 +11,8 @@ python train.py \
   --config_file configs/train_pas_v1.yaml \
   --dataset_name $DATASET_NAME
 
+# torchrun --nproc_per_node=2 train.py --config_file configs/kaggle_pas_quicktrain.yaml
+
 # Debug launch:
 # python train.py --config_file configs/debug_pas_v1.yaml
 # Evaluation:

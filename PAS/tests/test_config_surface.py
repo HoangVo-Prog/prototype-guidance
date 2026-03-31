@@ -42,6 +42,39 @@ class ConfigSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'prototype.normalize_for_routing'):
             load_yaml_config(None, path)
 
+    def test_cli_flags_override_config_file_values(self):
+        path = self._write_config(
+            {
+                'training': {
+                    'batch_size': 32,
+                    'epochs': 60,
+                    'amp': False,
+                },
+                'logging': {
+                    'use_wandb': True,
+                    'project': 'from_config',
+                },
+                'model': {
+                    'projection_dim': 256,
+                },
+            }
+        )
+        args = get_args([
+            '--config_file', path,
+            '--batch_size', '7',
+            '--epochs', '11',
+            '--amp', 'true',
+            '--use_wandb', 'false',
+            '--wandb_project', 'from_cli',
+            '--projection_dim', '128',
+        ])
+        self.assertEqual(args.batch_size, 7)
+        self.assertEqual(args.num_epoch, 11)
+        self.assertTrue(args.amp)
+        self.assertFalse(args.use_wandb)
+        self.assertEqual(args.wandb_project, 'from_cli')
+        self.assertEqual(args.projection_dim, 128)
+
     def test_valid_runtime_surface_loads_special_token_ids_precision_and_amp_knobs(self):
         path = self._write_config(
             {
