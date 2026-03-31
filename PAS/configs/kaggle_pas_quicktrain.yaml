@@ -117,7 +117,7 @@ logging:
   mode: online
   tags: [pas, kaggle, quicktrain]
   notes: Lightweight PAS training config for Kaggle P100 or T4x2 sanity training with canonical v1 method defaults.
-  log_interval: 50
+  log_interval: 20
   log_code: false
   log_debug_metrics: true
 
