@@ -6,6 +6,8 @@ import torch
 from utils.precision import build_autocast_context, is_cuda_device
 
 
+SUPPORTED_RETRIEVAL_METRICS = ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum')
+
 
 def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
     if get_mAP:
@@ -35,11 +37,18 @@ def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
     return all_cmc, mAP, mINP, indices
 
 
-
 def get_metrics(similarity, qids, gids, name):
     t2i_cmc, t2i_mAP, t2i_mINP, _ = rank(similarity=similarity, q_pids=qids, g_pids=gids, max_rank=10, get_mAP=True)
     t2i_cmc, t2i_mAP, t2i_mINP = t2i_cmc.numpy(), t2i_mAP.numpy(), t2i_mINP.numpy()
-    return [name, t2i_cmc[0], t2i_cmc[4], t2i_cmc[9], t2i_mAP, t2i_mINP, t2i_cmc[0] + t2i_cmc[4] + t2i_cmc[9]]
+    return {
+        'task': name,
+        'R1': float(t2i_cmc[0]),
+        'R5': float(t2i_cmc[4]),
+        'R10': float(t2i_cmc[9]),
+        'mAP': float(t2i_mAP),
+        'mINP': float(t2i_mINP),
+        'rSum': float(t2i_cmc[0] + t2i_cmc[4] + t2i_cmc[9]),
+    }
 
 
 class Evaluator:
@@ -49,6 +58,14 @@ class Evaluator:
         self.logger = logging.getLogger('pas.eval')
         self.args = args
         self.latest_metrics = {}
+        requested_metrics = tuple(getattr(args, 'retrieval_metrics', SUPPORTED_RETRIEVAL_METRICS) or SUPPORTED_RETRIEVAL_METRICS)
+        unknown_metrics = sorted(set(requested_metrics) - set(SUPPORTED_RETRIEVAL_METRICS))
+        if unknown_metrics:
+            raise ValueError(
+                f'Unsupported evaluation.retrieval_metrics values: {unknown_metrics}. '
+                f'Allowed values: {list(SUPPORTED_RETRIEVAL_METRICS)}'
+            )
+        self.requested_metrics = requested_metrics
 
     def _concat_feature_batches(self, batches):
         first = batches[0]
@@ -105,23 +122,19 @@ class Evaluator:
 
     def eval(self, model):
         similarity, text_ids, image_ids = self._compute_similarity(model)
-        row = get_metrics(similarity, text_ids, image_ids, 'pas-t2i')
+        metrics = get_metrics(similarity, text_ids, image_ids, 'pas-t2i')
 
-        table = PrettyTable(['task', 'R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum'])
-        table.add_row(row)
-        for metric_name in ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum'):
+        table = PrettyTable(['task'] + list(self.requested_metrics))
+        table.add_row([metrics['task']] + [metrics[metric_name] for metric_name in self.requested_metrics])
+        for metric_name in self.requested_metrics:
             table.custom_format[metric_name] = lambda _, value: f'{value:.2f}'
 
         self.latest_metrics = {
-            'val/pas/R1': float(row[1]),
-            'val/pas/R5': float(row[2]),
-            'val/pas/R10': float(row[3]),
-            'val/pas/mAP': float(row[4]),
-            'val/pas/mINP': float(row[5]),
-            'val/pas/rSum': float(row[6]),
-            'val/top1': float(row[1]),
+            f'val/pas/{metric_name}': metrics[metric_name]
+            for metric_name in self.requested_metrics
         }
+        self.latest_metrics['val/top1'] = metrics['R1']
 
         self.logger.info('\n' + str(table))
-        self.logger.info('\nbest R1 = ' + str(row[1]))
-        return row[1]
+        self.logger.info('\nbest R1 = ' + str(metrics['R1']))
+        return metrics['R1']

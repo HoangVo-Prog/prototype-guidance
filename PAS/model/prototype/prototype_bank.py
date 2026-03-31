@@ -6,11 +6,9 @@ import torch.nn.functional as F
 
 
 INIT_MODE_ALIASES = {
-    'random': 'normalized_random',
     'normalized_random': 'normalized_random',
     'sampled_image_embeddings': 'external_embeddings',
     'kmeans_centroids': 'external_embeddings',
-    'xavier': 'xavier',
 }
 
 
@@ -69,9 +67,6 @@ class PrototypeBank(nn.Module):
             value = self._load_external_prototypes()
         elif self.init_mode == 'normalized_random':
             value = torch.randn_like(self.prototypes) * self.init_scale
-        elif self.init_mode == 'xavier':
-            value = torch.empty_like(self.prototypes)
-            nn.init.xavier_uniform_(value)
         else:
             raise ValueError(f'Unsupported canonical prototype init mode: {self.init_mode}')
 

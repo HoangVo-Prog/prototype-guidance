@@ -36,10 +36,10 @@ class PrototypeConditionedTextHead(nn.Module):
         contextualization_enabled: bool = False,
         contextualization_type: str = 'none',
         contextualization_residual: bool = True,
-        contextualization_num_layers: int = 1,
-        prototype_normalize: bool = True,
-        sparse_assignment: bool = False,
-        sparse_topk: int = 0,
+        normalize_for_self_interaction: bool = True,
+        normalize_for_routing: bool = True,
+        normalize_for_token_scoring: bool = True,
+        normalize_projector_outputs: bool = True,
         use_diversity_loss: bool = False,
         diversity_loss_weight: float = 0.0,
         use_balance_loss: bool = False,
@@ -62,23 +62,25 @@ class PrototypeConditionedTextHead(nn.Module):
             prototype_dim=prototype_dim,
             init_mode=prototype_init,
             init_path=prototype_init_path,
-            normalize_init=prototype_normalize,
+            normalize_init=normalize_for_self_interaction,
         )
         self.contextualizer = PrototypeContextualizer(
             enabled=contextualization_enabled,
             contextualization_type=contextualization_type,
             residual=contextualization_residual,
-            num_layers=contextualization_num_layers,
-            normalize=prototype_normalize,
+            normalize=normalize_for_self_interaction,
         )
         self.router = Router(
             routing_type=routing_type,
             temperature=routing_temperature,
-            sparse_assignment=sparse_assignment,
-            sparse_topk=sparse_topk,
+            normalize=normalize_for_routing,
         )
         self.aggregator = PrototypeAggregator()
-        self.token_scorer = TokenScorer(scoring_type=token_scoring_type, temperature=token_temperature)
+        self.token_scorer = TokenScorer(
+            scoring_type=token_scoring_type,
+            temperature=token_temperature,
+            normalize=normalize_for_token_scoring,
+        )
         self.token_mask_builder = TokenMaskBuilder(
             token_policy=token_policy,
             special_token_ids=special_token_ids,
@@ -90,7 +92,7 @@ class PrototypeConditionedTextHead(nn.Module):
             hidden_dim=self.projector_hidden_dim,
             output_dim=self.projector_output_dim,
             dropout=projector_dropout,
-            normalize_output=True,
+            normalize_output=normalize_projector_outputs,
             projector_type=projector_type,
         )
         self.text_projector = MLPProjector(
@@ -98,7 +100,7 @@ class PrototypeConditionedTextHead(nn.Module):
             hidden_dim=self.projector_hidden_dim,
             output_dim=self.projector_output_dim,
             dropout=projector_dropout,
-            normalize_output=True,
+            normalize_output=normalize_projector_outputs,
             projector_type=projector_type,
         )
         self.losses = PrototypeLosses(
@@ -332,6 +334,7 @@ class PrototypeConditionedTextHead(nn.Module):
         num_text = text_features.size(0)
         num_image = summaries.size(0)
         similarity = torch.empty(num_text, num_image, device=image_projected.device, dtype=image_projected.dtype)
+        logit_scale = self.losses.get_logit_scale().to(device=image_projected.device, dtype=image_projected.dtype)
 
         for image_start in range(0, num_image, image_chunk_size):
             image_end = min(image_start + image_chunk_size, num_image)
@@ -353,7 +356,9 @@ class PrototypeConditionedTextHead(nn.Module):
                 token_scores = self.token_scorer(expanded_summary, expanded_tokens)
                 pooled_text, _ = self.token_pooler(token_scores, expanded_tokens, expanded_mask)
                 projected_text = self.text_projector(pooled_text)
-                block_similarity = (projected_text * expanded_image_projected).sum(dim=-1).view(image_batch, text_batch).t()
+                # Retrieval uses the same scaled normalized-dot score family as training InfoNCE.
+                block_similarity = logit_scale * (projected_text * expanded_image_projected).sum(dim=-1)
+                block_similarity = block_similarity.view(image_batch, text_batch).t()
                 similarity[text_start:text_end, image_start:image_end] = block_similarity
 
         if not torch.isfinite(similarity).all():

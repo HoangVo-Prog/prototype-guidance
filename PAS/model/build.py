@@ -46,6 +46,12 @@ class PASModel(nn.Module):
             raise ValueError('PASModel requires model.use_image_conditioned_pooling=true because the active runtime scores text under image-conditioned pooling.')
         if self.prototype_eval_image_chunk_size <= 0 or self.prototype_eval_text_chunk_size <= 0:
             raise ValueError('Prototype evaluation chunk sizes must be positive integers.')
+        configured_embedding_dim = getattr(self.args, 'embedding_dim', None)
+        if configured_embedding_dim is not None and int(configured_embedding_dim) != self.embed_dim:
+            raise ValueError(
+                'model.embedding_dim must match the CLIP backbone feature dimension in PAS; '
+                f'got embedding_dim={int(configured_embedding_dim)} and backbone feature_dim={self.embed_dim}.'
+            )
         special_token_ids = getattr(self.args, 'special_token_ids', None)
         if special_token_ids is None:
             raise ValueError(

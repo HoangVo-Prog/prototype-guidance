@@ -1,5 +1,5 @@
 from .aggregator import PrototypeAggregator
-from .build import build_prototype_head, should_build_prototype_head
+from .build import build_prototype_head
 from .contextualizer import PrototypeContextualizer
 from .head import PrototypeConditionedTextHead
 from .losses import PrototypeLosses
@@ -22,5 +22,4 @@ __all__ = [
     'MaskedTokenPooler',
     'TokenScorer',
     'build_prototype_head',
-    'should_build_prototype_head',
 ]

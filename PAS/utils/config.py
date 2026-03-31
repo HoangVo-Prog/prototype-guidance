@@ -4,6 +4,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import yaml
 
+from utils.precision import AMP_DTYPE_ALIASES, BACKBONE_PRECISION_ALIASES, PROTOTYPE_PRECISION_ALIASES
+
 
 PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('experiment', 'name'): 'name',
@@ -21,6 +23,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'projector_hidden_dim'): 'projector_hidden_dim',
     ('model', 'projector_dropout'): 'projector_dropout',
     ('model', 'projector_type'): 'projector_type',
+    ('model', 'normalize_projector_outputs'): 'normalize_projector_outputs',
     ('model', 'backbone_precision'): 'backbone_precision',
     ('model', 'prototype_precision'): 'prototype_precision',
     ('model', 'temperature'): 'temperature',
@@ -43,10 +46,8 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'contextualization_enabled'): 'prototype_contextualization_enabled',
     ('prototype', 'contextualization_type'): 'prototype_contextualization_type',
     ('prototype', 'contextualization_residual'): 'prototype_contextualization_residual',
-    ('prototype', 'contextualization_num_layers'): 'prototype_contextualization_num_layers',
-    ('prototype', 'prototype_normalize'): 'prototype_normalize',
-    ('prototype', 'assignment_sparse'): 'prototype_sparse_assignment',
-    ('prototype', 'assignment_topk'): 'prototype_sparse_topk',
+    ('prototype', 'normalize_for_self_interaction'): 'normalize_for_self_interaction',
+    ('prototype', 'normalize_for_routing'): 'normalize_for_routing',
     ('prototype', 'use_balancing_loss'): 'use_balancing_loss',
     ('prototype', 'balance_loss_weight'): 'prototype_balance_loss_weight',
     ('prototype', 'dead_prototype_threshold'): 'prototype_dead_threshold',
@@ -55,6 +56,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 
     ('text_pooling', 'token_policy'): 'token_policy',
     ('text_pooling', 'scoring_type'): 'token_scoring_type',
+    ('text_pooling', 'normalize_for_token_scoring'): 'normalize_for_token_scoring',
     ('text_pooling', 'token_temperature'): 'token_pooling_temperature',
     ('text_pooling', 'special_token_ids'): 'special_token_ids',
     ('text_pooling', 'error_on_empty_kept_tokens'): 'error_on_empty_kept_tokens',
@@ -178,11 +180,79 @@ UNSUPPORTED_CONFIG_PATHS = {
     ('text_pooling', 'mask_padding_tokens'): 'text_pooling.mask_padding_tokens was removed. Use text_pooling.special_token_ids / attention masks.',
     ('optimizer', 'lr_contextualizer'): 'optimizer.lr_contextualizer was removed because the contextualizer is parameter-free.',
     ('optimizer', 'weight_decay_contextualizer'): 'optimizer.weight_decay_contextualizer was removed because the contextualizer is parameter-free.',
-    ('model', 'normalize_projector_outputs'): 'model.normalize_projector_outputs is not supported as a runtime override in PAS v1.',
-    ('prototype', 'normalize_for_self_interaction'): 'prototype.normalize_for_self_interaction is not supported as a runtime override in PAS v1.',
-    ('prototype', 'normalize_for_routing'): 'prototype.normalize_for_routing is not supported as a runtime override in PAS v1.',
-    ('text_pooling', 'normalize_for_token_scoring'): 'text_pooling.normalize_for_token_scoring is not supported as a runtime override in PAS v1.',
+    ('prototype', 'contextualization_num_layers'): 'prototype.contextualization_num_layers is not part of minimal PAS v1; contextualization is a single fixed self-interaction step.',
+    ('prototype', 'prototype_normalize'): 'prototype.prototype_normalize was replaced by prototype.normalize_for_self_interaction in PAS v1.',
+    ('prototype', 'assignment_sparse'): 'prototype.assignment_sparse is not part of minimal PAS v1; routing is always dense softmax.',
+    ('prototype', 'assignment_topk'): 'prototype.assignment_topk is not part of minimal PAS v1; top-k routing is disabled.',
+    ('logging', 'log_alpha_entropy'): 'logging.log_alpha_entropy is not a separate runtime toggle in PAS v1. Use logging.log_debug_metrics.',
+    ('logging', 'log_beta_entropy'): 'logging.log_beta_entropy is not a separate runtime toggle in PAS v1. Use logging.log_debug_metrics.',
+    ('logging', 'log_prototype_usage'): 'logging.log_prototype_usage is not a separate runtime toggle in PAS v1. Use logging.log_debug_metrics.',
+    ('logging', 'log_pairwise_prototype_cosine'): 'logging.log_pairwise_prototype_cosine is not a separate runtime toggle in PAS v1. Use logging.log_debug_metrics.',
+    ('logging', 'log_top_tokens'): 'logging.log_top_tokens is not a separate runtime toggle in PAS v1. Use logging.log_debug_metrics.',
+    ('logging', 'log_tensor_norms'): 'logging.log_tensor_norms is not a separate runtime toggle in PAS v1. Use logging.log_debug_metrics.',
+    ('logging', 'detect_dead_prototypes'): 'logging.detect_dead_prototypes is not a separate runtime toggle in PAS v1. Use prototype.dead_prototype_threshold and logging.log_debug_metrics.',
+    ('logging', 'dead_prototype_threshold'): 'logging.dead_prototype_threshold moved to prototype.dead_prototype_threshold.',
+    ('model', 'logit_scale_init'): 'model.logit_scale_init is not exposed in minimal PAS v1.',
+    ('model', 'logit_scale_max'): 'model.logit_scale_max is not exposed in minimal PAS v1.',
 }
+
+
+CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
+    ('model', 'projector_type'): ('mlp2', 'linear'),
+    ('model', 'backbone_precision'): tuple(BACKBONE_PRECISION_ALIASES.keys()),
+    ('model', 'prototype_precision'): tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
+    ('prototype', 'prototype_init'): ('normalized_random', 'sampled_image_embeddings', 'kmeans_centroids'),
+    ('prototype', 'routing_type'): ('cosine', 'dot'),
+    ('prototype', 'contextualization_type'): ('self_attention', 'none'),
+    ('text_pooling', 'token_policy'): ('content_only', 'content_plus_special', 'eos_only'),
+    ('text_pooling', 'scoring_type'): ('cosine', 'dot'),
+    ('training', 'amp_dtype'): tuple(AMP_DTYPE_ALIASES.keys()),
+    ('optimizer', 'type'): ('SGD', 'Adam', 'AdamW'),
+    ('optimizer', 'scheduler'): ('step', 'exp', 'poly', 'cosine', 'linear'),
+    ('dataset', 'dataset_name'): ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
+    ('dataset', 'val_dataset'): ('val', 'test'),
+    ('evaluation', 'target_domain'): ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
+}
+
+
+RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
+    'projector_type': ('mlp2', 'linear'),
+    'backbone_precision': tuple(BACKBONE_PRECISION_ALIASES.keys()),
+    'prototype_precision': tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
+    'prototype_init': ('normalized_random', 'sampled_image_embeddings', 'kmeans_centroids'),
+    'prototype_routing_type': ('cosine', 'dot'),
+    'prototype_contextualization_type': ('self_attention', 'none'),
+    'token_policy': ('content_only', 'content_plus_special', 'eos_only'),
+    'token_scoring_type': ('cosine', 'dot'),
+    'amp_dtype': tuple(AMP_DTYPE_ALIASES.keys()),
+    'optimizer': ('SGD', 'Adam', 'AdamW'),
+    'lrscheduler': ('step', 'exp', 'poly', 'cosine', 'linear'),
+    'dataset_name': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
+    'val_dataset': ('val', 'test'),
+    'target_domain': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
+}
+
+
+def _format_allowed_values(allowed_values: Tuple[str, ...]) -> str:
+    return '[' + ', '.join(repr(value) for value in allowed_values) + ']'
+
+
+def _validate_enum_value(field_name: str, value: Any, allowed_values: Tuple[str, ...]) -> None:
+    if str(value).lower() not in {allowed.lower() for allowed in allowed_values}:
+        raise ValueError(
+            f'Invalid value for {field_name}: {value!r}. Allowed values: {_format_allowed_values(allowed_values)}'
+        )
+
+
+def _validate_retrieval_metrics_value(field_name: str, value: Any) -> None:
+    if not isinstance(value, list):
+        raise ValueError(f'{field_name} must be a list of metric names.')
+    allowed_values = ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum')
+    invalid_values = [metric for metric in value if str(metric) not in allowed_values]
+    if invalid_values:
+        raise ValueError(
+            f'Invalid value for {field_name}: {invalid_values!r}. Allowed values: {_format_allowed_values(allowed_values)}'
+        )
 
 
 def _read_yaml(path: str) -> Dict[str, Any]:
@@ -251,6 +321,15 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     for path, message in UNSUPPORTED_CONFIG_PATHS.items():
         if _path_exists(config_data, path):
             raise ValueError(message)
+    for path, allowed_values in CONFIG_ENUM_CHOICES.items():
+        if not _path_exists(config_data, path):
+            continue
+        current = config_data
+        for key in path:
+            current = current[key]
+        _validate_enum_value('.'.join(path), current, allowed_values)
+    if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
+        _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
 
 
 def load_yaml_config(default_path: Optional[str] = None, override_path: Optional[str] = None) -> Dict[str, Any]:
@@ -261,6 +340,16 @@ def load_yaml_config(default_path: Optional[str] = None, override_path: Optional
         config = deep_merge_dicts(config, _read_yaml(override_path))
     validate_config_data(config)
     return config
+
+
+def validate_runtime_args_namespace(args) -> None:
+    for field_name, allowed_values in RUNTIME_ENUM_CHOICES.items():
+        if not hasattr(args, field_name):
+            continue
+        _validate_enum_value(field_name, getattr(args, field_name), allowed_values)
+    retrieval_metrics = getattr(args, 'retrieval_metrics', None)
+    if retrieval_metrics is not None:
+        _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
 
 
 def _normalize_value(dest: str, value: Any) -> Any:

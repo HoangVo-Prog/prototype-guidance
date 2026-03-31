@@ -5,7 +5,7 @@
 - Purpose: owns the learnable prototype table `Theta_v`.
 - Inputs: none during `forward`; construction config controls shape and init.
 - Outputs: `prototypes` `[N, D]`; optional debug with `raw_prototypes`, `prototype_norm_mean`, `prototype_norm_std`.
-- Config dependencies: `prototype.num_prototypes`, `prototype.prototype_dim`, `prototype.prototype_init`, `prototype.prototype_init_path`, `prototype.prototype_normalize`.
+- Config dependencies: `prototype.num_prototypes`, `prototype.prototype_dim`, `prototype.prototype_init`, `prototype.prototype_init_path`, `prototype.normalize_for_self_interaction`.
 - Failure conditions: invalid prototype count/dimension, unsupported init mode, or mismatched checkpoint init tensor.
 
 ## model/prototype/contextualizer.py
@@ -13,7 +13,7 @@
 - Purpose: optional parameter-free prototype self-contextualization.
 - Inputs: `prototypes` `[N, D]`.
 - Outputs: contextualized prototypes `[N, D]`; optional debug `contextualized_prototypes`, `prototype_similarity`, `contextualization_weights`, `prototype_contextualization_entropy`.
-- Config dependencies: `prototype.contextualization_enabled`, `prototype.contextualization_type`, `prototype.contextualization_residual`, `prototype.contextualization_num_layers`, `prototype.prototype_normalize`.
+- Config dependencies: `prototype.contextualization_enabled`, `prototype.contextualization_type`, `prototype.contextualization_residual`, `prototype.normalize_for_self_interaction`.
 - Failure conditions: unsupported contextualization type or invalid input rank.
 
 ## model/prototype/router.py
@@ -21,7 +21,7 @@
 - Purpose: routes each image embedding onto the prototype bank.
 - Inputs: `image_embeddings` `[B, D]`, `prototypes` `[N, D]`.
 - Outputs: `alpha` `[B, N]`; optional debug `routing_logits`, `routing_weights`, `routing_max_prob`, `prototype_assignment_entropy`.
-- Config dependencies: `prototype.routing_type`, `prototype.routing_temperature`, `prototype.assignment_sparse`, `prototype.assignment_topk`.
+- Config dependencies: `prototype.routing_type`, `prototype.routing_temperature`, `prototype.normalize_for_routing`.
 - Failure conditions: invalid rank, mismatched feature dimensions, non-positive temperature, or non-finite outputs.
 
 ## model/prototype/aggregator.py
@@ -37,7 +37,7 @@
 - Purpose: scores each text token against the image-conditioned summary.
 - Inputs: `query` `[B, D]`, `token_states` `[B, L, D]`.
 - Outputs: `token_scores` `[B, L]`; optional debug `token_scores`.
-- Config dependencies: `text_pooling.scoring_type`, `text_pooling.token_temperature`.
+- Config dependencies: `text_pooling.scoring_type`, `text_pooling.normalize_for_token_scoring`, `text_pooling.token_temperature`.
 - Failure conditions: invalid ranks, dimension mismatch, non-positive temperature, or non-finite scores.
 
 ## model/prototype/token_mask.py
@@ -61,7 +61,7 @@
 - Purpose: projects image and pooled-text features into the contrastive embedding space.
 - Inputs: `inputs` with last dimension `input_dim`.
 - Outputs: normalized projected features with last dimension `output_dim`; optional debug `projected_features`, `projected_features_pre_norm`.
-- Config dependencies: `model.projection_dim`, `model.projector_hidden_dim`, `model.projector_dropout`, `model.projector_type`.
+- Config dependencies: `model.projection_dim`, `model.projector_hidden_dim`, `model.projector_dropout`, `model.projector_type`, `model.normalize_projector_outputs`.
 - Failure conditions: non-positive dimensional arguments.
 
 ## model/prototype/losses.py
@@ -82,10 +82,10 @@
 - Failure conditions: inherits submodule failure conditions.
 
 ## model/prototype/build.py
-- Functions: `should_build_prototype_head`, `build_prototype_head`
+- Function: `build_prototype_head`
 - Purpose: config-driven construction of `PrototypeConditionedTextHead`.
 - Inputs: runtime `args`, `input_dim`.
-- Outputs: activation boolean or configured prototype head.
+- Outputs: configured prototype head.
 - Config dependencies: `model.use_prototype_bank`, `model.use_image_conditioned_pooling`, `model.use_prototype_contextualization`, plus prototype/text-pooling/loss settings.
 - Failure conditions: delegated to the constructed modules.
 

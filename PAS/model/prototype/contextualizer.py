@@ -22,7 +22,6 @@ class PrototypeContextualizer(nn.Module):
         enabled: bool = False,
         contextualization_type: str = 'none',
         residual: bool = True,
-        num_layers: int = 1,
         normalize: bool = True,
         temperature: Optional[float] = None,
     ):
@@ -32,9 +31,6 @@ class PrototypeContextualizer(nn.Module):
         if self.contextualization_type is None:
             raise ValueError(f'Unsupported contextualization type: {contextualization_type}')
         self.residual = bool(residual)
-        self.num_layers = int(num_layers)
-        if self.num_layers <= 0:
-            raise ValueError('num_layers must be positive.')
         self.normalize = bool(normalize)
         self.temperature = None if temperature is None else float(temperature)
 
@@ -58,17 +54,13 @@ class PrototypeContextualizer(nn.Module):
                 'prototype_similarity': identity,
                 'contextualization_weights': identity,
                 'contextualization_residual': int(self.residual),
-                'contextualization_num_layers': self.num_layers,
+                'contextualization_num_layers': 1,
             }
 
-        contextualized = prototypes
-        logits = None
-        weights = None
-        for _ in range(self.num_layers):
-            logits = self._compute_similarity_logits(contextualized)
-            weights = torch.softmax(logits, dim=-1)
-            updated = weights @ contextualized
-            contextualized = contextualized + updated if self.residual else updated
+        logits = self._compute_similarity_logits(prototypes)
+        weights = torch.softmax(logits, dim=-1)
+        updated = weights @ prototypes
+        contextualized = prototypes + updated if self.residual else updated
 
         if not return_debug:
             return contextualized
@@ -77,6 +69,6 @@ class PrototypeContextualizer(nn.Module):
             'prototype_similarity': logits,
             'contextualization_weights': weights,
             'contextualization_residual': int(self.residual),
-            'contextualization_num_layers': self.num_layers,
+            'contextualization_num_layers': 1,
             'prototype_contextualization_entropy': (-(weights * weights.clamp_min(1e-12).log()).sum(dim=-1).mean()).detach(),
         }

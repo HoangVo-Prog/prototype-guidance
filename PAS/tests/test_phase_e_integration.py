@@ -30,42 +30,45 @@ if torch is not None:
         IMPORT_ERROR = exc
 
 
-class DummyCLIPBackbone(nn.Module):
-    def __init__(self, embed_dim=8, image_shape=(3, 4, 4), vocab_size=50010, text_length=77):
-        super().__init__()
-        self.embed_dim = embed_dim
-        self.image_input_dim = image_shape[0] * image_shape[1] * image_shape[2]
-        self.visual = nn.Linear(self.image_input_dim, embed_dim)
-        self.transformer = nn.Linear(embed_dim, embed_dim)
-        self.token_embedding = nn.Embedding(vocab_size, embed_dim)
-        self.positional_embedding = nn.Parameter(torch.zeros(text_length, embed_dim))
-        self.ln_final = nn.LayerNorm(embed_dim)
-        self.text_projection = nn.Parameter(torch.eye(embed_dim))
+if nn is not None:
+    class DummyCLIPBackbone(nn.Module):
+        def __init__(self, embed_dim=8, image_shape=(3, 4, 4), vocab_size=50010, text_length=77):
+            super().__init__()
+            self.embed_dim = embed_dim
+            self.image_input_dim = image_shape[0] * image_shape[1] * image_shape[2]
+            self.visual = nn.Linear(self.image_input_dim, embed_dim)
+            self.transformer = nn.Linear(embed_dim, embed_dim)
+            self.token_embedding = nn.Embedding(vocab_size, embed_dim)
+            self.positional_embedding = nn.Parameter(torch.zeros(text_length, embed_dim))
+            self.ln_final = nn.LayerNorm(embed_dim)
+            self.text_projection = nn.Parameter(torch.eye(embed_dim))
 
-    def encode_image_intermediates(self, image, return_all=False, average_attn_weights=True):
-        flat = image.view(image.size(0), -1).float()
-        cls_token = self.visual(flat)
-        aux_token = torch.tanh(cls_token)
-        tokens = torch.stack([cls_token, aux_token], dim=1)
-        attention = [torch.eye(tokens.size(1), device=image.device).unsqueeze(0).repeat(image.size(0), 1, 1)] if return_all else None
-        return {
-            'projected_tokens': tokens,
-            'pre_projection_tokens': tokens,
-            'attention_weights': attention,
-        }
+        def encode_image_intermediates(self, image, return_all=False, average_attn_weights=True):
+            flat = image.view(image.size(0), -1).float()
+            cls_token = self.visual(flat)
+            aux_token = torch.tanh(cls_token)
+            tokens = torch.stack([cls_token, aux_token], dim=1)
+            attention = [torch.eye(tokens.size(1), device=image.device).unsqueeze(0).repeat(image.size(0), 1, 1)] if return_all else None
+            return {
+                'projected_tokens': tokens,
+                'pre_projection_tokens': tokens,
+                'attention_weights': attention,
+            }
 
-    def encode_text_intermediates(self, text, return_all=False, average_attn_weights=True):
-        embedded = self.token_embedding(text.long())
-        positional = self.positional_embedding[:text.size(1)].unsqueeze(0)
-        hidden = self.transformer(embedded + positional)
-        hidden = self.ln_final(hidden)
-        projected = hidden @ self.text_projection
-        attention = [torch.eye(text.size(1), device=text.device).unsqueeze(0).repeat(text.size(0), 1, 1)] if return_all else None
-        return {
-            'projected_tokens': projected,
-            'pre_projection_tokens': hidden,
-            'attention_weights': attention,
-        }
+        def encode_text_intermediates(self, text, return_all=False, average_attn_weights=True):
+            embedded = self.token_embedding(text.long())
+            positional = self.positional_embedding[:text.size(1)].unsqueeze(0)
+            hidden = self.transformer(embedded + positional)
+            hidden = self.ln_final(hidden)
+            projected = hidden @ self.text_projection
+            attention = [torch.eye(text.size(1), device=text.device).unsqueeze(0).repeat(text.size(0), 1, 1)] if return_all else None
+            return {
+                'projected_tokens': projected,
+                'pre_projection_tokens': hidden,
+                'attention_weights': attention,
+            }
+else:
+    DummyCLIPBackbone = None
 
 
 @unittest.skipUnless(
@@ -136,6 +139,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
             projector_hidden_dim=8,
             projector_dropout=0.0,
             projector_type='mlp2',
+            normalize_projector_outputs=True,
             backbone_precision='fp16',
             prototype_precision='fp32',
             temperature=0.07,
@@ -155,10 +159,8 @@ class PhaseEIntegrationTests(unittest.TestCase):
             prototype_temperature=0.07,
             prototype_contextualization_type='self_attention',
             prototype_contextualization_residual=True,
-            prototype_contextualization_num_layers=1,
-            prototype_normalize=True,
-            prototype_sparse_assignment=False,
-            prototype_sparse_topk=0,
+            normalize_for_self_interaction=True,
+            normalize_for_routing=True,
             use_balancing_loss=False,
             prototype_balance_loss_weight=0.0,
             prototype_dead_threshold=0.005,
@@ -166,6 +168,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
             diversity_loss_weight=0.01,
             token_policy='content_only',
             token_scoring_type='cosine',
+            normalize_for_token_scoring=True,
             token_pooling_temperature=0.07,
             special_token_ids={'bos_token_id': 49406, 'eos_token_id': 49407, 'pad_token_id': 0},
             error_on_empty_kept_tokens=True,
@@ -310,19 +313,24 @@ class PhaseEIntegrationTests(unittest.TestCase):
         self.assertEqual(tuple(outputs['debug']['text_tokens'].shape), (4, 6, 8))
         self.assertTrue(torch.isfinite(outputs['loss_total']))
 
-    def test_model_supports_multi_layer_contextualization_and_sparse_routing(self):
-        model = PASModel(
-            self._build_args(
-                prototype_contextualization_num_layers=3,
-                prototype_sparse_assignment=True,
-                prototype_sparse_topk=2,
-            ),
-            num_classes=2,
-        )
-        outputs = model(self.batch, return_debug=True)
-        self.assertEqual(outputs['debug']['contextualization_num_layers'], 3)
-        self.assertTrue((outputs['debug']['alpha'].gt(0).sum(dim=-1) <= 2).all())
-        self.assertTrue(torch.isfinite(outputs['loss_total']))
+    def test_retrieval_similarity_uses_the_same_logit_scale_family_as_training(self):
+        model = PASModel(self._build_args(), num_classes=2).eval()
+        images = self.batch['images'][:2]
+        text = self.batch['caption_ids'][:2]
+        image_features = model.encode_image_for_retrieval(images)
+        text_features = model.encode_text_for_retrieval(text)
+
+        with torch.no_grad():
+            model.prototype_head.losses.logit_scale.copy_(torch.log(torch.tensor(2.0)))
+            similarity_a = model.compute_retrieval_similarity(image_features, text_features)
+            model.prototype_head.losses.logit_scale.copy_(torch.log(torch.tensor(4.0)))
+            similarity_b = model.compute_retrieval_similarity(image_features, text_features)
+
+        torch.testing.assert_close(similarity_b, similarity_a * 2.0, atol=1e-5, rtol=1e-5)
+
+    def test_embedding_dim_mismatch_fails_loudly(self):
+        with self.assertRaisesRegex(ValueError, r'model\.embedding_dim must match the CLIP backbone feature dimension'):
+            PASModel(self._build_args(embedding_dim=7), num_classes=2)
 
     def test_retrieval_text_interface_reuses_training_text_state_family(self):
         model = PASModel(self._build_args(), num_classes=2)

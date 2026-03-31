@@ -116,12 +116,14 @@ class TokenMaskBuilder:
             positions[key] = tensor
         return positions
 
-    def _resolve_first_match_positions(
+    def _resolve_match_positions(
         self,
         token_ids: torch.Tensor,
         token_valid_mask: torch.Tensor,
         values: Iterable[int],
         kind: str,
+        *,
+        use_last: bool,
     ) -> Optional[torch.Tensor]:
         match_mask = self._mask_for_token_ids(token_ids, values) & token_valid_mask
         if not match_mask.any():
@@ -130,8 +132,29 @@ class TokenMaskBuilder:
             raise ValueError(f'Each sample must contain a valid `{kind}` token.')
         seq_len = token_ids.size(1)
         positions = torch.arange(seq_len, device=token_ids.device).unsqueeze(0).expand_as(token_ids)
+        if use_last:
+            masked_positions = positions.masked_fill(~match_mask, -1)
+            return masked_positions.max(dim=-1).values
         masked_positions = positions.masked_fill(~match_mask, seq_len)
         return masked_positions.min(dim=-1).values
+
+    def _resolve_first_match_positions(
+        self,
+        token_ids: torch.Tensor,
+        token_valid_mask: torch.Tensor,
+        values: Iterable[int],
+        kind: str,
+    ) -> Optional[torch.Tensor]:
+        return self._resolve_match_positions(token_ids, token_valid_mask, values, kind, use_last=False)
+
+    def _resolve_last_match_positions(
+        self,
+        token_ids: torch.Tensor,
+        token_valid_mask: torch.Tensor,
+        values: Iterable[int],
+        kind: str,
+    ) -> Optional[torch.Tensor]:
+        return self._resolve_match_positions(token_ids, token_valid_mask, values, kind, use_last=True)
 
     def build_valid_mask(
         self,
@@ -157,7 +180,7 @@ class TokenMaskBuilder:
         )
         eos_positions = normalized_positions.get('eos')
         if eos_positions is None:
-            eos_positions = self._resolve_first_match_positions(
+            eos_positions = self._resolve_last_match_positions(
                 token_ids,
                 torch.ones_like(token_ids, dtype=torch.bool),
                 self.special_token_ids['eos'],
@@ -220,7 +243,7 @@ class TokenMaskBuilder:
                 positions['cls'] = cls_positions
 
         if 'eos' not in positions:
-            eos_positions = self._resolve_first_match_positions(
+            eos_positions = self._resolve_last_match_positions(
                 token_ids,
                 token_valid_mask,
                 self.special_token_ids['eos'],
@@ -256,9 +279,9 @@ class TokenMaskBuilder:
             token_ids,
             self.special_token_ids['cls'] + self.special_token_ids['bos'],
         )
-        eos_mask = self._mask_for_token_ids(token_ids, self.special_token_ids['eos'])
+        eos_token_mask = self._mask_for_token_ids(token_ids, self.special_token_ids['eos'])
+        eos_position_mask = self._build_explicit_position_mask(token_ids, positions, 'eos')
         leading_special_mask |= self._build_explicit_position_mask(token_ids, positions, 'cls')
-        eos_mask |= self._build_explicit_position_mask(token_ids, positions, 'eos')
 
         if self.token_policy == 'content_only':
             has_leading_special = leading_special_mask.any(dim=-1)
@@ -267,24 +290,24 @@ class TokenMaskBuilder:
                     'token_policy=content_only requires every sample to provide a valid BOS/CLS token through '
                     'special_token_ids or explicit special_token_positions.'
                 )
-            has_eos = eos_mask.any(dim=-1)
+            has_eos = eos_position_mask.any(dim=-1)
             if not has_eos.all():
                 raise ValueError(
                     'token_policy=content_only requires every sample to provide a valid EOS token through '
                     'special_token_ids or explicit special_token_positions.'
                 )
             token_keep_mask &= ~leading_special_mask
-            token_keep_mask &= ~eos_mask
+            token_keep_mask &= ~eos_token_mask
         elif self.token_policy == 'content_plus_special':
             pass
         elif self.token_policy == 'eos_only':
-            has_eos = eos_mask.any(dim=-1)
+            has_eos = eos_position_mask.any(dim=-1)
             if not has_eos.all():
                 raise ValueError(
                     'token_policy=eos_only requires every sample to provide a valid EOS token through '
                     'special_token_ids or explicit special_token_positions.'
                 )
-            token_keep_mask = eos_mask & token_valid_mask
+            token_keep_mask = eos_position_mask & token_valid_mask
         else:
             raise ValueError(f'Unsupported token policy: {self.token_policy}')
 

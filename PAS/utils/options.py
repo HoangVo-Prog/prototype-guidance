@@ -2,7 +2,7 @@ import argparse
 import os
 import sys
 
-from utils.config import apply_config_to_args, load_yaml_config
+from utils.config import apply_config_to_args, load_yaml_config, validate_runtime_args_namespace
 
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs')
@@ -40,6 +40,7 @@ def build_parser():
     parser.add_argument('--projector_hidden_dim', type=int, default=512)
     parser.add_argument('--projector_dropout', type=float, default=0.0)
     parser.add_argument('--projector_type', type=str, default='mlp2')
+    parser.add_argument('--normalize_projector_outputs', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--backbone_precision', type=str, default='fp16')
     parser.add_argument('--prototype_precision', type=str, default='fp32')
     parser.add_argument('--temperature', type=float, default=0.07)
@@ -62,10 +63,8 @@ def build_parser():
     parser.add_argument('--prototype_contextualization_enabled', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--prototype_contextualization_type', type=str, default='self_attention')
     parser.add_argument('--prototype_contextualization_residual', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--prototype_contextualization_num_layers', type=int, default=1)
-    parser.add_argument('--prototype_normalize', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--prototype_sparse_assignment', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--prototype_sparse_topk', type=int, default=0)
+    parser.add_argument('--normalize_for_self_interaction', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--normalize_for_routing', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_balancing_loss', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_bal', '--prototype_balance_loss_weight', dest='prototype_balance_loss_weight', type=float, default=0.0)
     parser.add_argument('--prototype_dead_threshold', type=float, default=0.005)
@@ -74,6 +73,7 @@ def build_parser():
 
     parser.add_argument('--token_policy', type=str, default='content_only')
     parser.add_argument('--token_similarity', '--token_scoring_type', dest='token_scoring_type', type=str, default='cosine')
+    parser.add_argument('--normalize_for_token_scoring', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--tau_t', '--token_pooling_temperature', dest='token_pooling_temperature', type=float, default=0.07)
     parser.add_argument('--error_on_empty_kept_tokens', type=_str2bool, nargs='?', const=True, default=True)
 
@@ -181,5 +181,6 @@ def get_args(argv=None):
     override_config_path = args.config_file or None
     config_data = load_yaml_config(default_config_path, override_config_path)
     args = apply_config_to_args(parser, args, config_data, argv if argv is not None else sys.argv[1:])
-
-    return _finalize_args(args)
+    args = _finalize_args(args)
+    validate_runtime_args_namespace(args)
+    return args

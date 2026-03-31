@@ -1,15 +1,6 @@
 from .head import PrototypeConditionedTextHead
 
 
-def should_build_prototype_head(args) -> bool:
-    return bool(
-        getattr(args, 'use_prototype_bank', False)
-        or getattr(args, 'use_image_conditioned_pooling', False)
-        or getattr(args, 'use_prototype_contextualization', False)
-        or getattr(args, 'prototype_contextualization_enabled', False)
-    )
-
-
 def build_prototype_head(args, input_dim: int) -> PrototypeConditionedTextHead:
     contextualization_enabled = bool(
         getattr(args, 'prototype_contextualization_enabled', False)
@@ -47,10 +38,10 @@ def build_prototype_head(args, input_dim: int) -> PrototypeConditionedTextHead:
         contextualization_enabled=contextualization_enabled,
         contextualization_type=getattr(args, 'prototype_contextualization_type', 'none'),
         contextualization_residual=getattr(args, 'prototype_contextualization_residual', True),
-        contextualization_num_layers=getattr(args, 'prototype_contextualization_num_layers', 1),
-        prototype_normalize=getattr(args, 'prototype_normalize', True),
-        sparse_assignment=getattr(args, 'prototype_sparse_assignment', False),
-        sparse_topk=getattr(args, 'prototype_sparse_topk', 0),
+        normalize_for_self_interaction=getattr(args, 'normalize_for_self_interaction', True),
+        normalize_for_routing=getattr(args, 'normalize_for_routing', True),
+        normalize_for_token_scoring=getattr(args, 'normalize_for_token_scoring', True),
+        normalize_projector_outputs=getattr(args, 'normalize_projector_outputs', True),
         use_diversity_loss=getattr(args, 'use_diversity_loss', True),
         diversity_loss_weight=diversity_loss_weight,
         use_balance_loss=use_balancing_loss,

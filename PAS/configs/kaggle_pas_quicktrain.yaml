@@ -15,6 +15,7 @@ model:
   projector_hidden_dim: 512
   projector_dropout: 0.0
   projector_type: mlp2
+  normalize_projector_outputs: true
   backbone_precision: fp32
   prototype_precision: fp32
   temperature: 0.07
@@ -38,10 +39,8 @@ prototype:
   contextualization_enabled: true
   contextualization_type: self_attention
   contextualization_residual: true
-  contextualization_num_layers: 1
-  prototype_normalize: true
-  assignment_sparse: false
-  assignment_topk: 0
+  normalize_for_self_interaction: true
+  normalize_for_routing: true
   use_diversity_loss: true
   diversity_loss_weight: 0.01
   use_balancing_loss: false
@@ -51,6 +50,7 @@ prototype:
 text_pooling:
   token_policy: content_only
   scoring_type: cosine
+  normalize_for_token_scoring: true
   token_temperature: 0.07
   special_token_ids:
     bos_token_id: 49406

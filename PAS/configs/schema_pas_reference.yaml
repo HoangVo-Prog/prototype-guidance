@@ -49,6 +49,9 @@ model:
   # Any positive integer is accepted.
   projection_dim: 256
 
+  # If true, L2-normalize projector outputs before contrastive similarity.
+  normalize_projector_outputs: true
+
   # Hidden dimension inside the projector MLPs.
   # Any positive integer is accepted.
   projector_hidden_dim: 512
@@ -119,9 +122,7 @@ prototype:
   prototype_dim: 512
 
   # Supported init values:
-  # - random                -> alias for normalized_random
-  # - normalized_random     -> random Gaussian then row-normalized
-  # - xavier                -> Xavier uniform init
+  # - normalized_random       -> random Gaussian then row-normalized
   # - sampled_image_embeddings -> load from prototype_init_path
   # - kmeans_centroids         -> load from prototype_init_path
   prototype_init: normalized_random
@@ -157,17 +158,11 @@ prototype:
   # If true, use residual contextualization: Theta_tilde = Theta + softmax(sim) @ Theta.
   contextualization_residual: true
 
-  # Number of contextualization refinement layers. Positive integer.
-  contextualization_num_layers: 1
+  # If true, normalize prototypes before prototype self-interaction.
+  normalize_for_self_interaction: true
 
-  # If true, normalize prototypes before similarity-style operations.
-  prototype_normalize: true
-
-  # If true, keep only the top-k prototype assignments before renormalization.
-  assignment_sparse: false
-
-  # Top-k sparse routing count. Positive integer when assignment_sparse=true, otherwise 0.
-  assignment_topk: 0
+  # If true, normalize image/prototype features before routing similarity.
+  normalize_for_routing: true
 
   # Enables prototype diversity regularization.
   use_diversity_loss: true
@@ -202,6 +197,9 @@ text_pooling:
   # - normalized_dot       -> cosine
   # - prototype_summary_dot -> dot
   scoring_type: cosine
+
+  # If true, normalize summary/token features before token scoring.
+  normalize_for_token_scoring: true
 
   # Token-scoring temperature. Must be positive.
   token_temperature: 0.07
