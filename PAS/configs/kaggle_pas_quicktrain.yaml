@@ -59,7 +59,7 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 1
+  batch_size: 4
   epochs: 100
   log_period: 50
   eval_frequency: 1
@@ -71,7 +71,7 @@ training:
   img_aug: false
   txt_aug: false
   sampler: identity
-  num_instance: 1
+  num_instance: 2
   num_workers: 4
   training: true
   freeze_image_backbone: false
