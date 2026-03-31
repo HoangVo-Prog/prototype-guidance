@@ -40,14 +40,24 @@ def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
 def get_metrics(similarity, qids, gids, name):
     t2i_cmc, t2i_mAP, t2i_mINP, _ = rank(similarity=similarity, q_pids=qids, g_pids=gids, max_rank=10, get_mAP=True)
     t2i_cmc, t2i_mAP, t2i_mINP = t2i_cmc.numpy(), t2i_mAP.numpy(), t2i_mINP.numpy()
+
+    def _cmc_at(rank_index: int) -> float:
+        if t2i_cmc.size == 0:
+            return 0.0
+        clamped_index = min(rank_index, t2i_cmc.shape[0] - 1)
+        return float(t2i_cmc[clamped_index])
+
+    r1 = _cmc_at(0)
+    r5 = _cmc_at(4)
+    r10 = _cmc_at(9)
     return {
         'task': name,
-        'R1': float(t2i_cmc[0]),
-        'R5': float(t2i_cmc[4]),
-        'R10': float(t2i_cmc[9]),
+        'R1': r1,
+        'R5': r5,
+        'R10': r10,
         'mAP': float(t2i_mAP),
         'mINP': float(t2i_mINP),
-        'rSum': float(t2i_cmc[0] + t2i_cmc[4] + t2i_cmc[9]),
+        'rSum': float(r1 + r5 + r10),
     }
 
 

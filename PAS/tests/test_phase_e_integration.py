@@ -220,7 +220,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
         self.assertTrue(any(parameter.requires_grad for parameter in model.prototype_head.parameters()))
 
     def test_optimizer_groups_follow_named_group_contract(self):
-        args = self._build_args(freeze_backbones=False)
+        args = self._build_args(freeze_backbones=False, backbone_precision='fp32')
         model = PASModel(args, num_classes=2)
         optimizer = build_optimizer(args, model)
         groups = {group['name']: group for group in optimizer.param_groups}
@@ -263,7 +263,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
 
     def test_fp16_prototype_rejects_bf16_amp(self):
         with self.assertRaisesRegex(ValueError, r'model\.prototype_precision=fp16 requires training\.amp_dtype=fp16'):
-            build_model(self._build_args(prototype_precision='fp16', amp=True, amp_dtype='bf16'), num_classes=2)
+            build_model(self._build_args(backbone_precision='fp32', prototype_precision='fp16', amp=True, amp_dtype='bf16'), num_classes=2)
 
     def test_evaluator_runs_end_to_end(self):
         args = self._build_args()

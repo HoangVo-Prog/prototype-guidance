@@ -165,8 +165,15 @@ def _finalize_args(args):
     args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling)
     legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)
     authoritative_contextualization = getattr(args, 'prototype_contextualization_enabled', None)
+    config_data = getattr(args, 'config_data', {}) or {}
+    model_config = config_data.get('model', {}) if isinstance(config_data.get('model', {}), dict) else {}
+    prototype_config = config_data.get('prototype', {}) if isinstance(config_data.get('prototype', {}), dict) else {}
+    authoritative_from_config = 'contextualization_enabled' in prototype_config
+    legacy_from_config = 'use_prototype_contextualization' in model_config
     if authoritative_contextualization is None:
         authoritative_contextualization = True if legacy_contextualization is None else bool(legacy_contextualization)
+    elif legacy_from_config and not authoritative_from_config:
+        authoritative_contextualization = bool(legacy_contextualization)
     else:
         authoritative_contextualization = bool(authoritative_contextualization)
     args.prototype_contextualization_enabled = authoritative_contextualization

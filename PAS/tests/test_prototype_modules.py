@@ -90,7 +90,7 @@ class PrototypeModuleTests(unittest.TestCase):
         return SimpleNamespace(**base)
 
     def _build_head(self, **overrides):
-        return PrototypeConditionedTextHead(
+        base = dict(
             input_dim=self.feature_dim,
             num_prototypes=self.num_prototypes,
             prototype_dim=self.feature_dim,
@@ -121,8 +121,9 @@ class PrototypeModuleTests(unittest.TestCase):
             contrastive_temperature_init=0.07,
             learnable_contrastive_temperature=True,
             dead_prototype_threshold=0.01,
-            **overrides,
         )
+        base.update(overrides)
+        return PrototypeConditionedTextHead(**base)
 
     def test_prototype_bank_shape_and_gradient(self):
         bank = PrototypeBank(num_prototypes=self.num_prototypes, prototype_dim=self.feature_dim)
@@ -372,8 +373,8 @@ class PrototypeModuleTests(unittest.TestCase):
 
     def test_loss_module_uses_multi_positive_pid_mask(self):
         losses = PrototypeLosses(temperature_init=1.0, normalize_embeddings=False)
-        image_embeddings = torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
-        text_embeddings = image_embeddings.clone()
+        image_embeddings = torch.tensor([[1.0, 0.0], [0.0, 1.0], [0.0, 1.0]])
+        text_embeddings = torch.tensor([[0.0, 1.0], [1.0, 0.0], [0.0, 1.0]])
         repeated_pids = torch.tensor([0, 0, 1], dtype=torch.long)
         unique_pids = torch.tensor([0, 1, 2], dtype=torch.long)
 
