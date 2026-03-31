@@ -1,4 +1,4 @@
-from typing import Dict, Iterable, Optional
+﻿from typing import Dict, Iterable, Optional
 
 import torch
 import torch.nn.functional as F
@@ -21,6 +21,7 @@ DEBUG_METRIC_MAP = {
     'routing_max_prob': 'debug/routing_max_prob',
     'routing_entropy': 'debug/routing_entropy',
     'prototype_assignment_entropy': 'debug/prototype_assignment_entropy',
+    'routing_effective_support': 'debug/routing_effective_support',
     'token_pool_entropy': 'debug/token_pool_entropy',
     'beta_max_prob': 'debug/beta_max_prob',
     'token_special_mass': 'debug/token_special_mass',
@@ -198,3 +199,4 @@ def build_validation_metrics(epoch: int, evaluator=None, val_loss: Optional[floa
     if evaluator is not None and getattr(evaluator, 'latest_metrics', None):
         metrics.update(evaluator.latest_metrics)
     return metrics
+

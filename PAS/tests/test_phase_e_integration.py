@@ -80,7 +80,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
         torch.manual_seed(13)
         self.patch_build = mock.patch(
             'model.build.build_CLIP_from_openai_pretrained',
-            side_effect=lambda *args, **kwargs: (DummyCLIPBackbone(), {'embed_dim': 8}),
+            side_effect=lambda *args, **kwargs: (DummyCLIPBackbone(), {'embed_dim': 8, 'vision_layers': 1, 'transformer_width': 8}),
         )
         self.patch_build.start()
         self.addCleanup(self.patch_build.stop)
@@ -127,7 +127,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
 
     def _build_args(self, freeze_backbones=True, **overrides):
         base = dict(
-            pretrain_choice='dummy',
+            pretrain_choice='ViT-B/16',
             img_size=(4, 4),
             stride_size=1,
             model_name='PAS',
@@ -340,6 +340,30 @@ class PhaseEIntegrationTests(unittest.TestCase):
         torch.testing.assert_close(retrieval_text['text_token_states'], model._resolve_text_states(training_text))
         torch.testing.assert_close(retrieval_text['attention_mask'], training_text.token_mask)
         self.assertEqual(set(retrieval_text['special_token_positions'].keys()), set(training_text.special_token_positions.keys()))
+
+    def test_forward_requires_pids_for_identity_aware_training(self):
+        model = PASModel(self._build_args(), num_classes=2)
+        batch = dict(self.batch)
+        batch.pop('pids')
+        with self.assertRaisesRegex(KeyError, r"batch\['pids'\]"):
+            model(batch)
+
+    def test_build_model_accepts_supported_vit_choices(self):
+        for pretrain_choice in ('ViT-B/16', 'ViT-B/32', 'ViT-L/14'):
+            model = build_model(self._build_args(pretrain_choice=pretrain_choice), num_classes=2)
+            self.assertEqual(model.embed_dim, 8)
+
+    def test_build_model_rejects_unsupported_resnet_choices(self):
+        with self.assertRaisesRegex(ValueError, r'Supported `pretrain_choice` values'):
+            build_model(self._build_args(pretrain_choice='RN50'), num_classes=2)
+
+    def test_build_model_rejects_incompatible_text_width_contract(self):
+        with mock.patch(
+            'model.build.build_CLIP_from_openai_pretrained',
+            side_effect=lambda *args, **kwargs: (DummyCLIPBackbone(), {'embed_dim': 8, 'vision_layers': 1, 'transformer_width': 7}),
+        ):
+            with self.assertRaisesRegex(ValueError, r'transformer_width == embed_dim'):
+                build_model(self._build_args(), num_classes=2)
 
 
 if __name__ == '__main__':  # pragma: no cover

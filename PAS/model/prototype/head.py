@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+﻿from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -106,6 +106,7 @@ class PrototypeConditionedTextHead(nn.Module):
         self.losses = PrototypeLosses(
             temperature_init=contrastive_temperature_init,
             learnable_temperature=learnable_contrastive_temperature,
+            normalize_embeddings=normalize_projector_outputs,
             use_diversity_loss=use_diversity_loss,
             diversity_loss_weight=diversity_loss_weight,
             use_balance_loss=use_balance_loss,
@@ -188,8 +189,8 @@ class PrototypeConditionedTextHead(nn.Module):
         if router_debug:
             metrics['routing_max_prob'] = router_debug['routing_max_prob']
             metrics['prototype_assignment_entropy'] = router_debug['prototype_assignment_entropy']
-            if 'routing_active_count' in router_debug:
-                metrics['routing_active_count'] = router_debug['routing_active_count']
+            if 'routing_effective_support' in router_debug:
+                metrics['routing_effective_support'] = router_debug['routing_effective_support']
         if pooler_debug:
             metrics['token_pool_entropy'] = pooler_debug['token_pool_entropy']
             metrics['beta_max_prob'] = pooler_debug['beta_max_prob']
@@ -260,6 +261,7 @@ class PrototypeConditionedTextHead(nn.Module):
         summary: torch.Tensor,
         text_token_states: torch.Tensor,
         token_ids: torch.Tensor,
+        pids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         return_debug: bool = False,
@@ -307,6 +309,7 @@ class PrototypeConditionedTextHead(nn.Module):
         summaries: torch.Tensor,
         text_token_states: torch.Tensor,
         token_ids: torch.Tensor,
+        pids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         image_chunk_size: int = 32,
@@ -334,8 +337,6 @@ class PrototypeConditionedTextHead(nn.Module):
         num_text = text_features.size(0)
         num_image = summaries.size(0)
         similarity = torch.empty(num_text, num_image, device=image_projected.device, dtype=image_projected.dtype)
-        logit_scale = self.losses.get_logit_scale().to(device=image_projected.device, dtype=image_projected.dtype)
-
         for image_start in range(0, num_image, image_chunk_size):
             image_end = min(image_start + image_chunk_size, num_image)
             summary_chunk = summaries[image_start:image_end]
@@ -356,8 +357,9 @@ class PrototypeConditionedTextHead(nn.Module):
                 token_scores = self.token_scorer(expanded_summary, expanded_tokens)
                 pooled_text, _ = self.token_pooler(token_scores, expanded_tokens, expanded_mask)
                 projected_text = self.text_projector(pooled_text)
-                # Retrieval uses the same scaled normalized-dot score family as training InfoNCE.
-                block_similarity = logit_scale * (projected_text * expanded_image_projected).sum(dim=-1)
+                # Keep the current pairwise inference scoring family, but share embedding
+                # normalization semantics with training through PrototypeLosses.
+                block_similarity = self.losses.compute_paired_similarity(expanded_image_projected, projected_text)
                 block_similarity = block_similarity.view(image_batch, text_batch).t()
                 similarity[text_start:text_end, image_start:image_end] = block_similarity
 
@@ -370,6 +372,7 @@ class PrototypeConditionedTextHead(nn.Module):
         image_embeddings: torch.Tensor,
         text_token_states: torch.Tensor,
         token_ids: torch.Tensor,
+        pids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         return_debug: bool = False,
@@ -409,6 +412,7 @@ class PrototypeConditionedTextHead(nn.Module):
         loss_outputs = self.losses(
             image_outputs['image_projected'],
             text_outputs['text_projected'],
+            pids=pids,
             prototypes=context['prototypes'],
             routing_weights=image_outputs['routing_weights'],
             return_debug=return_debug,
@@ -471,3 +475,5 @@ class PrototypeConditionedTextHead(nn.Module):
             if 'contrastive_logits' in loss_outputs:
                 outputs['debug']['contrastive_logits'] = loss_outputs['contrastive_logits']
         return outputs
+
+

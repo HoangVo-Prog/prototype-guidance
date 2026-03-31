@@ -1,11 +1,8 @@
-from .head import PrototypeConditionedTextHead
+﻿from .head import PrototypeConditionedTextHead
 
 
 def build_prototype_head(args, input_dim: int) -> PrototypeConditionedTextHead:
-    contextualization_enabled = bool(
-        getattr(args, 'prototype_contextualization_enabled', False)
-        or getattr(args, 'use_prototype_contextualization', False)
-    )
+    contextualization_enabled = bool(getattr(args, 'prototype_contextualization_enabled', True))
     projector_output_dim = getattr(args, 'projector_output_dim', getattr(args, 'projection_dim', 256))
     routing_type = getattr(args, 'routing_similarity', getattr(args, 'prototype_routing_type', 'cosine'))
     routing_temperature = getattr(args, 'tau_p', getattr(args, 'prototype_temperature', 0.07))

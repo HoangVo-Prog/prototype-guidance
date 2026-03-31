@@ -30,7 +30,10 @@ model:
   variant: pas_v1
 
   # CLIP checkpoint name passed into build_CLIP_from_openai_pretrained(...).
-  # Tested/default value in this repo: ViT-B/16.
+  # PAS runtime currently supports only ViT backbones whose text hidden width matches embed_dim:
+  # - ViT-B/16
+  # - ViT-B/32
+  # - ViT-L/14
   pretrain_choice: ViT-B/16
 
   # Logical image-backbone name for logging/metadata.
@@ -49,7 +52,9 @@ model:
   # Any positive integer is accepted.
   projection_dim: 256
 
-  # If true, L2-normalize projector outputs before contrastive similarity.
+  # Authoritative projector/output similarity family switch.
+  # If true, projector outputs are L2-normalized for both training contrastive scores and inference retrieval scores.
+  # If false, both paths use raw projector outputs.
   normalize_projector_outputs: true
 
   # Hidden dimension inside the projector MLPs.
@@ -105,10 +110,6 @@ model:
   # Phase E active runtime requires: true.
   use_image_conditioned_pooling: true
 
-  # Enables prototype contextualization module.
-  # true/false are both allowed.
-  use_prototype_contextualization: true
-
   # If true, forward(...) may return larger debug tensors.
   # true/false.
   return_debug_outputs: false
@@ -141,8 +142,10 @@ prototype:
   # Routing temperature. Must be positive.
   routing_temperature: 0.07
 
-  # Enables prototype contextualization.
+  # Authoritative prototype contextualization enable/disable flag.
   # true/false.
+  # Legacy alias model.use_prototype_contextualization is still accepted for backward compatibility
+  # when this key is omitted, but this key takes precedence.
   contextualization_enabled: true
 
   # Supported contextualization values:

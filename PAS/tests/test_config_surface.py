@@ -139,6 +139,43 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertTrue(args.amp)
         self.assertEqual(args.amp_dtype, 'bf16')
 
+    def test_authoritative_contextualization_flag_overrides_legacy_alias(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'use_prototype_contextualization': True,
+                },
+                'prototype': {
+                    'contextualization_enabled': False,
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertFalse(args.prototype_contextualization_enabled)
+
+    def test_legacy_contextualization_alias_applies_only_when_authoritative_flag_is_missing(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'use_prototype_contextualization': False,
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertFalse(args.prototype_contextualization_enabled)
+
+    def test_cli_authoritative_contextualization_flag_cannot_be_reenabled_by_legacy_alias(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'use_prototype_contextualization': True,
+                },
+            }
+        )
+        args = get_args(['--config_file', path, '--prototype_contextualization_enabled', 'false'])
+        self.assertFalse(args.prototype_contextualization_enabled)
+
+
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()

@@ -1,4 +1,4 @@
-import copy
+﻿import copy
 import os
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -34,7 +34,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'vocab_size'): 'vocab_size',
     ('model', 'use_prototype_bank'): 'use_prototype_bank',
     ('model', 'use_image_conditioned_pooling'): 'use_image_conditioned_pooling',
-    ('model', 'use_prototype_contextualization'): 'use_prototype_contextualization',
     ('model', 'return_debug_outputs'): 'return_debug_outputs',
 
     ('prototype', 'num_prototypes'): 'prototype_num_prototypes',
@@ -143,6 +142,7 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('evaluation', 'checkpoint'): 'checkpoint',
     ('evaluation', 'test_batch_size'): 'test_batch_size',
     ('model', 'projector_output_dim'): 'projection_dim',
+    ('model', 'use_prototype_contextualization'): 'use_prototype_contextualization',
     ('prototype', 'routing_similarity'): 'prototype_routing_type',
     ('prototype', 'tau_p'): 'prototype_temperature',
     ('prototype', 'lambda_bal'): 'prototype_balance_loss_weight',
@@ -436,3 +436,4 @@ def dump_yaml_config(path: str, config_data: Dict[str, Any]) -> None:
         os.makedirs(directory, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as handle:
         yaml.safe_dump(config_data, handle, default_flow_style=False, sort_keys=False)
+

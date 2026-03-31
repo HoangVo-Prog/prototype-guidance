@@ -20,7 +20,7 @@
 - Class: `Router`
 - Purpose: routes each image embedding onto the prototype bank.
 - Inputs: `image_embeddings` `[B, D]`, `prototypes` `[N, D]`.
-- Outputs: `alpha` `[B, N]`; optional debug `routing_logits`, `routing_weights`, `routing_max_prob`, `prototype_assignment_entropy`.
+- Outputs: `alpha` `[B, N]`; optional debug `routing_logits`, `routing_weights`, `routing_max_prob`, `prototype_assignment_entropy`, `routing_effective_support`.
 - Config dependencies: `prototype.routing_type`, `prototype.routing_temperature`, `prototype.normalize_for_routing`.
 - Failure conditions: invalid rank, mismatched feature dimensions, non-positive temperature, or non-finite outputs.
 
@@ -60,14 +60,14 @@
 - Class: `MLPProjector`
 - Purpose: projects image and pooled-text features into the contrastive embedding space.
 - Inputs: `inputs` with last dimension `input_dim`.
-- Outputs: normalized projected features with last dimension `output_dim`; optional debug `projected_features`, `projected_features_pre_norm`.
+- Outputs: projected features with last dimension `output_dim`; optional debug `projected_features`, `projected_features_pre_norm`. When `model.normalize_projector_outputs=true`, both training and inference scores use normalized projector outputs; otherwise both use raw projector outputs.
 - Config dependencies: `model.projection_dim`, `model.projector_hidden_dim`, `model.projector_dropout`, `model.projector_type`, `model.normalize_projector_outputs`.
 - Failure conditions: non-positive dimensional arguments.
 
 ## model/prototype/losses.py
 - Class: `PrototypeLosses`
-- Purpose: provides symmetric InfoNCE plus optional prototype regularizers.
-- Inputs: `image_embeddings` `[B, D]`, `text_embeddings` `[B, D]`, optional `prototypes` `[N, D]`, optional `routing_weights` `[B, N]`.
+- Purpose: provides symmetric multi-positive contrastive loss plus optional prototype regularizers.
+- Inputs: `image_embeddings` `[B, D]`, `text_embeddings` `[B, D]`, optional `pids` `[B]`, optional `prototypes` `[N, D]`, optional `routing_weights` `[B, N]`.
 - Outputs: `loss_total`, `loss_infonce`, `loss_diversity`, `loss_balance`, `logit_scale`, optional `contrastive_logits` `[B, B]`.
 - Config dependencies: `model.temperature`, `model.learn_logit_scale`, `prototype.use_diversity_loss`, `prototype.diversity_loss_weight`, `prototype.use_balancing_loss`, `prototype.balance_loss_weight`.
 - Failure conditions: non-positive temperature, image/text shape mismatch, or invalid input rank.
@@ -86,14 +86,14 @@
 - Purpose: config-driven construction of `PrototypeConditionedTextHead`.
 - Inputs: runtime `args`, `input_dim`.
 - Outputs: configured prototype head.
-- Config dependencies: `model.use_prototype_bank`, `model.use_image_conditioned_pooling`, `model.use_prototype_contextualization`, plus prototype/text-pooling/loss settings.
+- Config dependencies: `model.use_prototype_bank`, `model.use_image_conditioned_pooling`, `prototype.contextualization_enabled`, plus prototype/text-pooling/loss settings.
 - Failure conditions: delegated to the constructed modules.
 
 ## model/build.py
 - Class: `PASModel`
 - Purpose: primary model wrapper for training, retrieval evaluation, freeze policy, and optimizer grouping.
 - Inputs:
-  - `forward(batch, ...)` expects `batch['images']` and `batch['caption_ids']`.
+  - `forward(batch, ...)` expects `batch['images']`, `batch['caption_ids']`, and `batch['pids']`.
   - `encode_image_for_retrieval(image)` expects `[B, C, H, W]`.
   - `encode_text_for_retrieval(text)` expects `[B, L]`.
 - Outputs:

@@ -1,4 +1,4 @@
-from typing import Dict
+﻿from typing import Dict
 
 import torch
 import torch.nn as nn
@@ -52,12 +52,14 @@ class Router(nn.Module):
 
         if not return_debug:
             return alpha
+        routing_entropy = -(alpha * alpha.clamp_min(1e-12).log()).sum(dim=-1)
         return alpha, {
             'routing_similarity': similarity,
             'alpha_logits': alpha_logits,
             'routing_logits': stable_logits,
             'routing_weights': alpha,
             'routing_max_prob': alpha.max(dim=-1).values.mean().detach(),
-            'routing_active_count': alpha.gt(0).sum(dim=-1).float().mean().detach(),
-            'prototype_assignment_entropy': (-(alpha * alpha.clamp_min(1e-12).log()).sum(dim=-1).mean()).detach(),
+            'prototype_assignment_entropy': routing_entropy.mean().detach(),
+            'routing_effective_support': routing_entropy.exp().mean().detach(),
         }
+

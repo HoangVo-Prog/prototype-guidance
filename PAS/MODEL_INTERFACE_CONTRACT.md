@@ -12,6 +12,10 @@ This document describes the active Phase E model interface for the PAS retrieval
 
 The model owns the CLIP backbone, prototype head, freeze policy, optimizer-group exposure, retrieval encoding helpers, and training forward path.
 
+Backbone support:
+- PAS currently supports only `ViT-B/16`, `ViT-B/32`, and `ViT-L/14`.
+- The runtime requires a ViT image token interface and `transformer_width == embed_dim` because the prototype path consumes text pre-projection token states.
+
 Precision controls:
 - `model.backbone_precision` selects whether CLIP backbone parameters are kept in `fp16` or `fp32`.
 - `model.prototype_precision` selects whether prototype-head parameters are kept in `fp16` or `fp32`.
@@ -108,7 +112,7 @@ Returned fields:
 - Class: `PrototypeLosses`
 
 ### Training loss entrypoint
-- Function: `PrototypeLosses.forward(image_embeddings, text_embeddings, prototypes=None, routing_weights=None, return_debug=False)`
+- Function: `PrototypeLosses.forward(image_embeddings, text_embeddings, pids=None, prototypes=None, routing_weights=None, return_debug=False)`
 - Outputs:
   - `loss_total`
   - `loss_infonce`
@@ -139,6 +143,7 @@ Returned fields:
 
 ### Training forward
 - Function: `PASModel.forward(batch, ..., return_debug=None)`
+- Requires `batch['pids']` so training can construct identity-aware multi-positive contrastive targets.
 - Always returns:
   - `loss_total`
   - `loss_infonce`

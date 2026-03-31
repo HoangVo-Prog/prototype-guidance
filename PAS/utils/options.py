@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import os
 import sys
 
@@ -51,7 +51,7 @@ def build_parser():
     parser.add_argument('--vocab_size', type=int, default=49408)
     parser.add_argument('--use_prototype_bank', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_image_conditioned_pooling', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--use_prototype_contextualization', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--use_prototype_contextualization', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--return_debug_outputs', type=_str2bool, nargs='?', const=True, default=False)
 
     parser.add_argument('--prototype_num_prototypes', type=int, default=32)
@@ -60,7 +60,7 @@ def build_parser():
     parser.add_argument('--prototype_init_path', type=str, default='')
     parser.add_argument('--routing_similarity', '--prototype_routing_type', dest='prototype_routing_type', type=str, default='cosine')
     parser.add_argument('--tau_p', '--prototype_temperature', dest='prototype_temperature', type=float, default=0.07)
-    parser.add_argument('--prototype_contextualization_enabled', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--prototype_contextualization_enabled', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--prototype_contextualization_type', type=str, default='self_attention')
     parser.add_argument('--prototype_contextualization_residual', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--normalize_for_self_interaction', type=_str2bool, nargs='?', const=True, default=True)
@@ -163,10 +163,14 @@ def _finalize_args(args):
         args.retrieval_metrics = list(DEFAULT_RETRIEVAL_METRICS)
     args.use_prototype_bank = bool(args.use_prototype_bank)
     args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling)
-    args.use_prototype_contextualization = bool(args.use_prototype_contextualization)
-    args.prototype_contextualization_enabled = bool(
-        args.prototype_contextualization_enabled or args.use_prototype_contextualization
-    )
+    legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)
+    authoritative_contextualization = getattr(args, 'prototype_contextualization_enabled', None)
+    if authoritative_contextualization is None:
+        authoritative_contextualization = True if legacy_contextualization is None else bool(legacy_contextualization)
+    else:
+        authoritative_contextualization = bool(authoritative_contextualization)
+    args.prototype_contextualization_enabled = authoritative_contextualization
+    args.use_prototype_contextualization = authoritative_contextualization
     args.freeze_backbones = bool(args.freeze_image_backbone and args.freeze_text_backbone)
     args.image_backbone = args.image_backbone or args.pretrain_choice
     args.text_backbone = args.text_backbone or 'clip_text_transformer'
@@ -184,3 +188,4 @@ def get_args(argv=None):
     args = _finalize_args(args)
     validate_runtime_args_namespace(args)
     return args
+

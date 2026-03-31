@@ -15,12 +15,21 @@ from utils.precision import (
 )
 
 
+SUPPORTED_PAS_CLIP_BACKBONES = (
+    'ViT-B/16',
+    'ViT-B/32',
+    'ViT-L/14',
+)
+
+
 class PASModel(nn.Module):
     def __init__(self, args, num_classes=0):
         super().__init__()
         self.args = args
         self.num_classes = num_classes
+        self._validate_pretrain_choice()
         self.base_model, base_cfg = build_CLIP_from_openai_pretrained(args.pretrain_choice, args.img_size, args.stride_size)
+        self._validate_backbone_contract(base_cfg)
         self.embed_dim = int(base_cfg['embed_dim'])
 
         self.model_name = getattr(args, 'model_name', 'PAS')
@@ -38,6 +47,31 @@ class PASModel(nn.Module):
         self._validate_configuration()
         self.prototype_head = build_prototype_head(args, input_dim=self.embed_dim)
         self._apply_freeze_policy()
+
+    def _validate_pretrain_choice(self):
+        pretrain_choice = getattr(self.args, 'pretrain_choice', None)
+        if pretrain_choice not in SUPPORTED_PAS_CLIP_BACKBONES:
+            raise ValueError(
+                'PAS currently supports only ViT CLIP backbones with the token-level runtime contract required by ' 
+                f'prototype routing. Supported `pretrain_choice` values: {list(SUPPORTED_PAS_CLIP_BACKBONES)}. ' 
+                f'Got {pretrain_choice!r}.'
+            )
+
+    def _validate_backbone_contract(self, base_cfg):
+        vision_layers = base_cfg.get('vision_layers')
+        if isinstance(vision_layers, (tuple, list)):
+            raise ValueError(
+                'PAS requires a ViT visual backbone that returns token sequences with a CLS slot; ' 
+                f'got vision_layers={vision_layers!r} from pretrain_choice={getattr(self.args, "pretrain_choice", None)!r}.'
+            )
+        transformer_width = int(base_cfg.get('transformer_width', base_cfg['embed_dim']))
+        embed_dim = int(base_cfg['embed_dim'])
+        if transformer_width != embed_dim:
+            raise ValueError(
+                'PAS consumes text pre-projection token states, so it requires CLIP variants where ' 
+                f'transformer_width == embed_dim. Got transformer_width={transformer_width} and embed_dim={embed_dim} ' 
+                f'for pretrain_choice={getattr(self.args, "pretrain_choice", None)!r}.'
+            )
 
     def _validate_configuration(self):
         if not bool(getattr(self.args, 'use_prototype_bank', True)):
@@ -259,6 +293,9 @@ class PASModel(nn.Module):
         del epoch, current_step
         images = batch['images']
         caption_ids = batch['caption_ids']
+        if 'pids' not in batch:
+            raise KeyError("PASModel.forward requires batch['pids'] so contrastive training can use identity-aware positives.")
+        pids = batch['pids']
         image_output = self.extract_image_features(images)
         text_output = self.extract_text_features(caption_ids)
         should_return_debug = self.return_debug_outputs if return_debug is None else bool(return_debug)
@@ -266,6 +303,7 @@ class PASModel(nn.Module):
             image_embeddings=self._cast_to_prototype_dtype(image_output.projected_pooled),
             text_token_states=self._cast_to_prototype_dtype(self._resolve_text_states(text_output)),
             token_ids=caption_ids,
+            pids=pids,
             attention_mask=text_output.token_mask,
             special_token_positions=text_output.special_token_positions,
             return_debug=should_return_debug,

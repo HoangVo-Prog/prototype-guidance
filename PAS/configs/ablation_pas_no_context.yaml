@@ -26,7 +26,6 @@ model:
   vocab_size: 49408
   use_prototype_bank: true
   use_image_conditioned_pooling: true
-  use_prototype_contextualization: false
   return_debug_outputs: false
 
 prototype:

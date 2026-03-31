@@ -52,7 +52,7 @@ class DummyCLIPBackbone(nn.Module):
 
 def build_args():
     return SimpleNamespace(
-        pretrain_choice='dummy',
+        pretrain_choice='ViT-B/16',
         img_size=(4, 4),
         stride_size=1,
         model_name='PAS',
@@ -71,7 +71,6 @@ def build_args():
         vocab_size=50010,
         use_prototype_bank=True,
         use_image_conditioned_pooling=True,
-        use_prototype_contextualization=True,
         prototype_contextualization_enabled=True,
         return_debug_outputs=True,
         prototype_num_prototypes=4,
@@ -127,7 +126,7 @@ def main():
         (torch.tensor([0, 1], dtype=torch.long), batch['images'][2:]),
     ]
 
-    with mock.patch('model.build.build_CLIP_from_openai_pretrained', side_effect=lambda *a, **k: (DummyCLIPBackbone(), {'embed_dim': 8})):
+    with mock.patch('model.build.build_CLIP_from_openai_pretrained', side_effect=lambda *a, **k: (DummyCLIPBackbone(), {'embed_dim': 8, 'vision_layers': 1, 'transformer_width': 8})):
         model = PASModel(args, num_classes=2)
         outputs = model(batch, return_debug=True)
         if not torch.isfinite(outputs['loss_total']):

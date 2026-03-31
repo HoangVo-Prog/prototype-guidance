@@ -170,6 +170,22 @@ class PrototypeModuleTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(debug['routing_similarity']).all())
         self.assertTrue(torch.isfinite(debug['alpha_logits']).all())
 
+
+    def test_router_effective_support_varies_with_routing_concentration(self):
+        router = Router(routing_type='dot', temperature=0.1, normalize=False)
+        prototypes = torch.zeros(self.num_prototypes, self.feature_dim)
+        prototypes[0, 0] = 10.0
+        uniform_embedding = torch.zeros(1, self.feature_dim)
+        peaked_embedding = torch.zeros(1, self.feature_dim)
+        peaked_embedding[0, 0] = 1.0
+
+        _, uniform_debug = router(uniform_embedding, prototypes, return_debug=True)
+        _, peaked_debug = router(peaked_embedding, prototypes, return_debug=True)
+
+        self.assertIn('routing_effective_support', uniform_debug)
+        self.assertNotIn('routing_active_count', uniform_debug)
+        self.assertGreater(uniform_debug['routing_effective_support'], peaked_debug['routing_effective_support'])
+
     def test_aggregator_changes_with_routing_weights(self):
         prototypes = torch.arange(self.num_prototypes * self.feature_dim, dtype=torch.float32).view(self.num_prototypes, self.feature_dim)
         aggregator = PrototypeAggregator()
@@ -347,6 +363,76 @@ class PrototypeModuleTests(unittest.TestCase):
         outputs, debug = projector(torch.randn(self.batch_size, self.feature_dim), return_debug=True)
         self.assertEqual(tuple(outputs.shape), (self.batch_size, 4))
         self.assertEqual(debug['projector_type'], 'linear')
+
+
+    def test_contextualization_type_none_disables_contextualizer_even_when_enabled(self):
+        head = self._build_head(contextualization_enabled=True, contextualization_type='none')
+        context = head.get_prototype_context(return_debug=True)
+        torch.testing.assert_close(context['prototypes'], context['contextualized_prototypes'])
+
+    def test_loss_module_uses_multi_positive_pid_mask(self):
+        losses = PrototypeLosses(temperature_init=1.0, normalize_embeddings=False)
+        image_embeddings = torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+        text_embeddings = image_embeddings.clone()
+        repeated_pids = torch.tensor([0, 0, 1], dtype=torch.long)
+        unique_pids = torch.tensor([0, 1, 2], dtype=torch.long)
+
+        repeated_outputs = losses(image_embeddings, text_embeddings, pids=repeated_pids, return_debug=True)
+        unique_outputs = losses(image_embeddings, text_embeddings, pids=unique_pids, return_debug=True)
+
+        self.assertTrue(bool(repeated_outputs['contrastive_positive_mask'][0, 1]))
+        torch.testing.assert_close(repeated_outputs['contrastive_positive_counts'], torch.tensor([2, 2, 1]))
+        self.assertLess(repeated_outputs['loss_infonce'], unique_outputs['loss_infonce'])
+
+    def test_loss_module_reports_symmetric_multi_positive_direction_terms(self):
+        losses = PrototypeLosses(temperature_init=1.0, normalize_embeddings=False)
+        embeddings = torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+        outputs = losses(embeddings, embeddings, pids=torch.tensor([0, 0, 1], dtype=torch.long), return_debug=True)
+        torch.testing.assert_close(outputs['loss_t2i'], outputs['loss_i2t'])
+
+    def test_similarity_preparation_matches_train_and_infer_when_normalized(self):
+        losses = PrototypeLosses(temperature_init=1.0, normalize_embeddings=True)
+        image_embeddings = torch.tensor([[3.0, 4.0], [1.0, 2.0]])
+        text_embeddings = torch.tensor([[4.0, 3.0], [2.0, 1.0]])
+        image_norm = torch.nn.functional.normalize(image_embeddings, dim=-1)
+        text_norm = torch.nn.functional.normalize(text_embeddings, dim=-1)
+        expected_matrix = (text_norm @ image_norm.t()) * losses.get_logit_scale()
+        expected_paired = (text_norm * image_norm).sum(dim=-1) * losses.get_logit_scale()
+
+        matrix = losses.compute_contrastive_logits(image_embeddings, text_embeddings)
+        paired = losses.compute_paired_similarity(image_embeddings, text_embeddings)
+
+        torch.testing.assert_close(matrix, expected_matrix)
+        torch.testing.assert_close(paired, expected_paired)
+        torch.testing.assert_close(torch.diag(matrix), paired)
+
+    def test_similarity_preparation_matches_train_and_infer_when_not_normalized(self):
+        losses = PrototypeLosses(temperature_init=1.0, normalize_embeddings=False)
+        image_embeddings = torch.tensor([[3.0, 4.0], [1.0, 2.0]])
+        text_embeddings = torch.tensor([[4.0, 3.0], [2.0, 1.0]])
+        expected_matrix = (text_embeddings @ image_embeddings.t()) * losses.get_logit_scale()
+        expected_paired = (text_embeddings * image_embeddings).sum(dim=-1) * losses.get_logit_scale()
+
+        matrix = losses.compute_contrastive_logits(image_embeddings, text_embeddings)
+        paired = losses.compute_paired_similarity(image_embeddings, text_embeddings)
+
+        torch.testing.assert_close(matrix, expected_matrix)
+        torch.testing.assert_close(paired, expected_paired)
+        torch.testing.assert_close(torch.diag(matrix), paired)
+
+    def test_normalization_toggle_changes_train_and_paired_inference_semantics_together(self):
+        image_embeddings = torch.tensor([[3.0, 4.0], [1.0, 2.0]])
+        text_embeddings = torch.tensor([[4.0, 3.0], [2.0, 1.0]])
+        normalized_losses = PrototypeLosses(temperature_init=1.0, normalize_embeddings=True)
+        raw_losses = PrototypeLosses(temperature_init=1.0, normalize_embeddings=False)
+
+        normalized_matrix = normalized_losses.compute_contrastive_logits(image_embeddings, text_embeddings)
+        raw_matrix = raw_losses.compute_contrastive_logits(image_embeddings, text_embeddings)
+        normalized_paired = normalized_losses.compute_paired_similarity(image_embeddings, text_embeddings)
+        raw_paired = raw_losses.compute_paired_similarity(image_embeddings, text_embeddings)
+
+        self.assertFalse(torch.allclose(normalized_matrix, raw_matrix))
+        self.assertFalse(torch.allclose(normalized_paired, raw_paired))
 
     def test_loss_module_reports_raw_and_weighted_components(self):
         losses = PrototypeLosses(
