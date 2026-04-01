@@ -221,6 +221,8 @@ training:
 
   # Proxy-classifier temperature used by the amortized surrogate objective. Must be positive.
   proxy_temperature: 0.07
+  use_loss_proxy_image: true
+  use_loss_proxy_text: true
 
   # Main surrogate proxy-loss weight.
   lambda_proxy: 1.0

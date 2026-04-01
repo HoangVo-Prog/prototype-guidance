@@ -42,6 +42,8 @@ def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeCon
         num_classes=num_classes,
         proxy_temperature=getattr(args, 'proxy_temperature', 0.07),
         lambda_proxy=getattr(args, 'lambda_proxy', 1.0),
+        use_loss_proxy_image=getattr(args, 'use_loss_proxy_image', True),
+        use_loss_proxy_text=getattr(args, 'use_loss_proxy_text', True),
         lambda_align=getattr(args, 'lambda_align', 1.0),
         lambda_diag=getattr(args, 'lambda_diag', 1.0),
         use_diversity_loss=getattr(args, 'use_diversity_loss', True),

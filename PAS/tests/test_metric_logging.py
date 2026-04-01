@@ -10,7 +10,7 @@ from utils.metric_logging import build_train_metrics
 
 
 class MetricLoggingTests(unittest.TestCase):
-    def test_build_train_metrics_includes_separate_proxy_branch_keys_for_wandb(self):
+    def test_build_train_metrics_does_not_duplicate_proxy_branch_keys_for_wandb(self):
         outputs = {
             'loss_total': 3.0,
             'loss_proxy': 2.0,
@@ -30,8 +30,8 @@ class MetricLoggingTests(unittest.TestCase):
         metrics = build_train_metrics(epoch=2, step=17, outputs=outputs, lr=1e-3, include_debug_metrics=False)
         self.assertEqual(metrics['train/loss_proxy_image'], 1.25)
         self.assertEqual(metrics['train/loss_proxy_text'], 0.75)
-        self.assertEqual(metrics['train/loss_proxy_image_branch'], 1.25)
-        self.assertEqual(metrics['train/loss_proxy_text_branch'], 0.75)
+        self.assertNotIn('train/loss_proxy_image_branch', metrics)
+        self.assertNotIn('train/loss_proxy_text_branch', metrics)
 
 
 if __name__ == '__main__':  # pragma: no cover

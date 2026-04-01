@@ -15,6 +15,8 @@ class PrototypeLosses(nn.Module):
         embedding_dim: int = 0,
         proxy_temperature: float = 0.07,
         lambda_proxy: float = 1.0,
+        use_loss_proxy_image: bool = True,
+        use_loss_proxy_text: bool = True,
         lambda_align: float = 1.0,
         lambda_diag: float = 1.0,
         use_diversity_loss: bool = False,
@@ -43,6 +45,8 @@ class PrototypeLosses(nn.Module):
         self.use_balance_loss = bool(use_balance_loss)
         self.lambda_bal = float(balance_loss_weight)
         self.lambda_proxy = float(lambda_proxy)
+        self.use_loss_proxy_image = bool(use_loss_proxy_image)
+        self.use_loss_proxy_text = bool(use_loss_proxy_text)
         self.lambda_align = float(lambda_align)
         self.lambda_diag = float(lambda_diag)
         self.proxy_temperature = float(proxy_temperature)
@@ -187,8 +191,9 @@ class PrototypeLosses(nn.Module):
         pids = self._validate_class_labels(pids, image_embeddings.size(0), image_embeddings.device)
         loss_proxy_image_info = self.proxy_loss(image_embeddings, pids)
         loss_proxy_text_info = self.proxy_loss(surrogate_text_embeddings, pids)
-        loss_proxy_image = loss_proxy_image_info['loss']
-        loss_proxy_text = loss_proxy_text_info['loss']
+        zero = image_embeddings.new_zeros(())
+        loss_proxy_image = loss_proxy_image_info['loss'] if self.use_loss_proxy_image else zero
+        loss_proxy_text = loss_proxy_text_info['loss'] if self.use_loss_proxy_text else zero
         loss_proxy = loss_proxy_image + loss_proxy_text
         loss_align = self.cosine_alignment_loss(image_embeddings, surrogate_text_embeddings)
         loss_diag = self.diagonal_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings)
@@ -216,6 +221,8 @@ class PrototypeLosses(nn.Module):
             'loss_diversity_weighted': self.lambda_div * loss_diversity,
             'loss_balance_weighted': self.lambda_bal * loss_balance,
             'lambda_proxy': torch.tensor(self.lambda_proxy, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_proxy_image': torch.tensor(float(self.use_loss_proxy_image), device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_proxy_text': torch.tensor(float(self.use_loss_proxy_text), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_align': torch.tensor(self.lambda_align, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_diag': torch.tensor(self.lambda_diag, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_div': torch.tensor(self.lambda_div, device=loss_total.device, dtype=loss_total.dtype),

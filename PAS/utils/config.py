@@ -81,6 +81,8 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'amp_dtype'): 'amp_dtype',
     ('training', 'proxy_temperature'): 'proxy_temperature',
     ('training', 'lambda_proxy'): 'lambda_proxy',
+    ('training', 'use_loss_proxy_image'): 'use_loss_proxy_image',
+    ('training', 'use_loss_proxy_text'): 'use_loss_proxy_text',
     ('training', 'lambda_align'): 'lambda_align',
     ('training', 'lambda_diag'): 'lambda_diag',
 
