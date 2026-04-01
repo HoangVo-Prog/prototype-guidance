@@ -77,7 +77,7 @@ training:
   grad_clip: 1.0
   amp: false
   amp_dtype: fp16
-  proxy_temperature: 0.07
+  proxy_temperature: 0.1
   use_loss_proxy_image: true
   use_loss_proxy_text: false
   lambda_proxy: 1.0
@@ -89,13 +89,13 @@ optimizer:
   lr: 0.001
   lr_prototype_bank: 0.001
   lr_projectors: 0.001
-  lr_image_backbone: 0.00002
-  lr_text_backbone: 0.00001
+  lr_image_backbone: 5.0e-5
+  lr_text_backbone: 1.0e-3
   weight_decay: 0.01
   weight_decay_prototype_bank: 0.01
   weight_decay_projectors: 0.05
   lr_class_proxies: null
-  weight_decay_class_proxies: null
+  weight_decay_class_proxies: 0.0
   weight_decay_image_backbone: 0.01
   weight_decay_text_backbone: 0.01
   momentum: 0.9
@@ -104,7 +104,7 @@ optimizer:
   milestones: [40, 50]
   gamma: 0.1
   warmup_factor: 0.1
-  warmup_epochs: 1
+  warmup_epochs: 0
   warmup_method: linear
   scheduler: cosine
   target_lr: 0.0
