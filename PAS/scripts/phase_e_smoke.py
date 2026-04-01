@@ -66,7 +66,6 @@ def build_args():
         projector_type='mlp2',
         normalize_projector_outputs=True,
         temperature=0.07,
-        learn_logit_scale=False,
         proxy_temperature=0.2,
         lambda_proxy=1.0,
         lambda_align=0.5,

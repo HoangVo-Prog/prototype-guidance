@@ -8,7 +8,7 @@ This document describes the active Phase E model interface for the PAS retrieval
 
 - File: `model/build.py`
 - Class: `PASModel`
-- Builder: `build_model(args, num_classes=0)`
+- Builder: `build_model(args, num_classes)`
 
 The model owns the CLIP backbone, prototype head, freeze policy, optimizer-group exposure, retrieval encoding helpers, exact deployed retrieval scoring, and the amortized surrogate training forward path.
 
@@ -22,7 +22,9 @@ Precision controls:
 - `training.amp` and `training.amp_dtype` control CUDA autocast/scaler usage during training and retrieval evaluation.
 - Unfrozen `fp16` backbone training is only supported when `training.amp=true`.
 - `prototype_precision=fp16` training is only supported when `training.amp=true`.
-- `model.learn_logit_scale=true` is not supported under the amortized surrogate objective; exact retrieval scoring keeps a fixed temperature.
+- `model.normalize_projector_outputs` must remain `true` in the active runtime so training and retrieval stay on the same cosine-normalized embedding family.
+- Exact retrieval scoring keeps a fixed temperature; there is no learnable logit-scale surface in the active runtime.
+- `build_model(...)` requires `num_classes > 0` so class proxies are instantiated consistently for both training and evaluation builds.
 
 ## 2. Image-Side Interface
 

@@ -19,7 +19,6 @@ model:
   backbone_precision: fp32
   prototype_precision: fp32
   temperature: 0.07
-  learn_logit_scale: false
   img_size: [384, 128]
   stride_size: 16
   text_length: 77
@@ -88,13 +87,11 @@ optimizer:
   lr: 0.001
   lr_prototype_bank: 0.001
   lr_projectors: 0.001
-  lr_logit_scale: 0.0001
   lr_image_backbone: 0.00002
   lr_text_backbone: 0.00001
   weight_decay: 0.01
   weight_decay_prototype_bank: 0.01
   weight_decay_projectors: 0.05
-  weight_decay_logit_scale: 0.0
   lr_class_proxies: null
   weight_decay_class_proxies: null
   weight_decay_image_backbone: 0.01

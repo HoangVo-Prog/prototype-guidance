@@ -143,7 +143,6 @@ class PhaseEIntegrationTests(unittest.TestCase):
             backbone_precision='fp32',
             prototype_precision='fp32',
             temperature=0.07,
-            learn_logit_scale=False,
             proxy_temperature=0.2,
             lambda_proxy=1.0,
             lambda_align=0.5,
@@ -185,14 +184,12 @@ class PhaseEIntegrationTests(unittest.TestCase):
             lr=0.01,
             lr_prototype_bank=0.02,
             lr_projectors=0.04,
-            lr_logit_scale=0.005,
             lr_class_proxies=0.03,
             lr_image_backbone=0.001,
             lr_text_backbone=0.001,
             weight_decay=0.01,
             weight_decay_prototype_bank=0.02,
             weight_decay_projectors=0.04,
-            weight_decay_logit_scale=0.0,
             weight_decay_class_proxies=0.07,
             weight_decay_image_backbone=0.05,
             weight_decay_text_backbone=0.06,
@@ -275,9 +272,13 @@ class PhaseEIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r'model\.prototype_precision=fp16 requires training\.amp_dtype=fp16'):
             build_model(self._build_args(prototype_precision='fp16', amp=True, amp_dtype='bf16'), num_classes=2)
 
-    def test_build_model_rejects_learnable_logit_scale_runtime(self):
-        with self.assertRaisesRegex(ValueError, r'learn_logit_scale=true'):
-            build_model(self._build_args(learn_logit_scale=True), num_classes=2)
+    def test_build_model_requires_normalized_projector_outputs(self):
+        with self.assertRaisesRegex(ValueError, r'normalize_projector_outputs=true'):
+            build_model(self._build_args(normalize_projector_outputs=False), num_classes=2)
+
+    def test_build_model_requires_num_classes_for_eval_construction_too(self):
+        with self.assertRaisesRegex(ValueError, r'num_classes > 0'):
+            build_model(self._build_args(training=False), num_classes=0)
 
     def test_tiny_overfit_reduces_loss(self):
         model = PASModel(self._build_args(), num_classes=2)

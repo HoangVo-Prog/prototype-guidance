@@ -142,7 +142,6 @@ class ModelInterfaceContractTests(unittest.TestCase):
             backbone_precision='fp32',
             prototype_precision='fp32',
             temperature=0.07,
-            learn_logit_scale=False,
             proxy_temperature=0.2,
             lambda_proxy=1.0,
             lambda_align=0.5,

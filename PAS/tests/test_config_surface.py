@@ -37,6 +37,16 @@ class ConfigSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'optimizer.lr_contextualizer'):
             load_yaml_config(None, path)
 
+    def test_removed_logit_scale_surface_is_rejected(self):
+        path = self._write_config({'model': {'learn_logit_scale': True}})
+        with self.assertRaisesRegex(ValueError, 'model.learn_logit_scale'):
+            load_yaml_config(None, path)
+
+    def test_removed_logit_scale_optimizer_surface_is_rejected(self):
+        path = self._write_config({'optimizer': {'lr_logit_scale': 1e-4}})
+        with self.assertRaisesRegex(ValueError, 'optimizer.lr_logit_scale'):
+            load_yaml_config(None, path)
+
     def test_removed_sparse_routing_knob_fails_loudly(self):
         path = self._write_config({'prototype': {'assignment_sparse': True}})
         with self.assertRaisesRegex(ValueError, 'prototype.assignment_sparse'):
@@ -100,10 +110,8 @@ class ConfigSurfaceTests(unittest.TestCase):
                 'model': {
                     'projector_type': 'linear',
                     'normalize_projector_outputs': True,
-                    'learn_logit_scale': False,
                     'backbone_precision': 'fp32',
                     'prototype_precision': 'fp32',
-                    'learn_logit_scale': False,
                 },
                 'prototype': {
                     'normalize_for_self_interaction': True,
@@ -143,7 +151,6 @@ class ConfigSurfaceTests(unittest.TestCase):
         args = get_args(['--config_file', path])
         self.assertEqual(args.projector_type, 'linear')
         self.assertTrue(args.normalize_projector_outputs)
-        self.assertFalse(args.learn_logit_scale)
         self.assertEqual(args.backbone_precision, 'fp32')
         self.assertEqual(args.prototype_precision, 'fp32')
         self.assertTrue(args.normalize_for_self_interaction)

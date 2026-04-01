@@ -88,7 +88,6 @@ class PrototypeModuleTests(unittest.TestCase):
             use_balancing_loss=True,
             prototype_balance_loss_weight=0.1,
             temperature=0.07,
-            learn_logit_scale=False,
             prototype_dead_threshold=0.01,
         )
         base.update(overrides)
@@ -249,7 +248,7 @@ class PrototypeModuleTests(unittest.TestCase):
             losses(torch.randn(self.batch_size, 4), torch.randn(self.batch_size, 4), torch.randn(self.batch_size, 4), pids=None)
 
     def test_loss_module_rejects_learnable_temperature(self):
-        with self.assertRaisesRegex(ValueError, 'learn_logit_scale=true'):
+        with self.assertRaisesRegex(ValueError, 'Learnable retrieval logit scaling'):
             PrototypeLosses(temperature_init=0.07, learnable_temperature=True, num_classes=self.num_classes, embedding_dim=4)
 
     def test_loss_module_reports_amortized_components(self):

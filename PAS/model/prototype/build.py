@@ -49,6 +49,6 @@ def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeCon
         use_balance_loss=use_balancing_loss,
         balance_loss_weight=balance_loss_weight,
         contrastive_temperature_init=getattr(args, 'temperature', 0.07),
-        learnable_contrastive_temperature=getattr(args, 'learn_logit_scale', False),
+        learnable_contrastive_temperature=False,
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
     )

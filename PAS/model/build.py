@@ -23,7 +23,7 @@ SUPPORTED_PAS_CLIP_BACKBONES = (
 
 
 class PASModel(nn.Module):
-    def __init__(self, args, num_classes=0):
+    def __init__(self, args, num_classes):
         super().__init__()
         self.args = args
         self.num_classes = num_classes
@@ -78,13 +78,14 @@ class PASModel(nn.Module):
             raise ValueError('PASModel requires model.use_prototype_bank=true because the active runtime is prototype-based.')
         if not bool(getattr(self.args, 'use_image_conditioned_pooling', True)):
             raise ValueError('PASModel requires model.use_image_conditioned_pooling=true because the active runtime scores text under image-conditioned pooling.')
-        if bool(getattr(self.args, 'learn_logit_scale', False)):
+        if not bool(getattr(self.args, 'normalize_projector_outputs', True)):
             raise ValueError(
-                'model.learn_logit_scale=true is not supported under the amortized surrogate objective because '
-                'the exact retrieval scorer keeps a fixed temperature.'
+                'PASModel requires model.normalize_projector_outputs=true in the active runtime so '
+                'proxy supervision, fidelity/alignment losses, and retrieval scoring all operate on the same '
+                'cosine-normalized embedding family.'
             )
-        if bool(getattr(self.args, 'training', True)) and self.num_classes <= 0:
-            raise ValueError('PASModel requires num_classes > 0 during training so the amortized proxy objective can build class proxies.')
+        if self.num_classes <= 0:
+            raise ValueError('PASModel requires num_classes > 0 so the active runtime can instantiate class proxies consistently for train and eval.')
         if self.prototype_eval_image_chunk_size <= 0 or self.prototype_eval_text_chunk_size <= 0:
             raise ValueError('Prototype evaluation chunk sizes must be positive integers.')
         configured_embedding_dim = getattr(self.args, 'embedding_dim', None)
@@ -314,7 +315,6 @@ class PASModel(nn.Module):
             prototype_bank=[],
             projectors=[],
             class_proxies=[],
-            logit_scale=[],
             image_backbone=[],
             text_backbone=[],
             other=[],
@@ -328,8 +328,6 @@ class PASModel(nn.Module):
                 groups['projectors'].append((name, parameter))
             elif name.startswith('prototype_head.losses.class_proxies'):
                 groups['class_proxies'].append((name, parameter))
-            elif name.endswith('logit_scale'):
-                groups['logit_scale'].append((name, parameter))
             elif name.startswith('base_model.visual'):
                 groups['image_backbone'].append((name, parameter))
             elif name.startswith('base_model.transformer') or name.startswith('base_model.token_embedding') or name.startswith('base_model.positional_embedding') or name.startswith('base_model.ln_final') or name.startswith('base_model.text_projection'):
@@ -399,7 +397,7 @@ PrototypeGuidedRetrievalModel = PASModel
 Model = PASModel
 
 
-def build_model(args, num_classes=0):
+def build_model(args, num_classes):
     model = PASModel(args, num_classes=num_classes)
     if model.backbone_precision == 'fp16':
         convert_weights(model.base_model)

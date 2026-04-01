@@ -46,7 +46,7 @@
 - Purpose: projects image features and pooled text states into the retrieval embedding space.
 - Inputs: `inputs` with last dimension `input_dim`.
 - Outputs: projected features with last dimension `output_dim`; optional debug includes raw and normalized projections.
-- Note: `model.normalize_projector_outputs` remains authoritative for exact and approximate retrieval scoring utilities.
+- Note: the active PAS runtime requires `model.normalize_projector_outputs=true` so proxy supervision and retrieval scoring use the same cosine-normalized embedding family.
 
 ## model/prototype/losses.py
 - Class: `PrototypeLosses`
@@ -84,7 +84,7 @@
 ## model/prototype/build.py
 - Function: `build_prototype_head(args, input_dim, num_classes)`
 - Purpose: config-driven construction of `PrototypeConditionedTextHead` for the amortized objective.
-- Important args: proxy temperature, `lambda_proxy`, `lambda_align`, `lambda_diag`, prototype regularizer weights, and `num_classes`.
+- Important args: fixed retrieval temperature, proxy temperature, `lambda_proxy`, `lambda_align`, `lambda_diag`, prototype regularizer weights, and `num_classes > 0`.
 
 ## model/build.py
 - Class: `PASModel`

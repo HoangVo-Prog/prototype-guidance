@@ -33,7 +33,7 @@ class PrototypeLosses(nn.Module):
             raise ValueError('embedding_dim must be positive for the amortized proxy objective.')
         if learnable_temperature:
             raise ValueError(
-                'model.learn_logit_scale=true is not supported under the amortized surrogate objective. '
+                'Learnable retrieval logit scaling is not supported under the amortized surrogate objective. '
                 'Exact retrieval scoring keeps a fixed temperature.'
             )
 
