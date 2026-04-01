@@ -80,17 +80,18 @@ training:
   proxy_temperature: 0.1
   use_loss_proxy_image: true
   use_loss_proxy_text: false
+  use_loss_proxy_text_exact: true
   lambda_proxy: 1.0
-  lambda_align: 0
-  lambda_diag: 0
+  lambda_align: 0.25
+  lambda_diag: 0.25
 
 optimizer:
   type: AdamW
   lr: 1.0e-4
   lr_prototype_bank: 1.0e-4
   lr_projectors: 5.0e-5
-  lr_image_backbone: 2.0e-6
-  lr_text_backbone: 1.0e-6
+  lr_image_backbone: 2.0e-5
+  lr_text_backbone: 1.0e-5
   weight_decay: 0.01
   weight_decay_prototype_bank: 0.01
   weight_decay_projectors: 0.05

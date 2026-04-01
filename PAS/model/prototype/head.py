@@ -45,6 +45,7 @@ class PrototypeConditionedTextHead(nn.Module):
         lambda_proxy: float = 1.0,
         use_loss_proxy_image: bool = True,
         use_loss_proxy_text: bool = True,
+        use_loss_proxy_text_exact: bool = True,
         lambda_align: float = 1.0,
         lambda_diag: float = 1.0,
         use_diversity_loss: bool = False,
@@ -120,6 +121,7 @@ class PrototypeConditionedTextHead(nn.Module):
             lambda_proxy=lambda_proxy,
             use_loss_proxy_image=use_loss_proxy_image,
             use_loss_proxy_text=use_loss_proxy_text,
+            use_loss_proxy_text_exact=use_loss_proxy_text_exact,
             lambda_align=lambda_align,
             lambda_diag=lambda_diag,
             use_diversity_loss=use_diversity_loss,
@@ -197,8 +199,11 @@ class PrototypeConditionedTextHead(nn.Module):
         metrics.update(self._compute_pairwise_cosine_metrics('prototype', prototypes))
         metrics.update(self._compute_pairwise_cosine_metrics('contextualized_prototype', contextualized_prototypes))
         image_embed_norms = image_projector_debug['projected_features_raw'].norm(dim=-1)
+        image_embed_unit_norms = image_projector_debug['projected_features'].norm(dim=-1)
         surrogate_text_embed_norms = surrogate_text_projector_debug['projected_features_raw'].norm(dim=-1)
+        surrogate_text_embed_unit_norms = surrogate_text_projector_debug['projected_features'].norm(dim=-1)
         exact_text_embed_norms = exact_text_projector_debug['projected_features_raw'].norm(dim=-1)
+        exact_text_embed_unit_norms = exact_text_projector_debug['projected_features'].norm(dim=-1)
         metrics.update(
             {
                 'q_norm': summary.norm(dim=-1).mean().detach(),
@@ -207,18 +212,26 @@ class PrototypeConditionedTextHead(nn.Module):
                 'exact_t_pool_norm': exact_pooled_text.norm(dim=-1).mean().detach(),
                 'image_feature_norm': image_features.norm(dim=-1).mean().detach(),
                 'image_embed_norm': image_embed_norms.mean().detach(),
+                'image_embed_norm_raw': image_embed_norms.mean().detach(),
+                'image_embed_unit_norm': image_embed_unit_norms.mean().detach(),
                 'image_embed_norm_std': image_embed_norms.std(unbiased=False).detach(),
                 'image_embed_norm_min': image_embed_norms.min().detach(),
                 'image_embed_norm_max': image_embed_norms.max().detach(),
                 'text_embed_norm': surrogate_text_embed_norms.mean().detach(),
+                'text_embed_norm_raw': surrogate_text_embed_norms.mean().detach(),
+                'text_embed_unit_norm': surrogate_text_embed_unit_norms.mean().detach(),
                 'text_embed_norm_std': surrogate_text_embed_norms.std(unbiased=False).detach(),
                 'text_embed_norm_min': surrogate_text_embed_norms.min().detach(),
                 'text_embed_norm_max': surrogate_text_embed_norms.max().detach(),
                 'surrogate_text_embed_norm': surrogate_text_embed_norms.mean().detach(),
+                'surrogate_text_embed_norm_raw': surrogate_text_embed_norms.mean().detach(),
+                'surrogate_text_embed_unit_norm': surrogate_text_embed_unit_norms.mean().detach(),
                 'surrogate_text_embed_norm_std': surrogate_text_embed_norms.std(unbiased=False).detach(),
                 'surrogate_text_embed_norm_min': surrogate_text_embed_norms.min().detach(),
                 'surrogate_text_embed_norm_max': surrogate_text_embed_norms.max().detach(),
                 'exact_text_embed_norm': exact_text_embed_norms.mean().detach(),
+                'exact_text_embed_norm_raw': exact_text_embed_norms.mean().detach(),
+                'exact_text_embed_unit_norm': exact_text_embed_unit_norms.mean().detach(),
                 'exact_text_embed_norm_std': exact_text_embed_norms.std(unbiased=False).detach(),
                 'exact_text_embed_norm_min': exact_text_embed_norms.min().detach(),
                 'exact_text_embed_norm_max': exact_text_embed_norms.max().detach(),
@@ -276,10 +289,12 @@ class PrototypeConditionedTextHead(nn.Module):
 
         routing_weights, routing_debug = self.router(image_features, contextualized_prototypes, return_debug=True)
         summary, aggregator_debug = self.aggregator(routing_weights, contextualized_prototypes, return_debug=True)
-        image_projected, image_projector_debug = self.image_projector(image_features, return_debug=True)
+        image_proxy_features = image_features + summary
+        image_projected, image_projector_debug = self.image_projector(image_proxy_features, return_debug=True)
 
         outputs = {
             'image_embedding': image_features,
+            'image_proxy_features': image_proxy_features,
             'prototypes': prototypes,
             'contextualized_prototypes': contextualized_prototypes,
             'routing_weights': routing_weights,
@@ -639,6 +654,7 @@ class PrototypeConditionedTextHead(nn.Module):
             'surrogate_pooled_text': surrogate_pooled_text,
             'image_projected': image_outputs['image_projected'],
             'image_projected_raw': image_outputs['image_projected_raw'],
+            'image_proxy_features': image_outputs['image_proxy_features'],
             'surrogate_text_projected': surrogate_text_projected,
             'surrogate_text_projected_raw': surrogate_text_projector_debug['projected_features_raw'],
             'exact_text_projected': exact_outputs['text_projected'],
@@ -695,5 +711,6 @@ class PrototypeConditionedTextHead(nn.Module):
             if 'image_proxy_logits' in loss_outputs:
                 outputs['debug']['image_proxy_logits'] = loss_outputs['image_proxy_logits'].detach()
                 outputs['debug']['text_proxy_logits'] = loss_outputs['text_proxy_logits'].detach()
+                outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs

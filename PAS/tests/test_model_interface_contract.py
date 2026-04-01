@@ -144,6 +144,7 @@ class ModelInterfaceContractTests(unittest.TestCase):
             temperature=0.07,
             proxy_temperature=0.2,
             lambda_proxy=1.0,
+            use_loss_proxy_text_exact=True,
             lambda_align=0.5,
             lambda_diag=0.25,
             text_length=77,
@@ -279,11 +280,13 @@ class ModelInterfaceContractTests(unittest.TestCase):
         required_keys = {
             'loss_total',
             'loss_proxy',
+            'loss_proxy_text_exact',
             'loss_align',
             'loss_diag',
             'loss_diversity',
             'loss_balance',
             'proxy_temperature',
+            'use_loss_proxy_text_exact',
             'retrieval_temperature',
             'logit_scale',
             'alpha',
@@ -308,7 +311,7 @@ class ModelInterfaceContractTests(unittest.TestCase):
             return_debug=True,
         )
         debug = outputs['debug']
-        for key in ('alpha', 'beta', 'Q', 'Theta_v', 'Theta_tilde', 'basis_bank', 'T_hat_pool', 'T_exact_pool', 'Z_v', 'Z_t', 'Z_t_exact'):
+        for key in ('alpha', 'beta', 'Q', 'Theta_v', 'Theta_tilde', 'basis_bank', 'T_hat_pool', 'T_exact_pool', 'Z_v', 'Z_t', 'Z_t_exact', 'text_exact_proxy_logits'):
             self.assertIn(key, debug)
         self.assertEqual(tuple(debug['alpha'].shape), (self.batch_size, self.num_prototypes))
         self.assertEqual(tuple(debug['beta'].shape), (self.batch_size, self.seq_len))

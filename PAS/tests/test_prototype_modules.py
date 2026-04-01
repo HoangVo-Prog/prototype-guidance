@@ -81,6 +81,7 @@ class PrototypeModuleTests(unittest.TestCase):
             normalize_for_routing=True,
             proxy_temperature=0.2,
             lambda_proxy=1.0,
+            use_loss_proxy_text_exact=True,
             lambda_align=0.5,
             lambda_diag=0.25,
             use_diversity_loss=True,
@@ -121,6 +122,7 @@ class PrototypeModuleTests(unittest.TestCase):
             num_classes=self.num_classes,
             proxy_temperature=0.2,
             lambda_proxy=1.0,
+            use_loss_proxy_text_exact=True,
             lambda_align=0.5,
             lambda_diag=0.25,
             use_diversity_loss=True,
@@ -281,13 +283,32 @@ class PrototypeModuleTests(unittest.TestCase):
         )
         torch.testing.assert_close(outputs['loss_total'], expected_total)
 
-    def test_loss_module_stop_gradient_on_exact_anchor(self):
+    def test_loss_module_exact_proxy_supervision_reaches_exact_embedding(self):
         losses = PrototypeLosses(
             temperature_init=0.07,
             normalize_embeddings=True,
             num_classes=self.num_classes,
             embedding_dim=4,
             proxy_temperature=0.2,
+        )
+        image_embeddings = torch.randn(self.batch_size, 4, requires_grad=True)
+        surrogate_embeddings = torch.randn(self.batch_size, 4, requires_grad=True)
+        exact_embeddings = torch.randn(self.batch_size, 4, requires_grad=True)
+        outputs = losses(image_embeddings, surrogate_embeddings, exact_embeddings, pids=torch.tensor([0, 1, 2]))
+        outputs['loss_total'].backward()
+        self.assertIsNotNone(surrogate_embeddings.grad)
+        self.assertIsNotNone(image_embeddings.grad)
+        self.assertIsNotNone(exact_embeddings.grad)
+
+
+    def test_loss_module_exact_proxy_can_be_disabled_to_restore_detached_anchor_behavior(self):
+        losses = PrototypeLosses(
+            temperature_init=0.07,
+            normalize_embeddings=True,
+            num_classes=self.num_classes,
+            embedding_dim=4,
+            proxy_temperature=0.2,
+            use_loss_proxy_text_exact=False,
         )
         image_embeddings = torch.randn(self.batch_size, 4, requires_grad=True)
         surrogate_embeddings = torch.randn(self.batch_size, 4, requires_grad=True)
@@ -392,8 +413,28 @@ class PrototypeModuleTests(unittest.TestCase):
         self.assertIsNotNone(head.prototype_bank.prototypes.grad)
         self.assertIsNotNone(head.losses.class_proxies.grad)
 
-    def test_fidelity_path_blocks_gradients_into_exact_text_embedding(self):
+    def test_head_exact_proxy_supervision_reaches_exact_text_embedding(self):
         head = self._build_head()
+        image_embeddings = torch.randn(self.batch_size, self.feature_dim, requires_grad=True)
+        text_states = torch.randn(self.batch_size, self.seq_len, self.feature_dim, requires_grad=True)
+        outputs = head(
+            image_embeddings=image_embeddings,
+            text_token_states=text_states,
+            token_ids=self.token_ids,
+            pids=torch.tensor([0, 1, 2], dtype=torch.long),
+            attention_mask=self.attention_mask,
+            special_token_positions=self.special_positions,
+            return_debug=False,
+        )
+        outputs['surrogate_text_projected'].retain_grad()
+        outputs['exact_text_projected'].retain_grad()
+        outputs['losses']['loss_total'].backward()
+        self.assertIsNotNone(outputs['surrogate_text_projected'].grad)
+        self.assertIsNotNone(outputs['exact_text_projected'].grad)
+
+
+    def test_head_exact_proxy_can_be_disabled_to_restore_detached_exact_path(self):
+        head = self._build_head(use_loss_proxy_text_exact=False)
         image_embeddings = torch.randn(self.batch_size, self.feature_dim, requires_grad=True)
         text_states = torch.randn(self.batch_size, self.seq_len, self.feature_dim, requires_grad=True)
         outputs = head(

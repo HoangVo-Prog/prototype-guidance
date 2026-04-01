@@ -302,7 +302,7 @@ class PASModel(nn.Module):
                 'Z_t_exact_raw': prototype_outputs['exact_text_projected_raw'].detach(),
             }
         )
-        for key in ('basis_token_scores', 'basis_token_weights', 'basis_beta_logits_masked', 'image_proxy_logits', 'text_proxy_logits', 'class_proxies'):
+        for key in ('basis_token_scores', 'basis_token_weights', 'basis_beta_logits_masked', 'image_proxy_logits', 'text_proxy_logits', 'text_exact_proxy_logits', 'class_proxies'):
             value = prototype_outputs.get('debug', {}).get(key)
             if isinstance(value, torch.Tensor):
                 debug[key] = value.detach()
@@ -365,6 +365,7 @@ class PASModel(nn.Module):
             'loss_proxy': losses['loss_proxy'],
             'loss_proxy_image': losses['loss_proxy_image'],
             'loss_proxy_text': losses['loss_proxy_text'],
+            'loss_proxy_text_exact': losses['loss_proxy_text_exact'],
             'loss_align': losses['loss_align'],
             'loss_diag': losses['loss_diag'],
             'loss_diversity': losses['loss_diversity'],
@@ -375,6 +376,7 @@ class PASModel(nn.Module):
             'loss_diversity_weighted': losses['loss_diversity_weighted'],
             'loss_balance_weighted': losses['loss_balance_weighted'],
             'lambda_proxy': losses['lambda_proxy'],
+            'use_loss_proxy_text_exact': losses['use_loss_proxy_text_exact'],
             'lambda_align': losses['lambda_align'],
             'lambda_diag': losses['lambda_diag'],
             'lambda_div': losses['lambda_div'],
@@ -388,6 +390,10 @@ class PASModel(nn.Module):
             'z_t_exact_diag': prototype_outputs['exact_text_projected'],
             'debug': dict(prototype_outputs.get('metrics', {})),
         }
+        for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag'):
+            tensor = outputs.get(grad_tensor_key)
+            if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
+                tensor.retain_grad()
         if should_return_debug:
             outputs['debug'] = self._build_debug_outputs(image_output, text_output, prototype_outputs)
         return outputs

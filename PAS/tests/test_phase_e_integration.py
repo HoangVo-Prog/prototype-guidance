@@ -145,6 +145,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
             temperature=0.07,
             proxy_temperature=0.2,
             lambda_proxy=1.0,
+            use_loss_proxy_text_exact=True,
             lambda_align=0.5,
             lambda_diag=0.25,
             text_length=77,
@@ -204,7 +205,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
     def test_forward_returns_structured_amortized_losses_and_lightweight_debug_metrics(self):
         model = PASModel(self._build_args(), num_classes=2)
         outputs = model(self.batch, return_debug=False)
-        for key in ('loss_total', 'loss_proxy', 'loss_align', 'loss_diag', 'loss_diversity', 'loss_balance', 'debug'):
+        for key in ('loss_total', 'loss_proxy', 'loss_proxy_text_exact', 'loss_align', 'loss_diag', 'loss_diversity', 'loss_balance', 'debug'):
             self.assertIn(key, outputs)
         for key in ('prototype_usage_entropy', 'routing_entropy', 'token_pool_entropy', 'q_norm'):
             self.assertIn(key, outputs['debug'])
@@ -213,7 +214,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
     def test_forward_with_full_debug_exposes_surrogate_and_exact_tensors(self):
         model = PASModel(self._build_args(), num_classes=2)
         outputs = model(self.batch, return_debug=True)
-        for key in ('alpha', 'Q', 'Theta_v', 'Theta_tilde', 'basis_bank', 'Z_t', 'Z_t_exact'):
+        for key in ('alpha', 'Q', 'Theta_v', 'Theta_tilde', 'basis_bank', 'Z_t', 'Z_t_exact', 'text_exact_proxy_logits'):
             self.assertIn(key, outputs['debug'])
         self.assertTrue(torch.isfinite(outputs['loss_total']))
 

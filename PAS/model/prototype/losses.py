@@ -17,6 +17,7 @@ class PrototypeLosses(nn.Module):
         lambda_proxy: float = 1.0,
         use_loss_proxy_image: bool = True,
         use_loss_proxy_text: bool = True,
+        use_loss_proxy_text_exact: bool = True,
         lambda_align: float = 1.0,
         lambda_diag: float = 1.0,
         use_diversity_loss: bool = False,
@@ -47,6 +48,7 @@ class PrototypeLosses(nn.Module):
         self.lambda_proxy = float(lambda_proxy)
         self.use_loss_proxy_image = bool(use_loss_proxy_image)
         self.use_loss_proxy_text = bool(use_loss_proxy_text)
+        self.use_loss_proxy_text_exact = bool(use_loss_proxy_text_exact)
         self.lambda_align = float(lambda_align)
         self.lambda_diag = float(lambda_diag)
         self.proxy_temperature = float(proxy_temperature)
@@ -57,6 +59,9 @@ class PrototypeLosses(nn.Module):
             raise ValueError('lambda_bal must be 0.0 when use_balance_loss is disabled.')
         if self.use_balance_loss and self.lambda_bal <= 0.0:
             raise ValueError('use_balance_loss requires lambda_bal to be positive.')
+
+        if not any((self.use_loss_proxy_image, self.use_loss_proxy_text, self.use_loss_proxy_text_exact, self.lambda_align > 0.0, self.lambda_diag > 0.0)):
+            raise ValueError('At least one task-supervised loss must remain enabled so the training objective does not collapse to prototype-only regularization.')
 
         initial_logit_scale = torch.log(torch.tensor(1.0 / temperature_init, dtype=torch.float32))
         self.register_buffer('logit_scale', initial_logit_scale.clone())
@@ -128,7 +133,9 @@ class PrototypeLosses(nn.Module):
             f'{prefix}_max': norms.max().detach(),
         }
 
-    def _proxy_debug_metrics(self, prefix: str, logits: torch.Tensor, pids: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def _proxy_debug_metrics(self, prefix: str, logits: Optional[torch.Tensor], pids: torch.Tensor) -> Dict[str, torch.Tensor]:
+        if logits is None:
+            return {}
         cosines = logits * self.proxy_temperature
         positive = cosines.gather(1, pids.view(-1, 1)).squeeze(1)
         negative_mask = torch.ones_like(cosines, dtype=torch.bool)
@@ -146,6 +153,16 @@ class PrototypeLosses(nn.Module):
             f'{prefix}_hardest_negative_proxy_cosine_std': hardest_negative.std(unbiased=False).detach(),
             f'{prefix}_proxy_margin_mean': margin.mean().detach(),
             f'{prefix}_proxy_margin_min': margin.min().detach(),
+        }
+
+    def _normalized_norm_stats(self, prefix: str, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+        normalized = F.normalize(tensor, dim=-1)
+        norms = normalized.norm(dim=-1)
+        return {
+            f'{prefix}_mean': norms.mean().detach(),
+            f'{prefix}_std': norms.std(unbiased=False).detach(),
+            f'{prefix}_min': norms.min().detach(),
+            f'{prefix}_max': norms.max().detach(),
         }
 
     def cosine_alignment_loss(self, source_embeddings: torch.Tensor, target_embeddings: torch.Tensor) -> torch.Tensor:
@@ -191,10 +208,12 @@ class PrototypeLosses(nn.Module):
         pids = self._validate_class_labels(pids, image_embeddings.size(0), image_embeddings.device)
         loss_proxy_image_info = self.proxy_loss(image_embeddings, pids)
         loss_proxy_text_info = self.proxy_loss(surrogate_text_embeddings, pids)
+        loss_proxy_text_exact_info = self.proxy_loss(exact_text_embeddings, pids)
         zero = image_embeddings.new_zeros(())
         loss_proxy_image = loss_proxy_image_info['loss'] if self.use_loss_proxy_image else zero
         loss_proxy_text = loss_proxy_text_info['loss'] if self.use_loss_proxy_text else zero
-        loss_proxy = loss_proxy_image + loss_proxy_text
+        loss_proxy_text_exact = loss_proxy_text_exact_info['loss'] if self.use_loss_proxy_text_exact else zero
+        loss_proxy = loss_proxy_image + loss_proxy_text + loss_proxy_text_exact
         loss_align = self.cosine_alignment_loss(image_embeddings, surrogate_text_embeddings)
         loss_diag = self.diagonal_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings)
         loss_diversity = self.diversity_loss(prototypes)
@@ -211,6 +230,7 @@ class PrototypeLosses(nn.Module):
             'loss_proxy': loss_proxy,
             'loss_proxy_image': loss_proxy_image,
             'loss_proxy_text': loss_proxy_text,
+            'loss_proxy_text_exact': loss_proxy_text_exact,
             'loss_align': loss_align,
             'loss_diag': loss_diag,
             'loss_diversity': loss_diversity,
@@ -223,6 +243,7 @@ class PrototypeLosses(nn.Module):
             'lambda_proxy': torch.tensor(self.lambda_proxy, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_proxy_image': torch.tensor(float(self.use_loss_proxy_image), device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_proxy_text': torch.tensor(float(self.use_loss_proxy_text), device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_proxy_text_exact': torch.tensor(float(self.use_loss_proxy_text_exact), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_align': torch.tensor(self.lambda_align, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_diag': torch.tensor(self.lambda_diag, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_div': torch.tensor(self.lambda_div, device=loss_total.device, dtype=loss_total.dtype),
@@ -233,11 +254,14 @@ class PrototypeLosses(nn.Module):
             'debug_metrics': {
                 **self._proxy_debug_metrics('image', loss_proxy_image_info['logits'], pids),
                 **self._proxy_debug_metrics('text', loss_proxy_text_info['logits'], pids),
+                **self._proxy_debug_metrics('text_exact', loss_proxy_text_exact_info['logits'], pids),
                 **self._norm_stats('class_proxy_norm', self.class_proxies.detach()),
+                **self._normalized_norm_stats('class_proxy_norm_normalized', self.class_proxies.detach()),
             },
         }
         if return_debug:
             outputs['image_proxy_logits'] = loss_proxy_image_info['logits']
             outputs['text_proxy_logits'] = loss_proxy_text_info['logits']
+            outputs['text_exact_proxy_logits'] = loss_proxy_text_exact_info['logits']
             outputs['class_proxies'] = self.class_proxies.detach()
         return outputs

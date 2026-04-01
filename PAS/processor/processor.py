@@ -48,6 +48,8 @@ def _collect_gradient_metrics(model):
         'grad_norm_image_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.image_projector', 'prototype_head.image_adapter')),
         'grad_norm_text_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.text_projector', 'prototype_head.text_adapter')),
         'grad_norm_prototype_bank': _parameter_group_grad_norm(named_parameters, ('prototype_head.prototype_bank',)),
+        'grad_norm_image_backbone': _parameter_group_grad_norm(named_parameters, ('base_model.visual',)),
+        'grad_norm_text_backbone': _parameter_group_grad_norm(named_parameters, ('base_model.transformer', 'base_model.token_embedding', 'base_model.positional_embedding', 'base_model.ln_final', 'base_model.text_projection')),
     }
     total = 0.0
     for _, parameter in named_parameters:
@@ -58,6 +60,22 @@ def _collect_gradient_metrics(model):
     metrics['grad_norm_total'] = total ** 0.5
     return metrics
 
+
+
+def _collect_output_gradient_metrics(outputs, scale: float = 1.0):
+    metrics = {}
+    safe_scale = float(scale) if scale and scale > 0 else 1.0
+    for output_key, metric_key in (
+        ('z_v', 'grad_norm_image_projected_output'),
+        ('z_t_hat_diag', 'grad_norm_surrogate_text_projected_output'),
+        ('z_t_exact_diag', 'grad_norm_exact_text_projected_output'),
+    ):
+        tensor = outputs.get(output_key)
+        if not isinstance(tensor, torch.Tensor) or tensor.grad is None:
+            metrics[metric_key] = 0.0
+            continue
+        metrics[metric_key] = tensor.grad.detach().float().norm(2).item() / safe_scale
+    return metrics
 
 
 def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker: ExperimentTracker = None):
@@ -107,6 +125,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 scaler.unscale_(optimizer)
                 if isinstance(outputs.get('debug'), dict):
                     outputs['debug'].update(_collect_gradient_metrics(model))
+                    outputs['debug'].update(_collect_output_gradient_metrics(outputs, scale=scaler.get_scale()))
                 if grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 scaler.step(optimizer)
@@ -115,6 +134,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 total_loss.backward()
                 if isinstance(outputs.get('debug'), dict):
                     outputs['debug'].update(_collect_gradient_metrics(model))
+                    outputs['debug'].update(_collect_output_gradient_metrics(outputs))
                 if grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 optimizer.step()

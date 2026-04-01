@@ -48,6 +48,7 @@ def build_parser():
     parser.add_argument('--lambda_proxy', type=float, default=1.0)
     parser.add_argument('--use_loss_proxy_image', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_loss_proxy_text', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--use_loss_proxy_text_exact', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_align', type=float, default=1.0)
     parser.add_argument('--lambda_diag', type=float, default=1.0)
     parser.add_argument('--img_size', type=int, nargs=2, default=(384, 128))
