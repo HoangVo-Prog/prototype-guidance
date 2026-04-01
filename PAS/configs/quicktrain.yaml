@@ -81,8 +81,8 @@ training:
   use_loss_proxy_image: true
   use_loss_proxy_text: false
   lambda_proxy: 1.0
-  lambda_align: 1.0
-  lambda_diag: 1.0
+  lambda_align: 0
+  lambda_diag: 0
 
 optimizer:
   type: AdamW
