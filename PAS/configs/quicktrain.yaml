@@ -104,7 +104,7 @@ optimizer:
   milestones: [40, 50]
   gamma: 0.1
   warmup_factor: 0.1
-  warmup_epochs: 5
+  warmup_epochs: 1
   warmup_method: linear
   scheduler: cosine
   target_lr: 0.0
