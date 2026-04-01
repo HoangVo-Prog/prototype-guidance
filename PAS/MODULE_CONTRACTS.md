@@ -1,121 +1,108 @@
-# MODULE_CONTRACTS
+﻿# MODULE_CONTRACTS
 
 ## model/prototype/prototype_bank.py
 - Class: `PrototypeBank`
 - Purpose: owns the learnable prototype table `Theta_v`.
-- Inputs: none during `forward`; construction config controls shape and init.
-- Outputs: `prototypes` `[N, D]`; optional debug with `raw_prototypes`, `prototype_norm_mean`, `prototype_norm_std`.
-- Config dependencies: `prototype.num_prototypes`, `prototype.prototype_dim`, `prototype.prototype_init`, `prototype.prototype_init_path`, `prototype.normalize_for_self_interaction`.
-- Failure conditions: invalid prototype count/dimension, unsupported init mode, or mismatched checkpoint init tensor.
+- Outputs: `prototypes` `[N, D]`; optional debug with `raw_prototypes`, norm stats, and init metadata.
 
 ## model/prototype/contextualizer.py
 - Class: `PrototypeContextualizer`
 - Purpose: optional parameter-free prototype self-contextualization.
 - Inputs: `prototypes` `[N, D]`.
-- Outputs: contextualized prototypes `[N, D]`; optional debug `contextualized_prototypes`, `prototype_similarity`, `contextualization_weights`, `prototype_contextualization_entropy`.
-- Config dependencies: `prototype.contextualization_enabled`, `prototype.contextualization_type`, `prototype.contextualization_residual`, `prototype.normalize_for_self_interaction`.
-- Failure conditions: unsupported contextualization type or invalid input rank.
+- Outputs: contextualized prototypes `[N, D]`; optional debug with contextualization weights and entropy.
 
 ## model/prototype/router.py
 - Class: `Router`
 - Purpose: routes each image embedding onto the prototype bank.
 - Inputs: `image_embeddings` `[B, D]`, `prototypes` `[N, D]`.
-- Outputs: `alpha` `[B, N]`; optional debug `routing_logits`, `routing_weights`, `routing_max_prob`, `prototype_assignment_entropy`, `routing_effective_support`.
-- Config dependencies: `prototype.routing_type`, `prototype.routing_temperature`, `prototype.normalize_for_routing`.
-- Failure conditions: invalid rank, mismatched feature dimensions, non-positive temperature, or non-finite outputs.
+- Outputs: `alpha` `[B, N]`; optional debug includes `routing_effective_support`.
 
 ## model/prototype/aggregator.py
 - Class: `PrototypeAggregator`
 - Purpose: computes the prototype summary `Q = alpha @ Theta_tilde`.
 - Inputs: `routing_weights` `[B, N]`, `prototypes` `[N, D]`.
-- Outputs: `summary` `[B, D]`; optional debug `prototype_summary`.
-- Config dependencies: none beyond compatible shapes.
-- Failure conditions: invalid rank or prototype-count mismatch.
+- Outputs: `summary` `[B, D]`.
 
 ## model/prototype/token_scorer.py
 - Class: `TokenScorer`
-- Purpose: scores each text token against the image-conditioned summary.
+- Purpose: scores text tokens against either an image-conditioned summary or a contextualized prototype query.
 - Inputs: `query` `[B, D]`, `token_states` `[B, L, D]`.
-- Outputs: `token_scores` `[B, L]`; optional debug `token_scores`.
-- Config dependencies: `text_pooling.scoring_type`, `text_pooling.normalize_for_token_scoring`, `text_pooling.token_temperature`.
-- Failure conditions: invalid ranks, dimension mismatch, non-positive temperature, or non-finite scores.
+- Outputs: token scores `[B, L]`.
 
 ## model/prototype/token_mask.py
 - Class: `TokenMaskBuilder`
 - Purpose: builds the valid-token mask for pooling.
-- Inputs: `token_ids` `[B, L]`, optional `attention_mask` `[B, L]`, optional `special_token_positions`, and configured `text_pooling.special_token_ids` metadata.
-- Outputs: `valid_mask` `[B, L]`; optional debug `valid_mask`, `special_token_positions`.
-- Config dependencies: `text_pooling.token_policy`, `text_pooling.special_token_ids`, `text_pooling.error_on_empty_kept_tokens`.
-- Failure conditions: unsupported policy, missing special-token metadata, invalid EOS recovery, wrong input rank, or rows with zero valid tokens.
+- Inputs: `token_ids` `[B, L]`, optional `attention_mask`, optional `special_token_positions`.
+- Outputs: keep-mask `[B, L]`; optional debug includes special-token positions.
 
 ## model/prototype/token_pooler.py
 - Class: `MaskedTokenPooler`
-- Purpose: converts token scores into masked softmax weights and a pooled text representation.
+- Purpose: converts token scores into masked softmax weights and pooled text states.
 - Inputs: `token_scores` `[B, L]`, `token_states` `[B, L, D]`, `valid_mask` `[B, L]`.
-- Outputs: pooled text `[B, D]`, `beta` `[B, L]`; optional debug `masked_logits`, `token_weights`, `pooled_text`, `token_pool_entropy`.
-- Config dependencies: upstream token scoring and masking policy.
-- Failure conditions: invalid shapes, rows with zero valid tokens, or non-finite outputs.
+- Outputs: pooled text `[B, D]`, `beta` `[B, L]`; optional debug includes masked logits and entropy.
 
 ## model/prototype/projector.py
 - Class: `MLPProjector`
-- Purpose: projects image and pooled-text features into the contrastive embedding space.
+- Purpose: projects image features and pooled text states into the retrieval embedding space.
 - Inputs: `inputs` with last dimension `input_dim`.
-- Outputs: projected features with last dimension `output_dim`; optional debug `projected_features`, `projected_features_pre_norm`. When `model.normalize_projector_outputs=true`, both training and inference scores use normalized projector outputs; otherwise both use raw projector outputs.
-- Config dependencies: `model.projection_dim`, `model.projector_hidden_dim`, `model.projector_dropout`, `model.projector_type`, `model.normalize_projector_outputs`.
-- Failure conditions: non-positive dimensional arguments.
+- Outputs: projected features with last dimension `output_dim`; optional debug includes raw and normalized projections.
+- Note: `model.normalize_projector_outputs` remains authoritative for exact and approximate retrieval scoring utilities.
 
 ## model/prototype/losses.py
 - Class: `PrototypeLosses`
-- Purpose: provides symmetric multi-positive contrastive loss plus optional prototype regularizers.
-- Inputs: `image_embeddings` `[B, D]`, `text_embeddings` `[B, D]`, optional `pids` `[B]`, optional `prototypes` `[N, D]`, optional `routing_weights` `[B, N]`.
-- Outputs: `loss_total`, `loss_infonce`, `loss_diversity`, `loss_balance`, `logit_scale`, optional `contrastive_logits` `[B, B]`.
-- Config dependencies: `model.temperature`, `model.learn_logit_scale`, `prototype.use_diversity_loss`, `prototype.diversity_loss_weight`, `prototype.use_balancing_loss`, `prototype.balance_loss_weight`.
-- Failure conditions: non-positive temperature, image/text shape mismatch, or invalid input rank.
+- Purpose: implements the amortized surrogate objective plus prototype regularizers.
+- Inputs:
+  - `image_embeddings` `[B, D_out]`
+  - `surrogate_text_embeddings` `[B, D_out]`
+  - `exact_text_embeddings` `[B, D_out]`
+  - `pids` `[B]` used as class labels for proxy supervision
+  - optional `prototypes` `[N, D]`
+  - optional `routing_weights` `[B, N]`
+- Outputs:
+  - `loss_total`
+  - `loss_proxy`, `loss_proxy_image`, `loss_proxy_text`
+  - `loss_align`
+  - `loss_diag`
+  - `loss_diversity`
+  - `loss_balance`
+  - weighted terms, lambda scalars, `proxy_temperature`, and fixed retrieval scaling values
+- Additional state: learnable `class_proxies` `[C, D_out]`
+- Active behavior: no symmetric InfoNCE / in-batch contrastive objective in the active runtime.
 
 ## model/prototype/head.py
 - Class: `PrototypeConditionedTextHead`
-- Purpose: composes the full PAS branch for training and retrieval evaluation.
-- Inputs: image embeddings `[B, D_img]`, text token states `[B, L, D_txt]`, token ids `[B, L]`, optional attention mask, optional special-token positions, `return_debug`.
-- Outputs: image-side outputs, text-side outputs, projected embeddings, loss dict, and optional nested debug dict.
-- Config dependencies: all prototype, text-pooling, projector, and loss keys consumed by `model/prototype/build.py`.
-- Debug outputs: includes routing, pooling, prototype-usage, geometry, norm, and logit-scale diagnostics.
-- Failure conditions: inherits submodule failure conditions.
+- Purpose: composes the full PAS branch for amortized training and retrieval evaluation.
+- Key sub-interfaces:
+  - `encode_image_branch(...)` builds `alpha`, `Q`, and image embeddings.
+  - `pool_text_with_summary(...)` computes the exact deployed pooled text object.
+  - `build_text_basis_bank(...)` computes the per-caption prototype basis bank `[B, N, D]`.
+  - `reconstruct_surrogate_text(...)` combines image routing with the basis bank.
+  - `compute_pairwise_similarity(...)` preserves exact deployed inference.
+  - `compute_approximate_pairwise_similarity(...)` exposes the optional non-default approximate scorer.
+- Training outputs include both surrogate and exact diagonal text embeddings.
 
 ## model/prototype/build.py
-- Function: `build_prototype_head`
-- Purpose: config-driven construction of `PrototypeConditionedTextHead`.
-- Inputs: runtime `args`, `input_dim`.
-- Outputs: configured prototype head.
-- Config dependencies: `model.use_prototype_bank`, `model.use_image_conditioned_pooling`, `prototype.contextualization_enabled`, plus prototype/text-pooling/loss settings.
-- Failure conditions: delegated to the constructed modules.
+- Function: `build_prototype_head(args, input_dim, num_classes)`
+- Purpose: config-driven construction of `PrototypeConditionedTextHead` for the amortized objective.
+- Important args: proxy temperature, `lambda_proxy`, `lambda_align`, `lambda_diag`, prototype regularizer weights, and `num_classes`.
 
 ## model/build.py
 - Class: `PASModel`
 - Purpose: primary model wrapper for training, retrieval evaluation, freeze policy, and optimizer grouping.
-- Inputs:
-  - `forward(batch, ...)` expects `batch['images']`, `batch['caption_ids']`, and `batch['pids']`.
-  - `encode_image_for_retrieval(image)` expects `[B, C, H, W]`.
-  - `encode_text_for_retrieval(text)` expects `[B, L]`.
-- Outputs:
-  - `forward(...)` returns `loss_total`, loss breakdown, `temperature`, `logit_scale`, optional `logits`, optional `debug`.
-  - `named_optimizer_groups()` returns explicit optimizer-group buckets.
-  - `compute_retrieval_similarity(...)` returns `[N_text, N_image]` similarity blocks.
-- Config dependencies: model activation flags, `model.backbone_precision`, `model.prototype_precision`, prototype settings, freeze policy, evaluation chunk sizes, `training.amp`, and `training.amp_dtype`.
-- Failure conditions: rejects disabled prototype mode, invalid evaluation chunk sizes, or non-finite loss/similarity outputs.
+- Training forward expects `batch['images']`, `batch['caption_ids']`, and `batch['pids']`.
+- Retrieval helpers:
+  - `encode_image_for_retrieval(...)`
+  - `encode_text_for_retrieval(...)`
+  - `encode_text_basis_for_retrieval(...)`
+  - `compute_retrieval_similarity(...)` for exact deployed scoring
+  - `compute_approximate_retrieval_similarity(...)` for the optional approximate scorer
+- Optimizer groups include `class_proxies`.
 
 ## utils/metric_logging.py
-- Functions: `collect_loss_metrics`, `collect_debug_metrics`, `collect_scalar_metrics`, `build_train_metrics`, `build_validation_metrics`
-- Purpose: centralized scalar extraction and logging-name normalization.
-- Inputs: forward output dicts, optional evaluator metrics, epoch/step/lr values.
-- Outputs: flat metric dicts ready for TensorBoard or Weights & Biases.
-- Assumptions: non-scalar tensors stay in the debug dict and are not logged as scalars.
+- Purpose: centralized scalar extraction for the amortized loss breakdown and debug metrics.
+- Tracked train losses now include `loss_proxy`, `loss_align`, and `loss_diag` instead of `loss_infonce`.
 
 ## solver/build.py
 - Function: `build_optimizer(args, model)`
 - Purpose: constructs optimizer param groups from `named_optimizer_groups()`.
-- Inputs: runtime args with per-group LR settings and a model implementing `named_optimizer_groups()`.
-- Outputs: configured `torch.optim` optimizer.
-- Config dependencies: `optimizer.lr`, `optimizer.lr_prototype_bank`, `optimizer.lr_projectors`, `optimizer.lr_logit_scale`, `optimizer.lr_image_backbone`, `optimizer.lr_text_backbone`, `optimizer.weight_decay`, optimizer type.
-- Failure conditions: model missing `named_optimizer_groups()` or unsupported optimizer type.
-
-
+- Relevant group-specific knobs include `optimizer.lr_class_proxies` and `optimizer.weight_decay_class_proxies`.

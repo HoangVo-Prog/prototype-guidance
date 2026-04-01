@@ -1,8 +1,8 @@
-# Model Interface Contract
+﻿# Model Interface Contract
 
 ## Scope
 
-This document describes the active Phase E model interface for the PAS retrieval system.
+This document describes the active Phase E model interface for the PAS retrieval system after the amortized surrogate training update.
 
 ## 1. Primary Model Wrapper
 
@@ -10,7 +10,7 @@ This document describes the active Phase E model interface for the PAS retrieval
 - Class: `PASModel`
 - Builder: `build_model(args, num_classes=0)`
 
-The model owns the CLIP backbone, prototype head, freeze policy, optimizer-group exposure, retrieval encoding helpers, and training forward path.
+The model owns the CLIP backbone, prototype head, freeze policy, optimizer-group exposure, retrieval encoding helpers, exact deployed retrieval scoring, and the amortized surrogate training forward path.
 
 Backbone support:
 - PAS currently supports only `ViT-B/16`, `ViT-B/32`, and `ViT-L/14`.
@@ -22,6 +22,7 @@ Precision controls:
 - `training.amp` and `training.amp_dtype` control CUDA autocast/scaler usage during training and retrieval evaluation.
 - Unfrozen `fp16` backbone training is only supported when `training.amp=true`.
 - `prototype_precision=fp16` training is only supported when `training.amp=true`.
+- `model.learn_logit_scale=true` is not supported under the amortized surrogate objective; exact retrieval scoring keeps a fixed temperature.
 
 ## 2. Image-Side Interface
 
@@ -34,7 +35,6 @@ Precision controls:
 Returned fields:
 - `projected_tokens`: `[B, N_img, D]`
 - `projected_pooled`: `[B, D]`
-  Current v1 path uses the CLS/global image token.
 - `pre_projection_tokens`: optional `[B, N_img, D_pre]`
 - `pre_projection_pooled`: optional `[B, D_pre]`
 - `pooling_mode`: `cls`
@@ -45,8 +45,7 @@ Returned fields:
 - Outputs:
   - `image_projected`: `[B, D_out]`
   - `summary`: `[B, D_proto]`
-
-Phase E assumption: routing uses the global image embedding only.
+  - `routing_weights`: `[B, N_proto]`
 
 ## 3. Text-Side Interface
 
@@ -59,23 +58,26 @@ Phase E assumption: routing uses the global image embedding only.
 Returned fields:
 - `projected_tokens`: `[B, L, D]`
 - `projected_pooled`: `[B, D]`
-  EOS pooled for the raw encoder path.
 - `pre_projection_tokens`: optional `[B, L, D_pre]`
 - `pre_projection_pooled`: optional `[B, D_pre]`
-- `token_mask`: `[B, L]` boolean valid-token mask derived from explicit token metadata
-- `special_token_positions`:
-  - `cls`: optional `[B]` leading special-token positions when configured
-  - `eos`: `[B]` EOS positions derived from explicit token ids or validated metadata
+- `token_mask`: `[B, L]`
+- `special_token_positions`: explicit EOS / CLS metadata
 - `pooling_mode`: `image_conditioned`
 
-### Retrieval interface
+### Exact deployed retrieval interface
 
 - Function: `PASModel.encode_text_for_retrieval(text)`
 - Outputs:
   - `text_token_states`: `[B, L, D_proto]`
   - `token_ids`: `[B, L]`
   - `attention_mask`: `[B, L]`
-  - `special_token_positions`: dict with explicit special-token positions used for deterministic masking
+  - `special_token_positions`: dict used by exact pairwise pooling
+
+### Optional approximate retrieval interface
+
+- Function: `PASModel.encode_text_basis_for_retrieval(text)`
+- Outputs:
+  - `basis_bank`: `[B, N_proto, D_proto]`
 
 ## 4. Prototype Boundary
 
@@ -93,18 +95,28 @@ Returned fields:
   - `summary`: `[B, D_proto]`
   - `image_projected`: `[B, D_out]`
 
-### Text branch
+### Exact deployed text branch
 - Function: `pool_text_with_summary(summary, text_token_states, token_ids, ...)`
-- Inputs:
-  - `summary`: `[B, D_proto]`
-  - `text_token_states`: `[B, L, D_proto]`
-  - `token_ids`: `[B, L]`
 - Outputs:
   - `token_scores`: `[B, L]`
-  - `valid_mask`: `[B, L]`
   - `token_weights`: `[B, L]`
   - `pooled_text`: `[B, D_proto]`
   - `text_projected`: `[B, D_out]`
+
+### Amortized text basis branch
+- Function: `build_text_basis_bank(text_token_states, token_ids, contextualized_prototypes, ...)`
+- Outputs:
+  - `basis_bank`: `[B, N, D_proto]`
+  - optional `basis_token_scores`: `[B, N, L]`
+  - optional `basis_token_weights`: `[B, N, L]`
+
+### Surrogate reconstruction
+- Function: `reconstruct_surrogate_text(routing_weights, basis_bank)`
+- Inputs:
+  - `routing_weights`: `[B, N]`
+  - `basis_bank`: `[B, N, D_proto]`
+- Output:
+  - surrogate pooled text `[B, D_proto]`
 
 ## 5. Similarity and Loss Boundary
 
@@ -112,19 +124,31 @@ Returned fields:
 - Class: `PrototypeLosses`
 
 ### Training loss entrypoint
-- Function: `PrototypeLosses.forward(image_embeddings, text_embeddings, pids=None, prototypes=None, routing_weights=None, return_debug=False)`
+- Function: `PrototypeLosses.forward(image_embeddings, surrogate_text_embeddings, exact_text_embeddings, pids, prototypes=None, routing_weights=None, return_debug=False)`
 - Outputs:
   - `loss_total`
-  - `loss_infonce`
+  - `loss_proxy`
+  - `loss_proxy_image`
+  - `loss_proxy_text`
+  - `loss_align`
+  - `loss_diag`
   - `loss_diversity`
   - `loss_balance`
+  - weighted terms and lambda scalars
+  - `proxy_temperature`
+  - `retrieval_temperature`
   - `logit_scale`
-  - optional `contrastive_logits` with shape `[B, B]`
 
-### Retrieval similarity entrypoint
+The training objective is amortized surrogate training:
+- main train-time text representation is the surrogate diagonal object
+- exact diagonal deployed pooling is used only as a fidelity anchor
+- no in-batch contrastive loss is used in the active runtime
+
+### Retrieval similarity entrypoints
 - Function: `PASModel.compute_retrieval_similarity(image_features, text_features)`
-- Delegates to: `PrototypeConditionedTextHead.compute_pairwise_similarity(...)`
-- Output: similarity matrix `[N_text, N_image]`
+  - exact deployed scorer, default evaluator path
+- Function: `PASModel.compute_approximate_retrieval_similarity(image_features, text_basis_features)`
+  - optional approximate scorer, non-default
 
 ## 6. Optimizer Boundary
 
@@ -132,67 +156,58 @@ Returned fields:
 - Returned groups:
   - `prototype_bank`
   - `projectors`
-  - `logit_scale`
+  - `class_proxies`
   - `image_backbone`
   - `text_backbone`
   - `other`
-
-`solver/build.py` is the only active optimizer-construction surface.
 
 ## 7. Debug Output Contract
 
 ### Training forward
 - Function: `PASModel.forward(batch, ..., return_debug=None)`
-- Requires `batch['pids']` so training can construct identity-aware multi-positive contrastive targets.
+- Requires `batch['pids']` as class labels for the amortized proxy objective.
 - Always returns:
   - `loss_total`
-  - `loss_infonce`
+  - `loss_proxy`
+  - `loss_align`
+  - `loss_diag`
   - `loss_diversity`
   - `loss_balance`
-  - `temperature`
+  - `proxy_temperature`
+  - `retrieval_temperature`
   - `logit_scale`
+  - `alpha`
+  - `z_v`
+  - `z_t_hat_diag`
+  - `z_t_exact_diag`
 - Optional when enabled:
-  - `logits`
   - `debug`
 
 ### Canonical debug keys
 
 The `debug` dict may include:
-- `image_global`
-- `text_tokens`
-- `token_mask`
-- `special_token_positions`
 - `alpha`
 - `beta`
 - `Q`
 - `Theta_v`
 - `Theta_tilde`
-- `routing_max_prob`
-- `routing_entropy`
-- `prototype_usage_entropy`
-- `prototype_dead_count`
-- `token_pool_entropy`
-- `token_special_mass`
-- `valid_token_fraction`
-- `prototype_pairwise_cosine_mean`
-- `prototype_pairwise_cosine_max`
-- `q_norm`
-- `t_pool_norm`
-- `image_embed_norm`
-- `text_embed_norm`
+- `basis_bank`
+- `T_hat_pool`
+- `T_exact_pool`
+- `Z_v`
+- `Z_t`
+- `Z_t_exact`
+- routing / prototype-usage / geometry / norm diagnostics
 
 ## 8. Phase E Constraints
 
 Future extensions may assume:
 - Global image embeddings are available for routing.
 - Token-level text states, masks, and special-token positions are available.
-- Retrieval evaluation uses projected image embeddings plus image-conditioned pooled text embeddings.
-- Loss bookkeeping is structured around `loss_total` and named sub-losses.
+- Exact retrieval evaluation still uses deployed pairwise pooling `T(c_j, q_i)` by default.
+- Training uses the amortized surrogate operator plus diagonal fidelity anchoring.
 
 Future extensions must not assume:
+- Exact deployed inference scoring was replaced by the surrogate scorer.
+- Full pairwise `[B, B, ...]` training enumeration is part of the active runtime.
 - Patch-token image routing exists in v1.
-- Sparse prototype assignment or deeper contextualization require explicit hyperparameter configuration.
-- Legacy ITSELF or GRAB branches are not part of the active model path.
-
-
-

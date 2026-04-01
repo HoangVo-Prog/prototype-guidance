@@ -1,4 +1,4 @@
-﻿import copy
+import copy
 import os
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -80,18 +80,24 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'grad_clip'): 'grad_clip',
     ('training', 'amp'): 'amp',
     ('training', 'amp_dtype'): 'amp_dtype',
+    ('training', 'proxy_temperature'): 'proxy_temperature',
+    ('training', 'lambda_proxy'): 'lambda_proxy',
+    ('training', 'lambda_align'): 'lambda_align',
+    ('training', 'lambda_diag'): 'lambda_diag',
 
     ('optimizer', 'type'): 'optimizer',
     ('optimizer', 'lr'): 'lr',
     ('optimizer', 'lr_prototype_bank'): 'lr_prototype_bank',
     ('optimizer', 'lr_projectors'): 'lr_projectors',
     ('optimizer', 'lr_logit_scale'): 'lr_logit_scale',
+    ('optimizer', 'lr_class_proxies'): 'lr_class_proxies',
     ('optimizer', 'lr_image_backbone'): 'lr_image_backbone',
     ('optimizer', 'lr_text_backbone'): 'lr_text_backbone',
     ('optimizer', 'weight_decay'): 'weight_decay',
     ('optimizer', 'weight_decay_prototype_bank'): 'weight_decay_prototype_bank',
     ('optimizer', 'weight_decay_projectors'): 'weight_decay_projectors',
     ('optimizer', 'weight_decay_logit_scale'): 'weight_decay_logit_scale',
+    ('optimizer', 'weight_decay_class_proxies'): 'weight_decay_class_proxies',
     ('optimizer', 'weight_decay_image_backbone'): 'weight_decay_image_backbone',
     ('optimizer', 'weight_decay_text_backbone'): 'weight_decay_text_backbone',
     ('optimizer', 'momentum'): 'momentum',
@@ -131,6 +137,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('evaluation', 'batch_size'): 'test_batch_size',
     ('evaluation', 'prototype_image_chunk_size'): 'prototype_eval_image_chunk_size',
     ('evaluation', 'prototype_text_chunk_size'): 'prototype_eval_text_chunk_size',
+    ('evaluation', 'retrieval_scorer'): 'retrieval_scorer',
 }
 
 
@@ -212,6 +219,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('dataset', 'dataset_name'): ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
     ('dataset', 'val_dataset'): ('val', 'test'),
     ('evaluation', 'target_domain'): ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
+    ('evaluation', 'retrieval_scorer'): ('exact', 'approximate'),
 }
 
 
@@ -230,6 +238,7 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'dataset_name': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
     'val_dataset': ('val', 'test'),
     'target_domain': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
+    'retrieval_scorer': ('exact', 'approximate'),
 }
 
 

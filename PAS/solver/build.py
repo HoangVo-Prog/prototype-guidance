@@ -1,4 +1,4 @@
-import torch
+﻿import torch
 
 from .lr_scheduler import LRSchedulerWithWarmup
 
@@ -6,6 +6,7 @@ from .lr_scheduler import LRSchedulerWithWarmup
 GROUP_TO_LR_ATTR = {
     'prototype_bank': 'lr_prototype_bank',
     'projectors': 'lr_projectors',
+    'class_proxies': 'lr_class_proxies',
     'logit_scale': 'lr_logit_scale',
     'image_backbone': 'lr_image_backbone',
     'text_backbone': 'lr_text_backbone',
@@ -15,6 +16,7 @@ GROUP_TO_LR_ATTR = {
 GROUP_TO_WD_ATTR = {
     'prototype_bank': 'weight_decay_prototype_bank',
     'projectors': 'weight_decay_projectors',
+    'class_proxies': 'weight_decay_class_proxies',
     'logit_scale': 'weight_decay_logit_scale',
     'image_backbone': 'weight_decay_image_backbone',
     'text_backbone': 'weight_decay_text_backbone',
@@ -24,7 +26,7 @@ GROUP_TO_WD_ATTR = {
 
 def _group_lr(args, group_name: str) -> float:
     attr = GROUP_TO_LR_ATTR[group_name]
-    value = getattr(args, attr, 0.0)
+    value = getattr(args, attr, None)
     if value is None or value < 0:
         return float(args.lr)
     return float(value)

@@ -1,7 +1,7 @@
 ﻿from .head import PrototypeConditionedTextHead
 
 
-def build_prototype_head(args, input_dim: int) -> PrototypeConditionedTextHead:
+def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeConditionedTextHead:
     contextualization_enabled = bool(getattr(args, 'prototype_contextualization_enabled', True))
     projector_output_dim = getattr(args, 'projector_output_dim', getattr(args, 'projection_dim', 256))
     routing_type = getattr(args, 'routing_similarity', getattr(args, 'prototype_routing_type', 'cosine'))
@@ -39,11 +39,16 @@ def build_prototype_head(args, input_dim: int) -> PrototypeConditionedTextHead:
         normalize_for_routing=getattr(args, 'normalize_for_routing', True),
         normalize_for_token_scoring=getattr(args, 'normalize_for_token_scoring', True),
         normalize_projector_outputs=getattr(args, 'normalize_projector_outputs', True),
+        num_classes=num_classes,
+        proxy_temperature=getattr(args, 'proxy_temperature', 0.07),
+        lambda_proxy=getattr(args, 'lambda_proxy', 1.0),
+        lambda_align=getattr(args, 'lambda_align', 1.0),
+        lambda_diag=getattr(args, 'lambda_diag', 1.0),
         use_diversity_loss=getattr(args, 'use_diversity_loss', True),
         diversity_loss_weight=diversity_loss_weight,
         use_balance_loss=use_balancing_loss,
         balance_loss_weight=balance_loss_weight,
         contrastive_temperature_init=getattr(args, 'temperature', 0.07),
-        learnable_contrastive_temperature=getattr(args, 'learn_logit_scale', True),
+        learnable_contrastive_temperature=getattr(args, 'learn_logit_scale', False),
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
     )

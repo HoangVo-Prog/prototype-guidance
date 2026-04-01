@@ -40,12 +40,17 @@ class PrototypeConditionedTextHead(nn.Module):
         normalize_for_routing: bool = True,
         normalize_for_token_scoring: bool = True,
         normalize_projector_outputs: bool = True,
+        num_classes: int = 0,
+        proxy_temperature: float = 0.07,
+        lambda_proxy: float = 1.0,
+        lambda_align: float = 1.0,
+        lambda_diag: float = 1.0,
         use_diversity_loss: bool = False,
         diversity_loss_weight: float = 0.0,
         use_balance_loss: bool = False,
         balance_loss_weight: float = 0.0,
         contrastive_temperature_init: float = 0.07,
-        learnable_contrastive_temperature: bool = True,
+        learnable_contrastive_temperature: bool = False,
         dead_prototype_threshold: float = 0.005,
     ):
         super().__init__()
@@ -107,6 +112,12 @@ class PrototypeConditionedTextHead(nn.Module):
             temperature_init=contrastive_temperature_init,
             learnable_temperature=learnable_contrastive_temperature,
             normalize_embeddings=normalize_projector_outputs,
+            num_classes=num_classes,
+            embedding_dim=self.projector_output_dim,
+            proxy_temperature=proxy_temperature,
+            lambda_proxy=lambda_proxy,
+            lambda_align=lambda_align,
+            lambda_diag=lambda_diag,
             use_diversity_loss=use_diversity_loss,
             diversity_loss_weight=diversity_loss_weight,
             use_balance_loss=use_balance_loss,
@@ -156,13 +167,15 @@ class PrototypeConditionedTextHead(nn.Module):
         contextualized_prototypes: torch.Tensor,
         routing_weights: torch.Tensor,
         summary: torch.Tensor,
-        token_weights: torch.Tensor,
+        exact_token_weights: torch.Tensor,
         token_valid_mask: torch.Tensor,
         token_keep_mask: torch.Tensor,
-        pooled_text: torch.Tensor,
+        surrogate_pooled_text: torch.Tensor,
+        exact_pooled_text: torch.Tensor,
         image_features: torch.Tensor,
         image_projector_debug: Dict[str, torch.Tensor],
-        text_projector_debug: Dict[str, torch.Tensor],
+        surrogate_text_projector_debug: Dict[str, torch.Tensor],
+        exact_text_projector_debug: Dict[str, torch.Tensor],
         special_token_positions: Dict[str, torch.Tensor],
         contextualizer_debug: Optional[Dict[str, torch.Tensor]] = None,
         router_debug: Optional[Dict[str, torch.Tensor]] = None,
@@ -175,13 +188,17 @@ class PrototypeConditionedTextHead(nn.Module):
         metrics.update(
             {
                 'q_norm': summary.norm(dim=-1).mean().detach(),
-                't_pool_norm': pooled_text.norm(dim=-1).mean().detach(),
+                't_pool_norm': surrogate_pooled_text.norm(dim=-1).mean().detach(),
+                'surrogate_t_pool_norm': surrogate_pooled_text.norm(dim=-1).mean().detach(),
+                'exact_t_pool_norm': exact_pooled_text.norm(dim=-1).mean().detach(),
                 'image_feature_norm': image_features.norm(dim=-1).mean().detach(),
                 'image_embed_norm': image_projector_debug['projected_features_raw'].norm(dim=-1).mean().detach(),
-                'text_embed_norm': text_projector_debug['projected_features_raw'].norm(dim=-1).mean().detach(),
+                'text_embed_norm': surrogate_text_projector_debug['projected_features_raw'].norm(dim=-1).mean().detach(),
+                'surrogate_text_embed_norm': surrogate_text_projector_debug['projected_features_raw'].norm(dim=-1).mean().detach(),
+                'exact_text_embed_norm': exact_text_projector_debug['projected_features_raw'].norm(dim=-1).mean().detach(),
                 'token_valid_fraction': token_valid_mask.float().mean().detach(),
                 'valid_token_fraction': token_keep_mask.float().mean().detach(),
-                'token_special_mass': self._compute_special_mass(token_weights, special_token_positions).detach(),
+                'token_special_mass': self._compute_special_mass(exact_token_weights, special_token_positions).detach(),
             }
         )
         if contextualizer_debug and 'prototype_contextualization_entropy' in contextualizer_debug:
@@ -256,6 +273,26 @@ class PrototypeConditionedTextHead(nn.Module):
             }
         return outputs
 
+    def _prepare_text_inputs(
+        self,
+        text_token_states: torch.Tensor,
+        token_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
+    ) -> Dict[str, object]:
+        text_features = self.text_adapter(text_token_states)
+        token_keep_mask, mask_debug = self.token_mask_builder.build(
+            token_ids,
+            attention_mask=attention_mask,
+            special_token_positions=special_token_positions,
+            return_debug=True,
+        )
+        return {
+            'text_token_states': text_features,
+            'token_keep_mask': token_keep_mask,
+            'mask_debug': mask_debug,
+        }
+
     def pool_text_with_summary(
         self,
         summary: torch.Tensor,
@@ -265,16 +302,24 @@ class PrototypeConditionedTextHead(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         return_debug: bool = False,
+        prepared_text: Optional[Dict[str, object]] = None,
     ) -> Dict[str, object]:
-        text_features = self.text_adapter(text_token_states)
-        token_scores, scorer_debug = self.token_scorer(summary, text_features, return_debug=True)
-        token_keep_mask, mask_debug = self.token_mask_builder.build(
+        del pids
+        text_inputs = prepared_text or self._prepare_text_inputs(
+            text_token_states,
             token_ids,
             attention_mask=attention_mask,
             special_token_positions=special_token_positions,
+        )
+        text_features = text_inputs['text_token_states']
+        mask_debug = text_inputs['mask_debug']
+        token_scores, scorer_debug = self.token_scorer(summary, text_features, return_debug=True)
+        pooled_text, token_weights, pooler_debug = self.token_pooler(
+            token_scores,
+            text_features,
+            mask_debug['token_keep_mask'],
             return_debug=True,
         )
-        pooled_text, token_weights, pooler_debug = self.token_pooler(token_scores, text_features, token_keep_mask, return_debug=True)
         text_projected, text_projector_debug = self.text_projector(pooled_text, return_debug=True)
 
         outputs = {
@@ -303,6 +348,117 @@ class PrototypeConditionedTextHead(nn.Module):
             }
         return outputs
 
+    def build_text_basis_bank(
+        self,
+        text_token_states: torch.Tensor,
+        token_ids: torch.Tensor,
+        contextualized_prototypes: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
+        return_debug: bool = False,
+        prepared_text: Optional[Dict[str, object]] = None,
+    ) -> Dict[str, object]:
+        if contextualized_prototypes.ndim != 2:
+            raise ValueError('contextualized_prototypes must have shape [N, D].')
+
+        text_inputs = prepared_text or self._prepare_text_inputs(
+            text_token_states,
+            token_ids,
+            attention_mask=attention_mask,
+            special_token_positions=special_token_positions,
+        )
+        text_features = text_inputs['text_token_states']
+        mask_debug = text_inputs['mask_debug']
+        batch_size, seq_len, feature_dim = text_features.shape
+        num_prototypes = contextualized_prototypes.size(0)
+
+        expanded_queries = contextualized_prototypes.unsqueeze(0).expand(batch_size, -1, -1).reshape(batch_size * num_prototypes, feature_dim)
+        expanded_tokens = text_features.unsqueeze(1).expand(batch_size, num_prototypes, seq_len, feature_dim).reshape(batch_size * num_prototypes, seq_len, feature_dim)
+        expanded_keep_mask = mask_debug['token_keep_mask'].unsqueeze(1).expand(batch_size, num_prototypes, seq_len).reshape(batch_size * num_prototypes, seq_len)
+
+        basis_scores = self.token_scorer(expanded_queries, expanded_tokens)
+        pooled_basis, basis_weights, basis_pooler_debug = self.token_pooler(
+            basis_scores,
+            expanded_tokens,
+            expanded_keep_mask,
+            return_debug=True,
+        )
+
+        outputs = {
+            'text_token_states': text_features,
+            'token_valid_mask': mask_debug['token_valid_mask'],
+            'token_keep_mask': mask_debug['token_keep_mask'],
+            'special_token_positions': mask_debug['special_token_positions'],
+            'basis_bank': pooled_basis.view(batch_size, num_prototypes, feature_dim),
+        }
+        if return_debug:
+            outputs['basis_token_scores'] = basis_scores.view(batch_size, num_prototypes, seq_len)
+            outputs['basis_token_weights'] = basis_weights.view(batch_size, num_prototypes, seq_len)
+            outputs['basis_beta_logits_masked'] = basis_pooler_debug['beta_logits_masked'].view(batch_size, num_prototypes, seq_len)
+            outputs['debug'] = {
+                **mask_debug,
+                'basis_token_scores': outputs['basis_token_scores'],
+                'basis_token_weights': outputs['basis_token_weights'],
+                'basis_beta_logits_masked': outputs['basis_beta_logits_masked'],
+            }
+        return outputs
+
+    def reconstruct_surrogate_text(self, routing_weights: torch.Tensor, basis_bank: torch.Tensor) -> torch.Tensor:
+        if routing_weights.ndim != 2:
+            raise ValueError('routing_weights must have shape [B, N].')
+        if basis_bank.ndim != 3:
+            raise ValueError('basis_bank must have shape [B, N, D].')
+        if routing_weights.shape[:2] != basis_bank.shape[:2]:
+            raise ValueError('routing_weights and basis_bank must agree on [B, N].')
+        surrogate = torch.einsum('bn,bnd->bd', routing_weights, basis_bank)
+        if not torch.isfinite(surrogate).all():
+            raise FloatingPointError('Surrogate text reconstruction produced NaN or Inf values.')
+        return surrogate
+
+    def compute_approximate_pairwise_similarity(
+        self,
+        image_projected: torch.Tensor,
+        routing_weights: torch.Tensor,
+        basis_bank: torch.Tensor,
+        image_chunk_size: int = 32,
+        text_chunk_size: int = 128,
+    ) -> torch.Tensor:
+        if image_projected.ndim != 2 or routing_weights.ndim != 2:
+            raise ValueError('image_projected and routing_weights must have shape [N, D] and [N, P].')
+        if basis_bank.ndim != 3:
+            raise ValueError('basis_bank must have shape [B, P, D].')
+        if image_projected.size(0) != routing_weights.size(0):
+            raise ValueError('image_projected and routing_weights must have the same image batch dimension.')
+        if routing_weights.size(1) != basis_bank.size(1):
+            raise ValueError('routing_weights prototype dimension must match basis_bank prototype dimension.')
+
+        image_chunk_size = max(int(image_chunk_size), 1)
+        text_chunk_size = max(int(text_chunk_size), 1)
+        num_text = basis_bank.size(0)
+        num_image = image_projected.size(0)
+        similarity = torch.empty(num_text, num_image, device=image_projected.device, dtype=image_projected.dtype)
+
+        for image_start in range(0, num_image, image_chunk_size):
+            image_end = min(image_start + image_chunk_size, num_image)
+            image_projected_chunk = image_projected[image_start:image_end]
+            routing_chunk = routing_weights[image_start:image_end]
+            image_batch = image_projected_chunk.size(0)
+
+            for text_start in range(0, num_text, text_chunk_size):
+                text_end = min(text_start + text_chunk_size, num_text)
+                basis_chunk = basis_bank[text_start:text_end]
+                text_batch = basis_chunk.size(0)
+
+                surrogate_chunk = torch.einsum('in,tnd->tid', routing_chunk, basis_chunk)
+                projected_text = self.text_projector(surrogate_chunk.reshape(text_batch * image_batch, -1))
+                expanded_image_projected = image_projected_chunk.unsqueeze(0).expand(text_batch, image_batch, -1).reshape(text_batch * image_batch, -1)
+                block_similarity = self.losses.compute_paired_similarity(expanded_image_projected, projected_text)
+                similarity[text_start:text_end, image_start:image_end] = block_similarity.view(text_batch, image_batch)
+
+        if not torch.isfinite(similarity).all():
+            raise FloatingPointError('Approximate prototype retrieval similarity contains NaN or Inf values.')
+        return similarity
+
     def compute_pairwise_similarity(
         self,
         image_projected: torch.Tensor,
@@ -315,6 +471,7 @@ class PrototypeConditionedTextHead(nn.Module):
         image_chunk_size: int = 32,
         text_chunk_size: int = 128,
     ) -> torch.Tensor:
+        del pids
         if image_projected.ndim != 2 or summaries.ndim != 2:
             raise ValueError('image_projected and summaries must have shape [N, D].')
         if text_token_states.ndim != 3 or token_ids.ndim != 2:
@@ -357,8 +514,6 @@ class PrototypeConditionedTextHead(nn.Module):
                 token_scores = self.token_scorer(expanded_summary, expanded_tokens)
                 pooled_text, _ = self.token_pooler(token_scores, expanded_tokens, expanded_mask)
                 projected_text = self.text_projector(pooled_text)
-                # Keep the current pairwise inference scoring family, but share embedding
-                # normalization semantics with training through PrototypeLosses.
                 block_similarity = self.losses.compute_paired_similarity(expanded_image_projected, projected_text)
                 block_similarity = block_similarity.view(image_batch, text_batch).t()
                 similarity[text_start:text_end, image_start:image_end] = block_similarity
@@ -384,34 +539,55 @@ class PrototypeConditionedTextHead(nn.Module):
             contextualized_prototypes=context['contextualized_prototypes'],
             return_debug=return_debug,
         )
-        text_outputs = self.pool_text_with_summary(
+        prepared_text = self._prepare_text_inputs(
+            text_token_states,
+            token_ids,
+            attention_mask=attention_mask,
+            special_token_positions=special_token_positions,
+        )
+        basis_outputs = self.build_text_basis_bank(
+            text_token_states,
+            token_ids,
+            context['contextualized_prototypes'],
+            attention_mask=attention_mask,
+            special_token_positions=special_token_positions,
+            return_debug=return_debug,
+            prepared_text=prepared_text,
+        )
+        surrogate_pooled_text = self.reconstruct_surrogate_text(image_outputs['routing_weights'], basis_outputs['basis_bank'])
+        surrogate_text_projected, surrogate_text_projector_debug = self.text_projector(surrogate_pooled_text, return_debug=True)
+        exact_outputs = self.pool_text_with_summary(
             image_outputs['summary'],
             text_token_states,
             token_ids,
             attention_mask=attention_mask,
             special_token_positions=special_token_positions,
             return_debug=return_debug,
+            prepared_text=prepared_text,
         )
         scalar_metrics = self._collect_scalar_metrics(
             prototypes=context['prototypes'],
             contextualized_prototypes=context['contextualized_prototypes'],
             routing_weights=image_outputs['routing_weights'],
             summary=image_outputs['summary'],
-            token_weights=text_outputs['token_weights'],
-            token_valid_mask=text_outputs['token_valid_mask'],
-            token_keep_mask=text_outputs['token_keep_mask'],
-            pooled_text=text_outputs['pooled_text'],
+            exact_token_weights=exact_outputs['token_weights'],
+            token_valid_mask=exact_outputs['token_valid_mask'],
+            token_keep_mask=exact_outputs['token_keep_mask'],
+            surrogate_pooled_text=surrogate_pooled_text,
+            exact_pooled_text=exact_outputs['pooled_text'],
             image_features=image_outputs['image_embedding'],
             image_projector_debug=image_outputs['image_projector_debug'],
-            text_projector_debug=text_outputs['text_projector_debug'],
-            special_token_positions=text_outputs['special_token_positions'],
+            surrogate_text_projector_debug=surrogate_text_projector_debug,
+            exact_text_projector_debug=exact_outputs['text_projector_debug'],
+            special_token_positions=exact_outputs['special_token_positions'],
             contextualizer_debug=context.get('contextualizer_debug'),
             router_debug=image_outputs['router_debug'],
-            pooler_debug=text_outputs['pooler_debug'],
+            pooler_debug=exact_outputs['pooler_debug'],
         )
         loss_outputs = self.losses(
             image_outputs['image_projected'],
-            text_outputs['text_projected'],
+            surrogate_text_projected,
+            exact_outputs['text_projected'],
             pids=pids,
             prototypes=context['prototypes'],
             routing_weights=image_outputs['routing_weights'],
@@ -420,33 +596,40 @@ class PrototypeConditionedTextHead(nn.Module):
 
         outputs = {
             'image_embedding': image_outputs['image_embedding'],
-            'text_token_states': text_outputs['text_token_states'],
+            'text_token_states': prepared_text['text_token_states'],
             'prototypes': context['prototypes'],
             'contextualized_prototypes': context['contextualized_prototypes'],
             'routing_weights': image_outputs['routing_weights'],
             'summary': image_outputs['summary'],
-            'token_scores': text_outputs['token_scores'],
-            'token_valid_mask': text_outputs['token_valid_mask'],
-            'token_keep_mask': text_outputs['token_keep_mask'],
-            'valid_mask': text_outputs['valid_mask'],
-            'token_weights': text_outputs['token_weights'],
-            'beta_logits_masked': text_outputs['beta_logits_masked'],
-            'pooled_text': text_outputs['pooled_text'],
+            'token_valid_mask': exact_outputs['token_valid_mask'],
+            'token_keep_mask': exact_outputs['token_keep_mask'],
+            'valid_mask': exact_outputs['valid_mask'],
+            'basis_bank': basis_outputs['basis_bank'],
+            'exact_token_scores': exact_outputs['token_scores'],
+            'exact_token_weights': exact_outputs['token_weights'],
+            'beta_logits_masked': exact_outputs['beta_logits_masked'],
+            'exact_pooled_text': exact_outputs['pooled_text'],
+            'surrogate_pooled_text': surrogate_pooled_text,
             'image_projected': image_outputs['image_projected'],
             'image_projected_raw': image_outputs['image_projected_raw'],
-            'text_projected': text_outputs['text_projected'],
-            'text_projected_raw': text_outputs['text_projected_raw'],
+            'surrogate_text_projected': surrogate_text_projected,
+            'surrogate_text_projected_raw': surrogate_text_projector_debug['projected_features_raw'],
+            'exact_text_projected': exact_outputs['text_projected'],
+            'exact_text_projected_raw': exact_outputs['text_projected_raw'],
             'alpha': image_outputs['routing_weights'],
-            'beta': text_outputs['token_weights'],
+            'beta': exact_outputs['token_weights'],
             'Q': image_outputs['summary'],
             'Theta_v': context['prototypes'],
             'Theta_tilde': context['contextualized_prototypes'],
-            'S_t': text_outputs['token_scores'],
-            'T_pool': text_outputs['pooled_text'],
+            'T_pool': surrogate_pooled_text,
+            'T_exact_pool': exact_outputs['pooled_text'],
+            'T_hat_pool': surrogate_pooled_text,
             'Z_v': image_outputs['image_projected'],
             'Z_v_raw': image_outputs['image_projected_raw'],
-            'Z_t': text_outputs['text_projected'],
-            'Z_t_raw': text_outputs['text_projected_raw'],
+            'Z_t': surrogate_text_projected,
+            'Z_t_raw': surrogate_text_projector_debug['projected_features_raw'],
+            'Z_t_exact': exact_outputs['text_projected'],
+            'Z_t_exact_raw': exact_outputs['text_projected_raw'],
             'losses': loss_outputs,
             'metrics': scalar_metrics,
         }
@@ -456,24 +639,34 @@ class PrototypeConditionedTextHead(nn.Module):
                 {
                     **context['debug'],
                     **image_outputs['debug'],
-                    **text_outputs['debug'],
+                    **exact_outputs['debug'],
+                    **basis_outputs.get('debug', {}),
                     'alpha': image_outputs['routing_weights'].detach(),
-                    'beta': text_outputs['token_weights'].detach(),
+                    'beta': exact_outputs['token_weights'].detach(),
                     'Q': image_outputs['summary'].detach(),
                     'Theta_v': context['prototypes'].detach(),
                     'Theta_tilde': context['contextualized_prototypes'].detach(),
-                    'T_pool': text_outputs['pooled_text'].detach(),
+                    'T_pool': surrogate_pooled_text.detach(),
+                    'T_exact_pool': exact_outputs['pooled_text'].detach(),
+                    'T_hat_pool': surrogate_pooled_text.detach(),
                     'Z_v': image_outputs['image_projected'].detach(),
                     'Z_v_raw': image_outputs['image_projected_raw'].detach(),
-                    'Z_t': text_outputs['text_projected'].detach(),
-                    'Z_t_raw': text_outputs['text_projected_raw'].detach(),
-                    'token_valid_mask': text_outputs['token_valid_mask'].detach(),
-                    'token_keep_mask': text_outputs['token_keep_mask'].detach(),
-                    'beta_logits_masked': text_outputs['beta_logits_masked'].detach(),
+                    'Z_t': surrogate_text_projected.detach(),
+                    'Z_t_raw': surrogate_text_projector_debug['projected_features_raw'].detach(),
+                    'Z_t_exact': exact_outputs['text_projected'].detach(),
+                    'Z_t_exact_raw': exact_outputs['text_projected_raw'].detach(),
+                    'token_valid_mask': exact_outputs['token_valid_mask'].detach(),
+                    'token_keep_mask': exact_outputs['token_keep_mask'].detach(),
+                    'beta_logits_masked': exact_outputs['beta_logits_masked'].detach(),
+                    'basis_bank': basis_outputs['basis_bank'].detach(),
                 }
             )
-            if 'contrastive_logits' in loss_outputs:
-                outputs['debug']['contrastive_logits'] = loss_outputs['contrastive_logits']
+            if 'basis_token_scores' in basis_outputs:
+                outputs['debug']['basis_token_scores'] = basis_outputs['basis_token_scores'].detach()
+                outputs['debug']['basis_token_weights'] = basis_outputs['basis_token_weights'].detach()
+                outputs['debug']['basis_beta_logits_masked'] = basis_outputs['basis_beta_logits_masked'].detach()
+            if 'image_proxy_logits' in loss_outputs:
+                outputs['debug']['image_proxy_logits'] = loss_outputs['image_proxy_logits'].detach()
+                outputs['debug']['text_proxy_logits'] = loss_outputs['text_proxy_logits'].detach()
+                outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
-
-

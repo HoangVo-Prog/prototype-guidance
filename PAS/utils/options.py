@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import os
 import sys
 
@@ -44,7 +44,11 @@ def build_parser():
     parser.add_argument('--backbone_precision', type=str, default='fp16')
     parser.add_argument('--prototype_precision', type=str, default='fp32')
     parser.add_argument('--temperature', type=float, default=0.07)
-    parser.add_argument('--learn_logit_scale', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--learn_logit_scale', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--proxy_temperature', type=float, default=0.07)
+    parser.add_argument('--lambda_proxy', type=float, default=1.0)
+    parser.add_argument('--lambda_align', type=float, default=1.0)
+    parser.add_argument('--lambda_diag', type=float, default=1.0)
     parser.add_argument('--img_size', type=int, nargs=2, default=(384, 128))
     parser.add_argument('--stride_size', type=int, default=16)
     parser.add_argument('--text_length', type=int, default=77)
@@ -110,6 +114,8 @@ def build_parser():
     parser.add_argument('--weight_decay_prototype_bank', type=float, default=1e-2)
     parser.add_argument('--weight_decay_projectors', type=float, default=5e-2)
     parser.add_argument('--weight_decay_logit_scale', type=float, default=0.0)
+    parser.add_argument('--lr_class_proxies', type=float, default=None)
+    parser.add_argument('--weight_decay_class_proxies', type=float, default=None)
     parser.add_argument('--weight_decay_image_backbone', type=float, default=0.0)
     parser.add_argument('--weight_decay_text_backbone', type=float, default=0.0)
     parser.add_argument('--alpha', type=float, default=0.9)
@@ -135,6 +141,7 @@ def build_parser():
     parser.add_argument('--retrieval_metrics', nargs='+', default=list(DEFAULT_RETRIEVAL_METRICS))
     parser.add_argument('--prototype_eval_image_chunk_size', type=int, default=32)
     parser.add_argument('--prototype_eval_text_chunk_size', type=int, default=128)
+    parser.add_argument('--retrieval_scorer', type=str, default='exact')
 
     parser.add_argument('--use_wandb', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--wandb_project', default='PAS')

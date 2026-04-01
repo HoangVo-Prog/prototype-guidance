@@ -7,6 +7,7 @@ from utils.precision import build_autocast_context, is_cuda_device
 
 
 SUPPORTED_RETRIEVAL_METRICS = ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum')
+SUPPORTED_RETRIEVAL_SCORERS = ('exact', 'approximate')
 
 
 def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
@@ -76,6 +77,12 @@ class Evaluator:
                 f'Allowed values: {list(SUPPORTED_RETRIEVAL_METRICS)}'
             )
         self.requested_metrics = requested_metrics
+        self.retrieval_scorer = str(getattr(args, 'retrieval_scorer', 'exact')).lower()
+        if self.retrieval_scorer not in SUPPORTED_RETRIEVAL_SCORERS:
+            raise ValueError(
+                f'Unsupported evaluation.retrieval_scorer={self.retrieval_scorer!r}. '
+                f'Allowed values: {list(SUPPORTED_RETRIEVAL_SCORERS)}'
+            )
 
     def _concat_feature_batches(self, batches):
         first = batches[0]
@@ -98,7 +105,10 @@ class Evaluator:
             caption = caption.to(device)
             with torch.no_grad():
                 with build_autocast_context(self.args, device):
-                    text_features = model.encode_text_for_retrieval(caption)
+                    if self.retrieval_scorer == 'approximate':
+                        text_features = model.encode_text_basis_for_retrieval(caption)
+                    else:
+                        text_features = model.encode_text_for_retrieval(caption)
             text_ids.append(pid.view(-1))
             text_batches.append({
                 key: value.detach().cpu() if isinstance(value, torch.Tensor) else {sub_key: sub_value.detach().cpu() for sub_key, sub_value in value.items()}
@@ -126,7 +136,10 @@ class Evaluator:
 
         with torch.no_grad():
             with build_autocast_context(self.args, device):
-                similarity = model.compute_retrieval_similarity(image_features, text_features).cpu()
+                if self.retrieval_scorer == 'approximate':
+                    similarity = model.compute_approximate_retrieval_similarity(image_features, text_features).cpu()
+                else:
+                    similarity = model.compute_retrieval_similarity(image_features, text_features).cpu()
 
         return similarity, text_ids, image_ids
 

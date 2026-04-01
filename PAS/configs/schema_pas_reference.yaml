@@ -83,12 +83,11 @@ model:
   # If you train with prototype_precision=fp16, enable training.amp=true.
   prototype_precision: fp32
 
-  # Global contrastive temperature inverse factor uses this through the model/loss stack.
-  # Must be positive.
+  # Fixed temperature used by the exact retrieval scorers. Must be positive.
   temperature: 0.07
 
-  # If true, learn the CLIP-style contrastive logit scale parameter.
-  learn_logit_scale: true
+  # The amortized surrogate objective does not support a learnable retrieval logit scale.
+  learn_logit_scale: false
 
   # Input image size as [height, width]. Any positive integer pair is accepted.
   img_size: [384, 128]
@@ -221,6 +220,18 @@ training:
   # Train batch size per process. Positive integer.
   batch_size: 32
 
+  # Proxy-classifier temperature used by the amortized surrogate objective. Must be positive.
+  proxy_temperature: 0.07
+
+  # Main surrogate proxy-loss weight.
+  lambda_proxy: 1.0
+
+  # Image / surrogate-text cosine alignment weight.
+  lambda_align: 1.0
+
+  # Diagonal surrogate-vs-exact fidelity weight.
+  lambda_diag: 1.0
+
   # Total number of epochs. Positive integer.
   epochs: 60
 
@@ -302,6 +313,9 @@ optimizer:
   # Learning rate for logit_scale param.
   lr_logit_scale: 0.0001
 
+  # Optional class-proxy learning rate override. null falls back to optimizer.lr.
+  lr_class_proxies: null
+
   # Learning rate for image backbone params.
   # 0.0 is common when freeze_image_backbone=true.
   lr_image_backbone: 0.0
@@ -317,6 +331,9 @@ optimizer:
   weight_decay_prototype_bank: 0.01
   weight_decay_projectors: 0.05
   weight_decay_logit_scale: 0.0
+
+  # Optional class-proxy weight decay override. null falls back to optimizer.weight_decay.
+  weight_decay_class_proxies: null
   weight_decay_image_backbone: 0.0
   weight_decay_text_backbone: 0.0
 
@@ -441,4 +458,8 @@ evaluation:
 
   # Chunk size used by PAS blockwise text-side retrieval similarity computation.
   prototype_text_chunk_size: 128
+
+  # Retrieval scorer used by Evaluator. Supported values: exact | approximate.
+  # Default exact preserves deployed pairwise pooling.
+  retrieval_scorer: exact
 

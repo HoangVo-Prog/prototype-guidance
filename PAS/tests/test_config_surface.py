@@ -52,6 +52,11 @@ class ConfigSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'evaluation.retrieval_metrics'):
             load_yaml_config(None, path)
 
+    def test_invalid_retrieval_scorer_fails_at_config_load_time(self):
+        path = self._write_config({'evaluation': {'retrieval_scorer': 'surrogate_default'}})
+        with self.assertRaisesRegex(ValueError, 'evaluation.retrieval_scorer'):
+            load_yaml_config(None, path)
+
     def test_invalid_cli_enum_fails_during_arg_parsing_validation(self):
         with self.assertRaisesRegex(ValueError, 'prototype_routing_type'):
             get_args(['--routing_similarity', 'consine'])
@@ -98,6 +103,7 @@ class ConfigSurfaceTests(unittest.TestCase):
                     'learn_logit_scale': False,
                     'backbone_precision': 'fp32',
                     'prototype_precision': 'fp32',
+                    'learn_logit_scale': False,
                 },
                 'prototype': {
                     'normalize_for_self_interaction': True,
@@ -120,6 +126,17 @@ class ConfigSurfaceTests(unittest.TestCase):
                 'training': {
                     'amp': True,
                     'amp_dtype': 'bf16',
+                    'proxy_temperature': 0.2,
+                    'lambda_proxy': 1.0,
+                    'lambda_align': 0.5,
+                    'lambda_diag': 0.25,
+                },
+                'optimizer': {
+                    'lr_class_proxies': 0.003,
+                    'weight_decay_class_proxies': 0.02,
+                },
+                'evaluation': {
+                    'retrieval_scorer': 'approximate',
                 },
             }
         )
@@ -138,6 +155,13 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertTrue(args.error_on_empty_kept_tokens)
         self.assertTrue(args.amp)
         self.assertEqual(args.amp_dtype, 'bf16')
+        self.assertEqual(args.proxy_temperature, 0.2)
+        self.assertEqual(args.lambda_proxy, 1.0)
+        self.assertEqual(args.lambda_align, 0.5)
+        self.assertEqual(args.lambda_diag, 0.25)
+        self.assertEqual(args.lr_class_proxies, 0.003)
+        self.assertEqual(args.weight_decay_class_proxies, 0.02)
+        self.assertEqual(args.retrieval_scorer, 'approximate')
 
     def test_authoritative_contextualization_flag_overrides_legacy_alias(self):
         path = self._write_config(

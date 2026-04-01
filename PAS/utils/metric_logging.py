@@ -1,4 +1,4 @@
-﻿from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional
 
 import torch
 import torch.nn.functional as F
@@ -6,15 +6,28 @@ import torch.nn.functional as F
 
 TRAIN_LOSS_KEYS = (
     'loss_total',
-    'loss_infonce',
+    'loss_proxy',
+    'loss_proxy_image',
+    'loss_proxy_text',
+    'loss_align',
+    'loss_diag',
     'loss_diversity',
     'loss_balance',
+    'loss_proxy_weighted',
+    'loss_align_weighted',
+    'loss_diag_weighted',
     'loss_diversity_weighted',
     'loss_balance_weighted',
 )
 
 DEBUG_METRIC_MAP = {
     'logit_scale': 'debug/logit_scale',
+    'proxy_temperature': 'debug/proxy_temperature',
+    'retrieval_temperature': 'debug/retrieval_temperature',
+    'surrogate_t_pool_norm': 'debug/surrogate_t_pool_norm',
+    'exact_t_pool_norm': 'debug/exact_t_pool_norm',
+    'surrogate_text_embed_norm': 'debug/surrogate_text_embed_norm',
+    'exact_text_embed_norm': 'debug/exact_text_embed_norm',
     'prototype_usage_entropy': 'debug/prototype_usage_entropy',
     'prototype_usage_max': 'debug/prototype_usage_max',
     'prototype_dead_count': 'debug/prototype_dead_count',
@@ -56,6 +69,8 @@ DEBUG_SKIP_KEYS = {
     'Z_v_raw',
     'Z_t',
     'Z_t_raw',
+    'Z_t_exact',
+    'Z_t_exact_raw',
     'raw_prototypes',
     'contextualized_prototypes',
     'prototype_similarity',
@@ -75,6 +90,10 @@ DEBUG_SKIP_KEYS = {
     'beta_logits_masked',
     'token_weights',
     'pooled_text',
+    'basis_bank',
+    'basis_token_scores',
+    'basis_token_weights',
+    'basis_beta_logits_masked',
     'projected_features',
     'projected_features_norm',
     'projected_features_pre_norm',
@@ -155,11 +174,6 @@ def collect_debug_metrics(outputs: Dict[str, object], include_debug_metrics: boo
         if scalar is None:
             continue
         metrics[mapped_key] = scalar
-
-    if 'temperature' in outputs and 'debug/logit_scale' not in metrics:
-        temperature = to_scalar(outputs['temperature'])
-        if temperature not in (None, 0.0):
-            metrics['debug/logit_scale'] = 1.0 / temperature
 
     return metrics
 

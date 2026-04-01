@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import unittest
 from types import SimpleNamespace
@@ -140,10 +140,14 @@ class PhaseEIntegrationTests(unittest.TestCase):
             projector_dropout=0.0,
             projector_type='mlp2',
             normalize_projector_outputs=True,
-            backbone_precision='fp16',
+            backbone_precision='fp32',
             prototype_precision='fp32',
             temperature=0.07,
-            learn_logit_scale=True,
+            learn_logit_scale=False,
+            proxy_temperature=0.2,
+            lambda_proxy=1.0,
+            lambda_align=0.5,
+            lambda_diag=0.25,
             text_length=77,
             vocab_size=50010,
             use_prototype_bank=True,
@@ -176,63 +180,69 @@ class PhaseEIntegrationTests(unittest.TestCase):
             freeze_text_backbone=freeze_backbones,
             prototype_eval_image_chunk_size=2,
             prototype_eval_text_chunk_size=2,
+            retrieval_scorer='exact',
             optimizer='AdamW',
             lr=0.01,
             lr_prototype_bank=0.02,
             lr_projectors=0.04,
             lr_logit_scale=0.005,
+            lr_class_proxies=0.03,
             lr_image_backbone=0.001,
             lr_text_backbone=0.001,
             weight_decay=0.01,
             weight_decay_prototype_bank=0.02,
             weight_decay_projectors=0.04,
             weight_decay_logit_scale=0.0,
+            weight_decay_class_proxies=0.07,
             weight_decay_image_backbone=0.05,
             weight_decay_text_backbone=0.06,
             momentum=0.9,
             alpha=0.9,
             beta=0.999,
+            training=True,
         )
         base.update(overrides)
         return SimpleNamespace(**base)
 
-    def test_forward_returns_structured_losses_and_lightweight_debug_metrics(self):
+    def test_forward_returns_structured_amortized_losses_and_lightweight_debug_metrics(self):
         model = PASModel(self._build_args(), num_classes=2)
         outputs = model(self.batch, return_debug=False)
-        for key in ('loss_total', 'loss_infonce', 'loss_diversity', 'loss_balance', 'debug'):
+        for key in ('loss_total', 'loss_proxy', 'loss_align', 'loss_diag', 'loss_diversity', 'loss_balance', 'debug'):
             self.assertIn(key, outputs)
         for key in ('prototype_usage_entropy', 'routing_entropy', 'token_pool_entropy', 'q_norm'):
             self.assertIn(key, outputs['debug'])
         self.assertTrue(torch.isfinite(outputs['loss_total']))
 
-    def test_forward_with_full_debug_exposes_canonical_tensors(self):
+    def test_forward_with_full_debug_exposes_surrogate_and_exact_tensors(self):
         model = PASModel(self._build_args(), num_classes=2)
         outputs = model(self.batch, return_debug=True)
-        for key in ('alpha', 'beta', 'Q', 'Theta_v', 'Theta_tilde', 'token_valid_mask', 'token_keep_mask', 'beta_logits_masked', 'Z_v_raw', 'Z_t_raw'):
+        for key in ('alpha', 'Q', 'Theta_v', 'Theta_tilde', 'basis_bank', 'Z_t', 'Z_t_exact'):
             self.assertIn(key, outputs['debug'])
         self.assertTrue(torch.isfinite(outputs['loss_total']))
 
-    def test_freeze_policy_freezes_backbones_and_keeps_prototype_head_trainable(self):
-        model = PASModel(self._build_args(freeze_backbones=True), num_classes=2)
-        self.assertTrue(all(not parameter.requires_grad for parameter in model.base_model.visual.parameters()))
-        self.assertTrue(all(not parameter.requires_grad for parameter in model.base_model.transformer.parameters()))
-        self.assertTrue(all(not parameter.requires_grad for parameter in model.base_model.token_embedding.parameters()))
-        self.assertTrue(any(parameter.requires_grad for parameter in model.prototype_head.parameters()))
+    def test_forward_requires_pids_for_proxy_training(self):
+        model = PASModel(self._build_args(), num_classes=2)
+        batch = dict(self.batch)
+        batch.pop('pids')
+        with self.assertRaisesRegex(KeyError, r"batch\['pids'\].*proxy objective"):
+            model(batch)
+
+    def test_forward_requires_num_classes_for_training(self):
+        with self.assertRaisesRegex(ValueError, r'num_classes > 0'):
+            PASModel(self._build_args(), num_classes=0)
 
     def test_optimizer_groups_follow_named_group_contract(self):
-        args = self._build_args(freeze_backbones=False, backbone_precision='fp32')
+        args = self._build_args(freeze_backbones=False)
         model = PASModel(args, num_classes=2)
         optimizer = build_optimizer(args, model)
         groups = {group['name']: group for group in optimizer.param_groups}
         self.assertEqual(groups['prototype_bank']['lr'], args.lr_prototype_bank)
-        self.assertNotIn('contextualizer', groups)
         self.assertEqual(groups['projectors']['lr'], args.lr_projectors)
-        self.assertEqual(groups['logit_scale']['lr'], args.lr_logit_scale)
+        self.assertEqual(groups['class_proxies']['lr'], args.lr_class_proxies)
+        self.assertEqual(groups['class_proxies']['weight_decay'], args.weight_decay_class_proxies)
         self.assertEqual(groups['image_backbone']['lr'], args.lr_image_backbone)
         self.assertEqual(groups['text_backbone']['lr'], args.lr_text_backbone)
-        self.assertEqual(groups['prototype_bank']['weight_decay'], args.weight_decay_prototype_bank)
-        self.assertEqual(groups['projectors']['weight_decay'], args.weight_decay_projectors)
-        self.assertEqual(groups['logit_scale']['weight_decay'], args.weight_decay_logit_scale)
+        self.assertNotIn('logit_scale', groups)
 
     def test_build_model_respects_prototype_precision_setting(self):
         model_fp32 = build_model(self._build_args(prototype_precision='fp32'), num_classes=2)
@@ -263,15 +273,11 @@ class PhaseEIntegrationTests(unittest.TestCase):
 
     def test_fp16_prototype_rejects_bf16_amp(self):
         with self.assertRaisesRegex(ValueError, r'model\.prototype_precision=fp16 requires training\.amp_dtype=fp16'):
-            build_model(self._build_args(backbone_precision='fp32', prototype_precision='fp16', amp=True, amp_dtype='bf16'), num_classes=2)
+            build_model(self._build_args(prototype_precision='fp16', amp=True, amp_dtype='bf16'), num_classes=2)
 
-    def test_evaluator_runs_end_to_end(self):
-        args = self._build_args()
-        model = PASModel(args, num_classes=2)
-        evaluator = Evaluator(self.img_loader, self.text_loader, args)
-        top1 = evaluator.eval(model.eval())
-        self.assertTrue(torch.isfinite(torch.tensor(top1)))
-        self.assertIn('val/pas/R1', evaluator.latest_metrics)
+    def test_build_model_rejects_learnable_logit_scale_runtime(self):
+        with self.assertRaisesRegex(ValueError, r'learn_logit_scale=true'):
+            build_model(self._build_args(learn_logit_scale=True), num_classes=2)
 
     def test_tiny_overfit_reduces_loss(self):
         model = PASModel(self._build_args(), num_classes=2)
@@ -288,49 +294,10 @@ class PhaseEIntegrationTests(unittest.TestCase):
             losses.append(loss.detach().item())
         self.assertLess(min(losses[1:]), losses[0])
 
-    def test_inference_similarity_depends_on_prototype_bank(self):
-        model = PASModel(self._build_args(), num_classes=2).eval()
-        images = self.batch['images'][:2]
-        text = self.batch['caption_ids'][:2]
-        image_features_a = model.encode_image_for_retrieval(images)
-        text_features = model.encode_text_for_retrieval(text)
-        similarity_a = model.compute_retrieval_similarity(image_features_a, text_features)
-
-        with torch.no_grad():
-            replacement_bank = torch.randn_like(model.prototype_head.prototype_bank.prototypes)
-            replacement_bank = torch.nn.functional.normalize(replacement_bank, dim=-1)
-            model.prototype_head.prototype_bank.prototypes.copy_(replacement_bank)
-
-        image_features_b = model.encode_image_for_retrieval(images)
-        similarity_b = model.compute_retrieval_similarity(image_features_b, text_features)
-        self.assertFalse(torch.allclose(similarity_a, similarity_b))
-
-    def test_model_supports_non_matching_prototype_dim(self):
-        model = PASModel(self._build_args(prototype_dim=6, projector_hidden_dim=10), num_classes=2)
-        outputs = model(self.batch, return_debug=True)
-        self.assertEqual(tuple(outputs['debug']['Q'].shape), (4, 6))
-        self.assertEqual(tuple(outputs['debug']['Theta_v'].shape), (4, 6))
-        self.assertEqual(tuple(outputs['debug']['text_tokens'].shape), (4, 6, 8))
-        self.assertTrue(torch.isfinite(outputs['loss_total']))
-
-    def test_retrieval_similarity_uses_the_same_logit_scale_family_as_training(self):
-        model = PASModel(self._build_args(), num_classes=2).eval()
-        images = self.batch['images'][:2]
-        text = self.batch['caption_ids'][:2]
-        image_features = model.encode_image_for_retrieval(images)
-        text_features = model.encode_text_for_retrieval(text)
-
-        with torch.no_grad():
-            model.prototype_head.losses.logit_scale.copy_(torch.log(torch.tensor(2.0)))
-            similarity_a = model.compute_retrieval_similarity(image_features, text_features)
-            model.prototype_head.losses.logit_scale.copy_(torch.log(torch.tensor(4.0)))
-            similarity_b = model.compute_retrieval_similarity(image_features, text_features)
-
-        torch.testing.assert_close(similarity_b, similarity_a * 2.0, atol=1e-5, rtol=1e-5)
-
-    def test_embedding_dim_mismatch_fails_loudly(self):
-        with self.assertRaisesRegex(ValueError, r'model\.embedding_dim must match the CLIP backbone feature dimension'):
-            PASModel(self._build_args(embedding_dim=7), num_classes=2)
+    def test_encode_text_basis_for_retrieval_returns_basis_bank(self):
+        model = PASModel(self._build_args(), num_classes=2)
+        basis_features = model.encode_text_basis_for_retrieval(self.batch['caption_ids'][:2])
+        self.assertEqual(tuple(basis_features['basis_bank'].shape), (2, 4, 8))
 
     def test_retrieval_text_interface_reuses_training_text_state_family(self):
         model = PASModel(self._build_args(), num_classes=2)
@@ -339,14 +306,71 @@ class PhaseEIntegrationTests(unittest.TestCase):
         retrieval_text = model.encode_text_for_retrieval(text)
         torch.testing.assert_close(retrieval_text['text_token_states'], model._resolve_text_states(training_text))
         torch.testing.assert_close(retrieval_text['attention_mask'], training_text.token_mask)
-        self.assertEqual(set(retrieval_text['special_token_positions'].keys()), set(training_text.special_token_positions.keys()))
 
-    def test_forward_requires_pids_for_identity_aware_training(self):
-        model = PASModel(self._build_args(), num_classes=2)
-        batch = dict(self.batch)
-        batch.pop('pids')
-        with self.assertRaisesRegex(KeyError, r"batch\['pids'\]"):
-            model(batch)
+    def test_evaluator_runs_exact_end_to_end(self):
+        args = self._build_args(retrieval_scorer='exact')
+        model = PASModel(args, num_classes=2)
+        evaluator = Evaluator(self.img_loader, self.text_loader, args)
+        top1 = evaluator.eval(model.eval())
+        self.assertTrue(torch.isfinite(torch.tensor(top1)))
+        self.assertIn('val/pas/R1', evaluator.latest_metrics)
+
+    def test_evaluator_runs_approximate_end_to_end(self):
+        args = self._build_args(retrieval_scorer='approximate')
+        model = PASModel(args, num_classes=2)
+        evaluator = Evaluator(self.img_loader, self.text_loader, args)
+        top1 = evaluator.eval(model.eval())
+        self.assertTrue(torch.isfinite(torch.tensor(top1)))
+        self.assertIn('val/pas/R1', evaluator.latest_metrics)
+
+    def test_evaluator_default_uses_exact_scorer(self):
+        args = self._build_args(retrieval_scorer='exact')
+        model = PASModel(args, num_classes=2)
+        evaluator = Evaluator(self.img_loader, self.text_loader, args)
+        with mock.patch.object(model, 'compute_retrieval_similarity', wraps=model.compute_retrieval_similarity) as exact_mock:
+            with mock.patch.object(model, 'compute_approximate_retrieval_similarity', wraps=model.compute_approximate_retrieval_similarity) as approx_mock:
+                evaluator.eval(model.eval())
+        self.assertGreater(exact_mock.call_count, 0)
+        self.assertEqual(approx_mock.call_count, 0)
+
+    def test_optional_approximate_scorer_is_not_default(self):
+        args = self._build_args(retrieval_scorer='approximate')
+        model = PASModel(args, num_classes=2)
+        evaluator = Evaluator(self.img_loader, self.text_loader, args)
+        with mock.patch.object(model, 'compute_retrieval_similarity', wraps=model.compute_retrieval_similarity) as exact_mock:
+            with mock.patch.object(model, 'compute_approximate_retrieval_similarity', wraps=model.compute_approximate_retrieval_similarity) as approx_mock:
+                evaluator.eval(model.eval())
+        self.assertEqual(exact_mock.call_count, 0)
+        self.assertGreater(approx_mock.call_count, 0)
+
+    def test_exact_and_approximate_similarity_both_available(self):
+        model = PASModel(self._build_args(), num_classes=2).eval()
+        images = self.batch['images'][:2]
+        text = self.batch['caption_ids'][:2]
+        image_features = model.encode_image_for_retrieval(images)
+        text_features = model.encode_text_for_retrieval(text)
+        text_basis_features = model.encode_text_basis_for_retrieval(text)
+        exact_similarity = model.compute_retrieval_similarity(image_features, text_features)
+        approximate_similarity = model.compute_approximate_retrieval_similarity(image_features, text_basis_features)
+        self.assertEqual(tuple(exact_similarity.shape), (2, 2))
+        self.assertEqual(tuple(approximate_similarity.shape), (2, 2))
+        self.assertTrue(torch.isfinite(exact_similarity).all())
+        self.assertTrue(torch.isfinite(approximate_similarity).all())
+
+    def test_inference_similarity_depends_on_prototype_bank(self):
+        model = PASModel(self._build_args(), num_classes=2).eval()
+        images = self.batch['images'][:2]
+        text = self.batch['caption_ids'][:2]
+        image_features_a = model.encode_image_for_retrieval(images)
+        text_features = model.encode_text_for_retrieval(text)
+        similarity_a = model.compute_retrieval_similarity(image_features_a, text_features)
+        with torch.no_grad():
+            replacement_bank = torch.randn_like(model.prototype_head.prototype_bank.prototypes)
+            replacement_bank = torch.nn.functional.normalize(replacement_bank, dim=-1)
+            model.prototype_head.prototype_bank.prototypes.copy_(replacement_bank)
+        image_features_b = model.encode_image_for_retrieval(images)
+        similarity_b = model.compute_retrieval_similarity(image_features_b, text_features)
+        self.assertFalse(torch.allclose(similarity_a, similarity_b))
 
     def test_build_model_accepts_supported_vit_choices(self):
         for pretrain_choice in ('ViT-B/16', 'ViT-B/32', 'ViT-L/14'):

@@ -66,7 +66,11 @@ def build_args():
         projector_type='mlp2',
         normalize_projector_outputs=True,
         temperature=0.07,
-        learn_logit_scale=True,
+        learn_logit_scale=False,
+        proxy_temperature=0.2,
+        lambda_proxy=1.0,
+        lambda_align=0.5,
+        lambda_diag=0.25,
         text_length=77,
         vocab_size=50010,
         use_prototype_bank=True,
@@ -98,6 +102,9 @@ def build_args():
         freeze_text_backbone=True,
         prototype_eval_image_chunk_size=2,
         prototype_eval_text_chunk_size=2,
+        retrieval_scorer='exact',
+        lr_class_proxies=None,
+        weight_decay_class_proxies=None,
     )
 
 
@@ -135,6 +142,8 @@ def main():
         torch.testing.assert_close(outputs['debug']['beta'].sum(dim=-1), torch.ones(outputs['debug']['beta'].size(0)))
         if not torch.equal(outputs['debug']['beta'][~outputs['debug']['token_keep_mask']], torch.zeros_like(outputs['debug']['beta'][~outputs['debug']['token_keep_mask']])):
             raise RuntimeError('Masked tokens received non-zero beta mass in the smoke test.')
+        if 'basis_bank' not in outputs['debug']:
+            raise RuntimeError('Smoke forward did not expose the amortized text basis bank.')
 
         optimizer = torch.optim.Adam([parameter for parameter in model.parameters() if parameter.requires_grad], lr=0.05)
         losses = []

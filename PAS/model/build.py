@@ -1,4 +1,4 @@
-from collections import OrderedDict
+﻿from collections import OrderedDict
 from typing import Dict, Optional
 
 import torch
@@ -45,15 +45,15 @@ class PASModel(nn.Module):
         self.prototype_eval_text_chunk_size = int(getattr(args, 'prototype_eval_text_chunk_size', 128) or 128)
 
         self._validate_configuration()
-        self.prototype_head = build_prototype_head(args, input_dim=self.embed_dim)
+        self.prototype_head = build_prototype_head(args, input_dim=self.embed_dim, num_classes=self.num_classes)
         self._apply_freeze_policy()
 
     def _validate_pretrain_choice(self):
         pretrain_choice = getattr(self.args, 'pretrain_choice', None)
         if pretrain_choice not in SUPPORTED_PAS_CLIP_BACKBONES:
             raise ValueError(
-                'PAS currently supports only ViT CLIP backbones with the token-level runtime contract required by ' 
-                f'prototype routing. Supported `pretrain_choice` values: {list(SUPPORTED_PAS_CLIP_BACKBONES)}. ' 
+                'PAS currently supports only ViT CLIP backbones with the token-level runtime contract required by '
+                f'prototype routing. Supported `pretrain_choice` values: {list(SUPPORTED_PAS_CLIP_BACKBONES)}. '
                 f'Got {pretrain_choice!r}.'
             )
 
@@ -61,15 +61,15 @@ class PASModel(nn.Module):
         vision_layers = base_cfg.get('vision_layers')
         if isinstance(vision_layers, (tuple, list)):
             raise ValueError(
-                'PAS requires a ViT visual backbone that returns token sequences with a CLS slot; ' 
+                'PAS requires a ViT visual backbone that returns token sequences with a CLS slot; '
                 f'got vision_layers={vision_layers!r} from pretrain_choice={getattr(self.args, "pretrain_choice", None)!r}.'
             )
         transformer_width = int(base_cfg.get('transformer_width', base_cfg['embed_dim']))
         embed_dim = int(base_cfg['embed_dim'])
         if transformer_width != embed_dim:
             raise ValueError(
-                'PAS consumes text pre-projection token states, so it requires CLIP variants where ' 
-                f'transformer_width == embed_dim. Got transformer_width={transformer_width} and embed_dim={embed_dim} ' 
+                'PAS consumes text pre-projection token states, so it requires CLIP variants where '
+                f'transformer_width == embed_dim. Got transformer_width={transformer_width} and embed_dim={embed_dim} '
                 f'for pretrain_choice={getattr(self.args, "pretrain_choice", None)!r}.'
             )
 
@@ -78,6 +78,13 @@ class PASModel(nn.Module):
             raise ValueError('PASModel requires model.use_prototype_bank=true because the active runtime is prototype-based.')
         if not bool(getattr(self.args, 'use_image_conditioned_pooling', True)):
             raise ValueError('PASModel requires model.use_image_conditioned_pooling=true because the active runtime scores text under image-conditioned pooling.')
+        if bool(getattr(self.args, 'learn_logit_scale', False)):
+            raise ValueError(
+                'model.learn_logit_scale=true is not supported under the amortized surrogate objective because '
+                'the exact retrieval scorer keeps a fixed temperature.'
+            )
+        if bool(getattr(self.args, 'training', True)) and self.num_classes <= 0:
+            raise ValueError('PASModel requires num_classes > 0 during training so the amortized proxy objective can build class proxies.')
         if self.prototype_eval_image_chunk_size <= 0 or self.prototype_eval_text_chunk_size <= 0:
             raise ValueError('Prototype evaluation chunk sizes must be positive integers.')
         configured_embedding_dim = getattr(self.args, 'embedding_dim', None)
@@ -207,6 +214,7 @@ class PASModel(nn.Module):
         return {
             'image_projected': prototype_outputs['image_projected'],
             'summary': prototype_outputs['summary'],
+            'routing_weights': prototype_outputs['routing_weights'],
         }
 
     def encode_text_for_retrieval(self, text: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -216,6 +224,21 @@ class PASModel(nn.Module):
             'token_ids': text.long(),
             'attention_mask': text_output.token_mask,
             'special_token_positions': {key: value for key, value in text_output.special_token_positions.items()},
+        }
+
+    def encode_text_basis_for_retrieval(self, text: torch.Tensor) -> Dict[str, torch.Tensor]:
+        text_output = self.extract_text_features(text)
+        context = self.prototype_head.get_prototype_context(return_debug=False)
+        basis_outputs = self.prototype_head.build_text_basis_bank(
+            text_token_states=self._cast_to_prototype_dtype(self._resolve_text_states(text_output)),
+            token_ids=text.long(),
+            contextualized_prototypes=self._cast_to_prototype_dtype(context['contextualized_prototypes']),
+            attention_mask=text_output.token_mask,
+            special_token_positions=text_output.special_token_positions,
+            return_debug=False,
+        )
+        return {
+            'basis_bank': basis_outputs['basis_bank'],
         }
 
     def compute_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
@@ -233,6 +256,18 @@ class PASModel(nn.Module):
             raise FloatingPointError('Retrieval similarity contains NaN or Inf values.')
         return similarity.float()
 
+    def compute_approximate_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_basis_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        similarity = self.prototype_head.compute_approximate_pairwise_similarity(
+            image_projected=self._cast_to_prototype_dtype(image_features['image_projected']),
+            routing_weights=self._cast_to_prototype_dtype(image_features['routing_weights']),
+            basis_bank=self._cast_to_prototype_dtype(text_basis_features['basis_bank']),
+            image_chunk_size=self.prototype_eval_image_chunk_size,
+            text_chunk_size=self.prototype_eval_text_chunk_size,
+        )
+        if not torch.isfinite(similarity).all():
+            raise FloatingPointError('Approximate retrieval similarity contains NaN or Inf values.')
+        return similarity.float()
+
     def _build_debug_outputs(
         self,
         image_output: EncoderOutput,
@@ -247,26 +282,38 @@ class PASModel(nn.Module):
                 'token_mask': text_output.token_mask.detach(),
                 'special_token_positions': {key: value.detach() for key, value in text_output.special_token_positions.items()},
                 'alpha': prototype_outputs['routing_weights'].detach(),
-                'beta': prototype_outputs['token_weights'].detach(),
+                'beta': prototype_outputs['exact_token_weights'].detach(),
                 'Q': prototype_outputs['summary'].detach(),
                 'Theta_v': prototype_outputs['prototypes'].detach(),
                 'Theta_tilde': prototype_outputs['contextualized_prototypes'].detach(),
                 'token_valid_mask': prototype_outputs['token_valid_mask'].detach(),
                 'token_keep_mask': prototype_outputs['token_keep_mask'].detach(),
                 'beta_logits_masked': prototype_outputs['beta_logits_masked'].detach(),
-                'T_pool': prototype_outputs['pooled_text'].detach(),
+                'basis_bank': prototype_outputs['basis_bank'].detach(),
+                'T_pool': prototype_outputs['surrogate_pooled_text'].detach(),
+                'T_exact_pool': prototype_outputs['exact_pooled_text'].detach(),
+                'T_hat_pool': prototype_outputs['surrogate_pooled_text'].detach(),
                 'Z_v': prototype_outputs['image_projected'].detach(),
                 'Z_v_raw': prototype_outputs['image_projected_raw'].detach(),
-                'Z_t': prototype_outputs['text_projected'].detach(),
-                'Z_t_raw': prototype_outputs['text_projected_raw'].detach(),
+                'Z_t': prototype_outputs['surrogate_text_projected'].detach(),
+                'Z_t_raw': prototype_outputs['surrogate_text_projected_raw'].detach(),
+                'Z_t_exact': prototype_outputs['exact_text_projected'].detach(),
+                'Z_t_exact_raw': prototype_outputs['exact_text_projected_raw'].detach(),
             }
         )
+        for key in ('basis_token_scores', 'basis_token_weights', 'basis_beta_logits_masked', 'image_proxy_logits', 'text_proxy_logits', 'class_proxies'):
+            value = prototype_outputs.get('debug', {}).get(key)
+            if isinstance(value, torch.Tensor):
+                debug[key] = value.detach()
+            elif value is not None:
+                debug[key] = value
         return debug
 
     def named_optimizer_groups(self) -> OrderedDict:
         groups = OrderedDict(
             prototype_bank=[],
             projectors=[],
+            class_proxies=[],
             logit_scale=[],
             image_backbone=[],
             text_backbone=[],
@@ -279,6 +326,8 @@ class PASModel(nn.Module):
                 groups['prototype_bank'].append((name, parameter))
             elif name.startswith('prototype_head.image_projector') or name.startswith('prototype_head.text_projector') or name.startswith('prototype_head.image_adapter') or name.startswith('prototype_head.text_adapter'):
                 groups['projectors'].append((name, parameter))
+            elif name.startswith('prototype_head.losses.class_proxies'):
+                groups['class_proxies'].append((name, parameter))
             elif name.endswith('logit_scale'):
                 groups['logit_scale'].append((name, parameter))
             elif name.startswith('base_model.visual'):
@@ -294,7 +343,7 @@ class PASModel(nn.Module):
         images = batch['images']
         caption_ids = batch['caption_ids']
         if 'pids' not in batch:
-            raise KeyError("PASModel.forward requires batch['pids'] so contrastive training can use identity-aware positives.")
+            raise KeyError("PASModel.forward requires batch['pids'] as class labels for the amortized proxy objective.")
         pids = batch['pids']
         image_output = self.extract_image_features(images)
         text_output = self.extract_text_features(caption_ids)
@@ -313,22 +362,34 @@ class PASModel(nn.Module):
         if not torch.isfinite(losses['loss_total']):
             raise FloatingPointError('loss_total contains NaN or Inf values.')
 
-        logit_scale = losses['logit_scale']
         outputs = {
             'loss_total': losses['loss_total'],
-            'loss_infonce': losses['loss_infonce'],
+            'loss_proxy': losses['loss_proxy'],
+            'loss_proxy_image': losses['loss_proxy_image'],
+            'loss_proxy_text': losses['loss_proxy_text'],
+            'loss_align': losses['loss_align'],
+            'loss_diag': losses['loss_diag'],
             'loss_diversity': losses['loss_diversity'],
             'loss_balance': losses['loss_balance'],
+            'loss_proxy_weighted': losses['loss_proxy_weighted'],
+            'loss_align_weighted': losses['loss_align_weighted'],
+            'loss_diag_weighted': losses['loss_diag_weighted'],
             'loss_diversity_weighted': losses['loss_diversity_weighted'],
             'loss_balance_weighted': losses['loss_balance_weighted'],
+            'lambda_proxy': losses['lambda_proxy'],
+            'lambda_align': losses['lambda_align'],
+            'lambda_diag': losses['lambda_diag'],
             'lambda_div': losses['lambda_div'],
             'lambda_bal': losses['lambda_bal'],
-            'temperature': torch.reciprocal(logit_scale.detach()),
-            'logit_scale': logit_scale.detach(),
+            'proxy_temperature': losses['proxy_temperature'].detach(),
+            'retrieval_temperature': losses['retrieval_temperature'].detach(),
+            'logit_scale': losses['logit_scale'].detach(),
+            'alpha': prototype_outputs['routing_weights'].detach(),
+            'z_v': prototype_outputs['image_projected'],
+            'z_t_hat_diag': prototype_outputs['surrogate_text_projected'],
+            'z_t_exact_diag': prototype_outputs['exact_text_projected'],
             'debug': dict(prototype_outputs.get('metrics', {})),
         }
-        if 'contrastive_logits' in losses:
-            outputs['logits'] = losses['contrastive_logits'].detach()
         if should_return_debug:
             outputs['debug'] = self._build_debug_outputs(image_output, text_output, prototype_outputs)
         return outputs
