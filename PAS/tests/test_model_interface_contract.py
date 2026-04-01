@@ -322,7 +322,12 @@ class ModelInterfaceContractTests(unittest.TestCase):
         self.assertEqual(tuple(debug['Z_v'].shape), (self.batch_size, self.projection_dim))
         self.assertEqual(tuple(debug['Z_t'].shape), (self.batch_size, self.projection_dim))
         self.assertEqual(tuple(debug['Z_t_exact'].shape), (self.batch_size, self.projection_dim))
-        self.assertNotIn((self.batch_size, self.batch_size), {tuple(value.shape[:2]) for value in debug.values() if isinstance(value, torch.Tensor) and value.ndim >= 2})
+        self.assertNotIn('pairwise_similarity', debug)
+        self.assertNotIn('pairwise_text_bank', debug)
+        if 'basis_token_scores' in debug:
+            self.assertEqual(tuple(debug['basis_token_scores'].shape), (self.batch_size, self.num_prototypes, self.seq_len))
+        if 'basis_token_weights' in debug:
+            self.assertEqual(tuple(debug['basis_token_weights'].shape), (self.batch_size, self.num_prototypes, self.seq_len))
 
     def test_named_optimizer_groups_contract_exposes_required_group_names(self):
         model = self._build_model(freeze_image_backbone=False, freeze_text_backbone=False)
