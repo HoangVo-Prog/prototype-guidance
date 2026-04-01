@@ -20,6 +20,11 @@ TRAIN_LOSS_KEYS = (
     'loss_balance_weighted',
 )
 
+WANDB_LOSS_ALIASES = {
+    'loss_proxy_image': 'loss_proxy_image_branch',
+    'loss_proxy_text': 'loss_proxy_text_branch',
+}
+
 DEBUG_METRIC_MAP = {
     'logit_scale': 'debug/logit_scale',
     'proxy_temperature': 'debug/proxy_temperature',
@@ -200,6 +205,9 @@ def build_train_metrics(epoch: int, step: Optional[int], outputs: Dict[str, obje
         metrics['train/step'] = float(step)
     for key, value in collect_loss_metrics(outputs).items():
         metrics[f'train/{key}'] = value
+        alias = WANDB_LOSS_ALIASES.get(key)
+        if alias is not None:
+            metrics[f'train/{alias}'] = value
     metrics.update(collect_debug_metrics(outputs, include_debug_metrics=include_debug_metrics))
     return metrics
 
