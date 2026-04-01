@@ -140,12 +140,19 @@ class PrototypeConditionedTextHead(nn.Module):
 
     def _compute_usage_metrics(self, routing_weights: torch.Tensor) -> Dict[str, torch.Tensor]:
         usage = routing_weights.mean(dim=0)
+        top1_assignments = routing_weights.argmax(dim=-1)
+        top1_histogram = torch.bincount(top1_assignments, minlength=routing_weights.size(1)).to(dtype=routing_weights.dtype)
+        top1_usage = top1_histogram / top1_histogram.sum().clamp_min(1.0)
         return {
             'prototype_usage': usage.detach(),
             'prototype_usage_entropy': (-(usage * usage.clamp_min(1e-12).log()).sum()).detach(),
             'prototype_usage_max': usage.max().detach(),
             'prototype_dead_count': (usage < self.dead_prototype_threshold).sum().detach(),
             'routing_entropy': (-(routing_weights * routing_weights.clamp_min(1e-12).log()).sum(dim=-1).mean()).detach(),
+            'routing_top1_histogram': top1_usage.detach(),
+            'routing_top1_usage_entropy': (-(top1_usage * top1_usage.clamp_min(1e-12).log()).sum()).detach(),
+            'routing_top1_usage_max': top1_usage.max().detach(),
+            'routing_top1_dead_count': (top1_usage == 0).sum().detach(),
         }
 
     def _compute_pairwise_cosine_metrics(self, prefix: str, prototypes: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -185,6 +192,9 @@ class PrototypeConditionedTextHead(nn.Module):
         metrics.update(self._compute_usage_metrics(routing_weights))
         metrics.update(self._compute_pairwise_cosine_metrics('prototype', prototypes))
         metrics.update(self._compute_pairwise_cosine_metrics('contextualized_prototype', contextualized_prototypes))
+        image_embed_norms = image_projector_debug['projected_features_raw'].norm(dim=-1)
+        surrogate_text_embed_norms = surrogate_text_projector_debug['projected_features_raw'].norm(dim=-1)
+        exact_text_embed_norms = exact_text_projector_debug['projected_features_raw'].norm(dim=-1)
         metrics.update(
             {
                 'q_norm': summary.norm(dim=-1).mean().detach(),
@@ -192,10 +202,22 @@ class PrototypeConditionedTextHead(nn.Module):
                 'surrogate_t_pool_norm': surrogate_pooled_text.norm(dim=-1).mean().detach(),
                 'exact_t_pool_norm': exact_pooled_text.norm(dim=-1).mean().detach(),
                 'image_feature_norm': image_features.norm(dim=-1).mean().detach(),
-                'image_embed_norm': image_projector_debug['projected_features_raw'].norm(dim=-1).mean().detach(),
-                'text_embed_norm': surrogate_text_projector_debug['projected_features_raw'].norm(dim=-1).mean().detach(),
-                'surrogate_text_embed_norm': surrogate_text_projector_debug['projected_features_raw'].norm(dim=-1).mean().detach(),
-                'exact_text_embed_norm': exact_text_projector_debug['projected_features_raw'].norm(dim=-1).mean().detach(),
+                'image_embed_norm': image_embed_norms.mean().detach(),
+                'image_embed_norm_std': image_embed_norms.std(unbiased=False).detach(),
+                'image_embed_norm_min': image_embed_norms.min().detach(),
+                'image_embed_norm_max': image_embed_norms.max().detach(),
+                'text_embed_norm': surrogate_text_embed_norms.mean().detach(),
+                'text_embed_norm_std': surrogate_text_embed_norms.std(unbiased=False).detach(),
+                'text_embed_norm_min': surrogate_text_embed_norms.min().detach(),
+                'text_embed_norm_max': surrogate_text_embed_norms.max().detach(),
+                'surrogate_text_embed_norm': surrogate_text_embed_norms.mean().detach(),
+                'surrogate_text_embed_norm_std': surrogate_text_embed_norms.std(unbiased=False).detach(),
+                'surrogate_text_embed_norm_min': surrogate_text_embed_norms.min().detach(),
+                'surrogate_text_embed_norm_max': surrogate_text_embed_norms.max().detach(),
+                'exact_text_embed_norm': exact_text_embed_norms.mean().detach(),
+                'exact_text_embed_norm_std': exact_text_embed_norms.std(unbiased=False).detach(),
+                'exact_text_embed_norm_min': exact_text_embed_norms.min().detach(),
+                'exact_text_embed_norm_max': exact_text_embed_norms.max().detach(),
                 'token_valid_fraction': token_valid_mask.float().mean().detach(),
                 'valid_token_fraction': token_keep_mask.float().mean().detach(),
                 'token_special_mass': self._compute_special_mass(exact_token_weights, special_token_positions).detach(),
@@ -593,6 +615,7 @@ class PrototypeConditionedTextHead(nn.Module):
             routing_weights=image_outputs['routing_weights'],
             return_debug=return_debug,
         )
+        scalar_metrics.update(loss_outputs.get('debug_metrics', {}))
 
         outputs = {
             'image_embedding': image_outputs['image_embedding'],

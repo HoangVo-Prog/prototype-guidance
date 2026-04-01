@@ -21,6 +21,45 @@ def _make_meters():
 
 
 
+def _named_parameters_for_logging(model):
+    if hasattr(model, 'module'):
+        return model.module.named_parameters()
+    return model.named_parameters()
+
+
+
+def _parameter_group_grad_norm(named_parameters, prefixes):
+    total = 0.0
+    for name, parameter in named_parameters:
+        if parameter.grad is None:
+            continue
+        if not any(name.startswith(prefix) for prefix in prefixes):
+            continue
+        grad_norm = parameter.grad.detach().float().norm(2).item()
+        total += grad_norm * grad_norm
+    return total ** 0.5
+
+
+
+def _collect_gradient_metrics(model):
+    named_parameters = list(_named_parameters_for_logging(model))
+    metrics = {
+        'grad_norm_class_proxies': _parameter_group_grad_norm(named_parameters, ('prototype_head.losses.class_proxies',)),
+        'grad_norm_image_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.image_projector', 'prototype_head.image_adapter')),
+        'grad_norm_text_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.text_projector', 'prototype_head.text_adapter')),
+        'grad_norm_prototype_bank': _parameter_group_grad_norm(named_parameters, ('prototype_head.prototype_bank',)),
+    }
+    total = 0.0
+    for _, parameter in named_parameters:
+        if parameter.grad is None:
+            continue
+        grad_norm = parameter.grad.detach().float().norm(2).item()
+        total += grad_norm * grad_norm
+    metrics['grad_norm_total'] = total ** 0.5
+    return metrics
+
+
+
 def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker: ExperimentTracker = None):
     log_period = args.log_period
     eval_period = args.eval_period
@@ -65,13 +104,17 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
 
             if scaler.is_enabled():
                 scaler.scale(total_loss).backward()
+                scaler.unscale_(optimizer)
+                if isinstance(outputs.get('debug'), dict):
+                    outputs['debug'].update(_collect_gradient_metrics(model))
                 if grad_clip > 0:
-                    scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 scaler.step(optimizer)
                 scaler.update()
             else:
                 total_loss.backward()
+                if isinstance(outputs.get('debug'), dict):
+                    outputs['debug'].update(_collect_gradient_metrics(model))
                 if grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                 optimizer.step()

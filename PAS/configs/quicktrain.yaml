@@ -6,7 +6,7 @@
 
 model:
   name: PAS
-  variant: pas_kaggle_quicktrain
+  variant: pas_quicktrain
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
   text_backbone: clip_text_transformer
@@ -58,7 +58,7 @@ text_pooling:
 
 training:
   batch_size: 4
-  epochs: 100
+  epochs: 10
   log_period: 50
   eval_frequency: 1
   save_interval: 1

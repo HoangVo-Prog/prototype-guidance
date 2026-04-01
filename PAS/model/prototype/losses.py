@@ -115,6 +115,35 @@ class PrototypeLosses(nn.Module):
             'logits': logits,
         }
 
+    def _norm_stats(self, prefix: str, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+        norms = tensor.norm(dim=-1)
+        return {
+            f'{prefix}_mean': norms.mean().detach(),
+            f'{prefix}_std': norms.std(unbiased=False).detach(),
+            f'{prefix}_min': norms.min().detach(),
+            f'{prefix}_max': norms.max().detach(),
+        }
+
+    def _proxy_debug_metrics(self, prefix: str, logits: torch.Tensor, pids: torch.Tensor) -> Dict[str, torch.Tensor]:
+        cosines = logits * self.proxy_temperature
+        positive = cosines.gather(1, pids.view(-1, 1)).squeeze(1)
+        negative_mask = torch.ones_like(cosines, dtype=torch.bool)
+        negative_mask.scatter_(1, pids.view(-1, 1), False)
+        hardest_negative = cosines.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+        margin = positive - hardest_negative
+        return {
+            f'{prefix}_proxy_logit_mean': logits.mean().detach(),
+            f'{prefix}_proxy_logit_std': logits.std(unbiased=False).detach(),
+            f'{prefix}_proxy_logit_min': logits.min().detach(),
+            f'{prefix}_proxy_logit_max': logits.max().detach(),
+            f'{prefix}_positive_proxy_cosine_mean': positive.mean().detach(),
+            f'{prefix}_positive_proxy_cosine_std': positive.std(unbiased=False).detach(),
+            f'{prefix}_hardest_negative_proxy_cosine_mean': hardest_negative.mean().detach(),
+            f'{prefix}_hardest_negative_proxy_cosine_std': hardest_negative.std(unbiased=False).detach(),
+            f'{prefix}_proxy_margin_mean': margin.mean().detach(),
+            f'{prefix}_proxy_margin_min': margin.min().detach(),
+        }
+
     def cosine_alignment_loss(self, source_embeddings: torch.Tensor, target_embeddings: torch.Tensor) -> torch.Tensor:
         source_embeddings = F.normalize(source_embeddings, dim=-1)
         target_embeddings = F.normalize(target_embeddings, dim=-1)
@@ -194,6 +223,11 @@ class PrototypeLosses(nn.Module):
             'proxy_temperature': torch.tensor(self.proxy_temperature, device=loss_total.device, dtype=loss_total.dtype),
             'retrieval_temperature': self.get_retrieval_temperature().to(device=loss_total.device, dtype=loss_total.dtype),
             'logit_scale': self.get_logit_scale().to(device=loss_total.device, dtype=loss_total.dtype),
+            'debug_metrics': {
+                **self._proxy_debug_metrics('image', loss_proxy_image_info['logits'], pids),
+                **self._proxy_debug_metrics('text', loss_proxy_text_info['logits'], pids),
+                **self._norm_stats('class_proxy_norm', self.class_proxies.detach()),
+            },
         }
         if return_debug:
             outputs['image_proxy_logits'] = loss_proxy_image_info['logits']
