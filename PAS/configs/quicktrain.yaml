@@ -86,15 +86,15 @@ training:
 
 optimizer:
   type: AdamW
-  lr: 0.001
-  lr_prototype_bank: 0.001
-  lr_projectors: 3.0e-4
-  lr_image_backbone: 2.0e-5
-  lr_text_backbone: 1.0e-5
+  lr: 1.0e-4
+  lr_prototype_bank: 1.0e-4
+  lr_projectors: 3.0e-5
+  lr_image_backbone: 2.0e-6
+  lr_text_backbone: 1.0e-6
   weight_decay: 0.01
   weight_decay_prototype_bank: 0.01
   weight_decay_projectors: 0.05
-  lr_class_proxies: 3.0e-4
+  lr_class_proxies: 3.0e-5
   weight_decay_class_proxies: 0.01
   weight_decay_image_backbone: 0.01
   weight_decay_text_backbone: 0.01
@@ -104,7 +104,7 @@ optimizer:
   milestones: [40, 50]
   gamma: 0.1
   warmup_factor: 0.1
-  warmup_epochs: 1
+  warmup_epochs: 0
   warmup_method: linear
   scheduler: cosine
   target_lr: 0.0
