@@ -34,7 +34,7 @@ prototype:
   prototype_init_path: null
   routing_type: cosine
   routing_temperature: 0.07
-  contextualization_enabled: true
+  contextualization_enabled: false
   contextualization_type: self_attention
   contextualization_residual: true
   normalize_for_self_interaction: true
