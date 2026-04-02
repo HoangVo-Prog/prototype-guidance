@@ -19,12 +19,14 @@ CUDA_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 PROTOTYPE_INITS=(
   normalized_random
   orthogonal_normalized_random
-  sampled_image_embeddings
-  kmeans_centroids
   spherical_kmeans_centroids
   hybrid_spherical_kmeans_random
 )
 
+# Important:
+# Run THIS script with nohup if you want the whole sweep in the background.
+# Do not pass --nohup into train.py here, otherwise each training run will
+# detach immediately and the loop will start the next run right away.
 for prototype_init in "${PROTOTYPE_INITS[@]}"; do
   echo "============================================================"
   echo "Running train.py with --prototype_init ${prototype_init}"
@@ -35,6 +37,8 @@ for prototype_init in "${PROTOTYPE_INITS[@]}"; do
   "${PYTHON_BIN}" train.py \
     --config_file "${CONFIG_FILE}" \
     --prototype_init "${prototype_init}" \
-    --nohup \
     "$@"
+
+  echo "Finished --prototype_init ${prototype_init}"
+  echo
 done
