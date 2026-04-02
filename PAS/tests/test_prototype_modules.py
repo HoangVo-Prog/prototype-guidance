@@ -1,5 +1,6 @@
 import os
 import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
 
@@ -67,6 +68,10 @@ class PrototypeModuleTests(unittest.TestCase):
             normalize_projector_outputs=True,
             prototype_init='normalized_random',
             prototype_init_path=None,
+            prototype_init_hybrid_ratio=0.5,
+            prototype_init_max_iters=50,
+            prototype_init_tol=1e-4,
+            prototype_init_seed=17,
             prototype_routing_type='cosine',
             prototype_temperature=0.07,
             token_scoring_type='cosine',
@@ -106,6 +111,10 @@ class PrototypeModuleTests(unittest.TestCase):
             normalize_projector_outputs=True,
             prototype_init='normalized_random',
             prototype_init_path=None,
+            prototype_init_hybrid_ratio=0.5,
+            prototype_init_max_iters=50,
+            prototype_init_tol=1e-4,
+            prototype_init_seed=17,
             routing_type='cosine',
             routing_temperature=0.07,
             token_scoring_type='cosine',
@@ -143,6 +152,148 @@ class PrototypeModuleTests(unittest.TestCase):
         self.assertIn('raw_prototypes', debug)
         prototypes.sum().backward()
         self.assertIsNotNone(bank.prototypes.grad)
+
+    def _write_tensor_file(self, tensor):
+        handle = tempfile.NamedTemporaryFile(suffix='.pt', delete=False)
+        handle.close()
+        torch.save(tensor, handle.name)
+        self.addCleanup(lambda: os.path.exists(handle.name) and os.remove(handle.name))
+        return handle.name
+
+    def _write_feature_checkpoint(self, payload):
+        handle = tempfile.NamedTemporaryFile(suffix='.pt', delete=False)
+        handle.close()
+        torch.save(payload, handle.name)
+        self.addCleanup(lambda: os.path.exists(handle.name) and os.remove(handle.name))
+        return handle.name
+
+    def _assert_unit_norm_rows(self, tensor, atol=1e-5):
+        self.assertTrue(torch.isfinite(tensor).all())
+        row_norms = tensor.norm(dim=-1)
+        torch.testing.assert_close(row_norms, torch.ones_like(row_norms), atol=atol, rtol=atol)
+
+    def _make_clustered_features(self):
+        centers = torch.tensor(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+        feature_groups = []
+        for center in centers:
+            noise = 0.03 * torch.randn(24, centers.size(1))
+            group = torch.nn.functional.normalize(center.unsqueeze(0) + noise, dim=-1)
+            feature_groups.append(group)
+        features = torch.cat(feature_groups, dim=0)
+        return features, centers
+
+    def test_orthogonal_normalized_random_init_is_deterministic_and_normalized(self):
+        bank_a = PrototypeBank(
+            num_prototypes=6,
+            prototype_dim=self.feature_dim,
+            init_mode='orthogonal_normalized_random',
+            init_seed=123,
+        )
+        bank_b = PrototypeBank(
+            num_prototypes=6,
+            prototype_dim=self.feature_dim,
+            init_mode='orthogonal_normalized_random',
+            init_seed=123,
+        )
+        torch.testing.assert_close(bank_a.get_prototypes(), bank_b.get_prototypes())
+        self._assert_unit_norm_rows(bank_a.get_prototypes())
+        self.assertEqual(bank_a.last_init_diagnostics['cluster_iterations'], 0)
+
+    def test_spherical_kmeans_centroids_matches_synthetic_clusters_and_is_deterministic(self):
+        features, true_centers = self._make_clustered_features()
+        feature_path = self._write_feature_checkpoint({'image_features': features})
+        bank_a = PrototypeBank(
+            num_prototypes=true_centers.size(0),
+            prototype_dim=true_centers.size(1),
+            init_mode='spherical_kmeans_centroids',
+            init_path=feature_path,
+            init_seed=77,
+            init_max_iters=40,
+            init_tol=1e-5,
+        )
+        bank_b = PrototypeBank(
+            num_prototypes=true_centers.size(0),
+            prototype_dim=true_centers.size(1),
+            init_mode='spherical_kmeans_centroids',
+            init_path=feature_path,
+            init_seed=77,
+            init_max_iters=40,
+            init_tol=1e-5,
+        )
+        prototypes = bank_a.get_prototypes()
+        torch.testing.assert_close(prototypes, bank_b.get_prototypes())
+        self._assert_unit_norm_rows(prototypes)
+        cosine_to_true = prototypes @ true_centers.t()
+        best_match = cosine_to_true.max(dim=1).values
+        self.assertTrue(bool(torch.all(best_match > 0.9)))
+        self.assertGreaterEqual(bank_a.last_init_diagnostics['cluster_iterations'], 1)
+        self.assertEqual(bank_a.last_init_diagnostics['feature_count'], features.size(0))
+
+    def test_hybrid_spherical_kmeans_random_combines_data_and_random_components(self):
+        features, _ = self._make_clustered_features()
+        feature_path = self._write_feature_checkpoint({'image_features': features})
+        hybrid_bank = PrototypeBank(
+            num_prototypes=6,
+            prototype_dim=features.size(1),
+            init_mode='hybrid_spherical_kmeans_random',
+            init_path=feature_path,
+            init_seed=91,
+            init_hybrid_ratio=0.5,
+            init_max_iters=40,
+            init_tol=1e-5,
+        )
+        spherical_bank = PrototypeBank(
+            num_prototypes=3,
+            prototype_dim=features.size(1),
+            init_mode='spherical_kmeans_centroids',
+            init_path=feature_path,
+            init_seed=91,
+            init_max_iters=40,
+            init_tol=1e-5,
+        )
+        prototypes = hybrid_bank.get_prototypes()
+        self._assert_unit_norm_rows(prototypes)
+        self.assertEqual(hybrid_bank.last_init_diagnostics['hybrid_data_count'], 3)
+        self.assertEqual(hybrid_bank.last_init_diagnostics['hybrid_random_count'], 3)
+        torch.testing.assert_close(prototypes[:3], spherical_bank.get_prototypes(), atol=1e-5, rtol=1e-5)
+        cosine_between_parts = torch.abs(prototypes[3:] @ prototypes[:3].t())
+        self.assertTrue(bool(torch.all(cosine_between_parts < 0.99)))
+
+    def test_external_init_modes_remain_compatible(self):
+        prototypes = torch.randn(self.num_prototypes, self.feature_dim)
+        path = self._write_tensor_file(prototypes)
+        for init_mode in ('sampled_image_embeddings', 'kmeans_centroids'):
+            bank = PrototypeBank(
+                num_prototypes=self.num_prototypes,
+                prototype_dim=self.feature_dim,
+                init_mode=init_mode,
+                init_path=path,
+            )
+            expected = torch.nn.functional.normalize(prototypes, dim=-1)
+            torch.testing.assert_close(bank.get_prototypes(), expected)
+
+    def test_spherical_kmeans_requires_unambiguous_feature_tensor(self):
+        ambiguous_path = self._write_feature_checkpoint(
+            {
+                'image_features': torch.randn(8, self.feature_dim),
+                'text_features': torch.randn(8, self.feature_dim),
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'Candidate tensor keys/shapes'):
+            PrototypeBank(
+                num_prototypes=3,
+                prototype_dim=self.feature_dim,
+                init_mode='spherical_kmeans_centroids',
+                init_path=ambiguous_path,
+                init_seed=3,
+            )
 
     def test_contextualizer_off_returns_original(self):
         prototypes = torch.randn(self.num_prototypes, self.feature_dim)
@@ -464,3 +615,7 @@ class PrototypeModuleTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+
+
+
+

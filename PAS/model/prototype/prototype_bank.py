@@ -1,14 +1,28 @@
-from typing import Dict, Optional, Tuple
+import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - optional dependency
+    np = None
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
+LOGGER = logging.getLogger(__name__)
+_NORMALIZATION_EPS = 1e-12
+_HYBRID_DUPLICATE_COSINE_THRESHOLD = 0.98
+_HYBRID_DUPLICATE_MAX_ATTEMPTS = 4
+
 INIT_MODE_ALIASES = {
     'normalized_random': 'normalized_random',
     'sampled_image_embeddings': 'external_embeddings',
     'kmeans_centroids': 'external_embeddings',
+    'orthogonal_normalized_random': 'orthogonal_normalized_random',
+    'spherical_kmeans_centroids': 'spherical_kmeans_centroids',
+    'hybrid_spherical_kmeans_random': 'hybrid_spherical_kmeans_random',
 }
 
 
@@ -21,6 +35,10 @@ class PrototypeBank(nn.Module):
         init_path: Optional[str] = None,
         normalize_init: bool = True,
         init_scale: float = 0.02,
+        init_hybrid_ratio: float = 0.5,
+        init_max_iters: int = 50,
+        init_tol: float = 1e-4,
+        init_seed: Optional[int] = None,
     ):
         super().__init__()
         if num_prototypes <= 0:
@@ -37,11 +55,53 @@ class PrototypeBank(nn.Module):
         self.init_path = init_path
         self.normalize_init = bool(normalize_init)
         self.init_scale = float(init_scale)
+        self.init_hybrid_ratio = float(init_hybrid_ratio)
+        self.init_max_iters = int(init_max_iters)
+        self.init_tol = float(init_tol)
+        self.init_seed = None if init_seed is None else int(init_seed)
+        self.last_init_diagnostics: Dict[str, Any] = {}
         self.prototypes = nn.Parameter(torch.empty(self.num_prototypes, self.prototype_dim))
         self.reset_parameters()
 
     def _normalize_rows(self, tensor: torch.Tensor) -> torch.Tensor:
-        return F.normalize(tensor, dim=-1)
+        return F.normalize(tensor, dim=-1, eps=_NORMALIZATION_EPS)
+
+    def _make_generator(self) -> Optional[torch.Generator]:
+        if self.init_seed is None:
+            return None
+        generator = torch.Generator(device='cpu')
+        generator.manual_seed(self.init_seed)
+        return generator
+
+    def _randn(self, shape: Tuple[int, ...], generator: Optional[torch.Generator]) -> torch.Tensor:
+        return torch.randn(shape, dtype=torch.float32, device='cpu', generator=generator)
+
+    def _randint(self, high: int, size: Tuple[int, ...], generator: Optional[torch.Generator]) -> torch.Tensor:
+        return torch.randint(high, size, device='cpu', generator=generator)
+
+    def _stabilize_qr(self, q_matrix: torch.Tensor, r_matrix: torch.Tensor) -> torch.Tensor:
+        diagonal = torch.diagonal(r_matrix, 0)
+        signs = torch.sign(diagonal)
+        signs[signs == 0] = 1
+        return q_matrix * signs.unsqueeze(0)
+
+    def _generate_orthogonal_normalized_random(
+        self,
+        num_rows: int,
+        feature_dim: int,
+        generator: Optional[torch.Generator],
+    ) -> torch.Tensor:
+        if num_rows <= feature_dim:
+            square = self._randn((feature_dim, feature_dim), generator=generator)
+            q_matrix, r_matrix = torch.linalg.qr(square, mode='reduced')
+            q_matrix = self._stabilize_qr(q_matrix, r_matrix)
+            prototypes = q_matrix[:num_rows]
+        else:
+            random_matrix = self._randn((num_rows, feature_dim), generator=generator)
+            q_matrix, r_matrix = torch.linalg.qr(random_matrix, mode='reduced')
+            q_matrix = self._stabilize_qr(q_matrix, r_matrix)
+            prototypes = q_matrix
+        return self._normalize_rows(prototypes)
 
     def _load_external_prototypes(self) -> torch.Tensor:
         if not self.init_path:
@@ -62,18 +122,337 @@ class PrototypeBank(nn.Module):
             )
         return loaded
 
-    def reset_parameters(self) -> None:
-        if self.init_mode == 'external_embeddings':
-            value = self._load_external_prototypes()
-        elif self.init_mode == 'normalized_random':
-            value = torch.randn_like(self.prototypes) * self.init_scale
-        else:
-            raise ValueError(f'Unsupported canonical prototype init mode: {self.init_mode}')
+    def _collect_tensor_candidates(self, payload: Any, prefix: str = '') -> List[Tuple[str, torch.Tensor]]:
+        candidates: List[Tuple[str, torch.Tensor]] = []
+        if torch.is_tensor(payload) or (np is not None and isinstance(payload, np.ndarray)):
+            key = prefix or '<root>'
+            candidates.append((key, torch.as_tensor(payload)))
+            return candidates
+        if isinstance(payload, dict):
+            for key in sorted(payload.keys()):
+                child_prefix = f'{prefix}.{key}' if prefix else str(key)
+                candidates.extend(self._collect_tensor_candidates(payload[key], child_prefix))
+        return candidates
 
-        if self.normalize_init:
-            value = self._normalize_rows(value)
+    def _select_feature_tensor(self, payload: Dict[str, Any]) -> Tuple[str, torch.Tensor]:
+        candidates = self._collect_tensor_candidates(payload)
+        if not candidates:
+            raise ValueError(
+                f'Prototype init mode `{self.requested_init_mode}` expected a tensor or checkpoint with feature tensors '
+                f'at `{self.init_path}`, but found no tensor-like values.'
+            )
+        if len(candidates) == 1:
+            return candidates[0]
+
+        preferred_tokens = ('feature', 'features', 'embedding', 'embeddings', 'vector', 'vectors')
+        preferred = [
+            (key, tensor)
+            for key, tensor in candidates
+            if any(token in key.lower() for token in preferred_tokens)
+        ]
+        if len(preferred) == 1:
+            return preferred[0]
+
+        candidate_summary = ', '.join(f'{key}: {tuple(tensor.shape)}' for key, tensor in candidates)
+        raise ValueError(
+            f'Ambiguous feature checkpoint for prototype init mode `{self.requested_init_mode}` at `{self.init_path}`. '
+            f'Candidate tensor keys/shapes: {candidate_summary}'
+        )
+
+    def _load_feature_matrix(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        if not self.init_path:
+            raise ValueError(
+                f'Prototype init mode `{self.requested_init_mode}` requires `prototype_init_path` '
+                'to point to a feature tensor or feature checkpoint.'
+            )
+        loaded = torch.load(self.init_path, map_location='cpu')
+        feature_key = '<root>'
+        if torch.is_tensor(loaded) or (np is not None and isinstance(loaded, np.ndarray)):
+            features = torch.as_tensor(loaded)
+        elif isinstance(loaded, dict):
+            feature_key, features = self._select_feature_tensor(loaded)
+        else:
+            raise ValueError(
+                f'Prototype init mode `{self.requested_init_mode}` expected a tensor or dict checkpoint at '
+                f'`{self.init_path}`, but found `{type(loaded).__name__}`.'
+            )
+
+        features = torch.as_tensor(features, dtype=torch.float32)
+        if features.ndim == 0:
+            raise ValueError(
+                f'Loaded feature tensor from `{self.init_path}` must have at least one dimension, '
+                f'but got scalar shape {tuple(features.shape)}.'
+            )
+        if features.ndim == 1:
+            features = features.unsqueeze(0)
+        else:
+            features = features.reshape(-1, features.shape[-1])
+        if features.shape[-1] != self.prototype_dim:
+            raise ValueError(
+                f'Loaded features from `{self.init_path}` have feature dim {features.shape[-1]} but '
+                f'expected prototype_dim={self.prototype_dim}.'
+            )
+        if features.shape[0] == 0:
+            raise ValueError(f'Loaded features from `{self.init_path}` are empty after flattening.')
+        if not torch.isfinite(features).all():
+            raise ValueError(f'Loaded features from `{self.init_path}` contain non-finite values.')
+
+        features = self._normalize_rows(features)
+        diagnostics = {
+            'source_path': self.init_path,
+            'feature_key': feature_key,
+            'feature_count': int(features.shape[0]),
+            'feature_dim': int(features.shape[1]),
+        }
+        return features, diagnostics
+
+    def _initialize_spherical_centers(
+        self,
+        features: torch.Tensor,
+        num_centers: int,
+        generator: Optional[torch.Generator],
+    ) -> torch.Tensor:
+        num_samples = features.size(0)
+        first_index = int(self._randint(num_samples, (1,), generator=generator).item())
+        selected_indices = [first_index]
+        best_similarity = features @ features[first_index]
+        for _ in range(1, num_centers):
+            next_index = int(torch.argmin(best_similarity).item())
+            selected_indices.append(next_index)
+            best_similarity = torch.maximum(best_similarity, features @ features[next_index])
+        return features[selected_indices].clone()
+
+    def _select_worst_fit_reseed_index(
+        self,
+        assigned_similarity: torch.Tensor,
+        used_mask: torch.Tensor,
+    ) -> int:
+        candidate_order = torch.argsort(assigned_similarity)
+        for candidate in candidate_order.tolist():
+            if not bool(used_mask[candidate].item()):
+                used_mask[candidate] = True
+                return int(candidate)
+        candidate = int(candidate_order[0].item())
+        used_mask[candidate] = True
+        return candidate
+
+    def _run_spherical_kmeans(
+        self,
+        features: torch.Tensor,
+        num_centers: int,
+        generator: Optional[torch.Generator],
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        if self.init_max_iters <= 0:
+            raise ValueError('prototype_init_max_iters must be positive for spherical prototype initialization.')
+        if self.init_tol < 0:
+            raise ValueError('prototype_init_tol must be non-negative for spherical prototype initialization.')
+
+        centers = self._initialize_spherical_centers(features, num_centers, generator=generator)
+        empty_reseeds = 0
+        iterations = 0
+
+        for iteration in range(1, self.init_max_iters + 1):
+            similarities = features @ centers.t()
+            assignments = similarities.argmax(dim=1)
+            assigned_similarity = similarities.gather(1, assignments.unsqueeze(1)).squeeze(1)
+            previous_centers = centers.clone()
+            updated_centers = torch.empty_like(centers)
+            reseed_used_mask = torch.zeros(features.size(0), dtype=torch.bool, device=features.device)
+
+            for cluster_index in range(num_centers):
+                cluster_mask = assignments.eq(cluster_index)
+                if cluster_mask.any():
+                    candidate_center = features[cluster_mask].mean(dim=0)
+                    if candidate_center.norm(p=2).item() > _NORMALIZATION_EPS:
+                        updated_centers[cluster_index] = self._normalize_rows(candidate_center.unsqueeze(0)).squeeze(0)
+                        continue
+                reseed_index = self._select_worst_fit_reseed_index(assigned_similarity, reseed_used_mask)
+                updated_centers[cluster_index] = features[reseed_index]
+                empty_reseeds += 1
+
+            centers = self._normalize_rows(updated_centers)
+            max_center_change = (centers - previous_centers).norm(dim=-1).max().item()
+            iterations = iteration
+            if max_center_change <= self.init_tol:
+                break
+
+        return centers, {
+            'cluster_iterations': iterations,
+            'empty_cluster_reseeds': empty_reseeds,
+        }
+
+    def _cleanup_hybrid_duplicates(
+        self,
+        prototypes: torch.Tensor,
+        random_start_index: int,
+        generator: Optional[torch.Generator],
+    ) -> Tuple[torch.Tensor, int]:
+        replacements = 0
+        if prototypes.size(0) <= 1 or random_start_index >= prototypes.size(0):
+            return prototypes, replacements
+
+        prototypes = prototypes.clone()
+        for row_index in range(random_start_index, prototypes.size(0)):
+            for _ in range(_HYBRID_DUPLICATE_MAX_ATTEMPTS):
+                similarities = torch.matmul(prototypes[:row_index], prototypes[row_index])
+                if similarities.numel() == 0 or similarities.max().item() <= _HYBRID_DUPLICATE_COSINE_THRESHOLD:
+                    break
+                prototypes[row_index] = self._generate_orthogonal_normalized_random(1, self.prototype_dim, generator).squeeze(0)
+                replacements += 1
+            prototypes[row_index] = self._normalize_rows(prototypes[row_index].unsqueeze(0)).squeeze(0)
+        return prototypes, replacements
+
+    def _build_orthogonal_init(self, generator: Optional[torch.Generator]) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        value = self._generate_orthogonal_normalized_random(
+            self.num_prototypes,
+            self.prototype_dim,
+            generator=generator,
+        )
+        return value, {
+            'source_path': None,
+            'feature_count': None,
+            'feature_dim': self.prototype_dim,
+            'cluster_iterations': 0,
+            'empty_cluster_reseeds': 0,
+        }
+
+    def _build_spherical_kmeans_init(
+        self,
+        generator: Optional[torch.Generator],
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        features, diagnostics = self._load_feature_matrix()
+        centers, clustering_diagnostics = self._run_spherical_kmeans(
+            features,
+            self.num_prototypes,
+            generator=generator,
+        )
+        diagnostics.update(clustering_diagnostics)
+        return centers, diagnostics
+
+    def _build_hybrid_spherical_random_init(
+        self,
+        generator: Optional[torch.Generator],
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        if not 0.0 <= self.init_hybrid_ratio <= 1.0:
+            raise ValueError('prototype_init_hybrid_ratio must be in the range [0, 1].')
+
+        features, diagnostics = self._load_feature_matrix()
+        data_count = int(round(self.num_prototypes * self.init_hybrid_ratio))
+        data_count = max(0, min(self.num_prototypes, data_count))
+        random_count = self.num_prototypes - data_count
+
+        parts: List[torch.Tensor] = []
+        clustering_diagnostics: Dict[str, Any] = {
+            'cluster_iterations': 0,
+            'empty_cluster_reseeds': 0,
+        }
+        if data_count > 0:
+            data_centers, clustering_diagnostics = self._run_spherical_kmeans(
+                features,
+                data_count,
+                generator=generator,
+            )
+            parts.append(data_centers)
+        if random_count > 0:
+            random_rows = self._generate_orthogonal_normalized_random(
+                random_count,
+                self.prototype_dim,
+                generator=generator,
+            )
+            parts.append(random_rows)
+
+        combined = torch.cat(parts, dim=0)
+        combined = self._normalize_rows(combined)
+        combined, cleanup_replacements = self._cleanup_hybrid_duplicates(
+            combined,
+            random_start_index=data_count,
+            generator=generator,
+        )
+        combined = self._normalize_rows(combined)
+
+        diagnostics.update(clustering_diagnostics)
+        diagnostics.update({
+            'hybrid_data_count': data_count,
+            'hybrid_random_count': random_count,
+            'hybrid_cleanup_replacements': cleanup_replacements,
+        })
+        return combined, diagnostics
+
+    def _summarize_initialized_tensor(self, tensor: torch.Tensor) -> Dict[str, float]:
+        tensor = tensor.detach().to(dtype=torch.float32, device='cpu')
+        row_norms = tensor.norm(dim=-1)
+        summary: Dict[str, float] = {
+            'row_norm_min': float(row_norms.min().item()),
+            'row_norm_max': float(row_norms.max().item()),
+            'row_norm_mean': float(row_norms.mean().item()),
+        }
+        if tensor.size(0) <= 1:
+            summary['max_offdiag_cosine'] = 0.0
+            return summary
+        pairwise = tensor @ tensor.t()
+        off_diagonal_mask = ~torch.eye(pairwise.size(0), dtype=torch.bool)
+        summary['max_offdiag_cosine'] = float(pairwise.masked_fill(~off_diagonal_mask, -1.0).max().item())
+        return summary
+
+    def _log_init_diagnostics(self, diagnostics: Dict[str, Any]) -> None:
+        LOGGER.info(
+            'Initialized prototype bank mode=%s source_path=%s feature_count=%s feature_dim=%s '
+            'cluster_iterations=%s empty_cluster_reseeds=%s row_norm_min=%.6f row_norm_mean=%.6f '
+            'row_norm_max=%.6f max_offdiag_cosine=%.6f',
+            self.requested_init_mode,
+            diagnostics.get('source_path'),
+            diagnostics.get('feature_count'),
+            diagnostics.get('feature_dim'),
+            diagnostics.get('cluster_iterations', 0),
+            diagnostics.get('empty_cluster_reseeds', 0),
+            diagnostics['row_norm_min'],
+            diagnostics['row_norm_mean'],
+            diagnostics['row_norm_max'],
+            diagnostics['max_offdiag_cosine'],
+        )
+
+    def reset_parameters(self) -> None:
+        generator = self._make_generator()
+        diagnostics: Dict[str, Any] = {
+            'source_path': self.init_path,
+            'feature_count': None,
+            'feature_dim': self.prototype_dim,
+            'cluster_iterations': 0,
+            'empty_cluster_reseeds': 0,
+        }
         with torch.no_grad():
-            self.prototypes.copy_(value)
+            if self.init_mode == 'external_embeddings':
+                value = self._load_external_prototypes()
+            elif self.init_mode == 'normalized_random':
+                value = torch.randn_like(self.prototypes) * self.init_scale
+            elif self.init_mode == 'orthogonal_normalized_random':
+                value, diagnostics = self._build_orthogonal_init(generator=generator)
+            elif self.init_mode == 'spherical_kmeans_centroids':
+                value, diagnostics = self._build_spherical_kmeans_init(generator=generator)
+            elif self.init_mode == 'hybrid_spherical_kmeans_random':
+                value, diagnostics = self._build_hybrid_spherical_random_init(generator=generator)
+            else:
+                raise ValueError(f'Unsupported canonical prototype init mode: {self.init_mode}')
+
+            force_normalize = self.init_mode in {
+                'orthogonal_normalized_random',
+                'spherical_kmeans_centroids',
+                'hybrid_spherical_kmeans_random',
+            }
+            if force_normalize:
+                value = self._normalize_rows(value.to(dtype=torch.float32))
+            elif self.normalize_init:
+                value = self._normalize_rows(value)
+            if force_normalize and not torch.isfinite(value).all():
+                raise ValueError(f'Prototype init mode `{self.requested_init_mode}` produced non-finite values.')
+
+            summary = self._summarize_initialized_tensor(value)
+            diagnostics.update(summary)
+            self.last_init_diagnostics = diagnostics
+            if force_normalize:
+                self._log_init_diagnostics(diagnostics)
+
+            self.prototypes.copy_(value.to(dtype=self.prototypes.dtype))
 
     def get_prototypes(self) -> torch.Tensor:
         return self.prototypes
@@ -87,5 +466,10 @@ class PrototypeBank(nn.Module):
             'prototype_init_mode': self.requested_init_mode,
             'prototype_norm_mean': prototypes.norm(dim=-1).mean().detach(),
             'prototype_norm_std': prototypes.norm(dim=-1).std(unbiased=False).detach(),
+            'prototype_init_diagnostics': dict(self.last_init_diagnostics),
         }
         return prototypes, debug
+
+
+
+

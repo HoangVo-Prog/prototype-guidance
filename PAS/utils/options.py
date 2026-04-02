@@ -64,6 +64,10 @@ def build_parser():
     parser.add_argument('--prototype_dim', type=int, default=512)
     parser.add_argument('--prototype_init', type=str, default='normalized_random')
     parser.add_argument('--prototype_init_path', type=str, default='')
+    parser.add_argument('--prototype_init_hybrid_ratio', type=float, default=0.5)
+    parser.add_argument('--prototype_init_max_iters', type=int, default=50)
+    parser.add_argument('--prototype_init_tol', type=float, default=1e-4)
+    parser.add_argument('--prototype_init_seed', type=int, default=None)
     parser.add_argument('--routing_similarity', '--prototype_routing_type', dest='prototype_routing_type', type=str, default='cosine')
     parser.add_argument('--tau_p', '--prototype_temperature', dest='prototype_temperature', type=float, default=0.07)
     parser.add_argument('--prototype_contextualization_enabled', type=_str2bool, nargs='?', const=True, default=None)
@@ -209,4 +213,5 @@ def get_args(argv=None):
     args = _finalize_args(args)
     validate_runtime_args_namespace(args)
     return args
+
 

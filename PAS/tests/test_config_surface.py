@@ -108,6 +108,30 @@ class ConfigSurfaceTests(unittest.TestCase):
         args = get_args(['--nohup'])
         self.assertTrue(args.nohup)
 
+    def test_new_prototype_init_surface_loads(self):
+        path = self._write_config(
+            {
+                'experiment': {
+                    'seed': 19,
+                },
+                'prototype': {
+                    'prototype_init': 'hybrid_spherical_kmeans_random',
+                    'prototype_init_path': '/path/to/features.pt',
+                    'prototype_init_hybrid_ratio': 0.25,
+                    'prototype_init_max_iters': 11,
+                    'prototype_init_tol': 5e-4,
+                    'prototype_init_seed': 13,
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertEqual(args.prototype_init, 'hybrid_spherical_kmeans_random')
+        self.assertEqual(args.prototype_init_path, '/path/to/features.pt')
+        self.assertEqual(args.prototype_init_hybrid_ratio, 0.25)
+        self.assertEqual(args.prototype_init_max_iters, 11)
+        self.assertEqual(args.prototype_init_tol, 5e-4)
+        self.assertEqual(args.prototype_init_seed, 13)
+
     def test_valid_runtime_surface_loads_special_token_ids_precision_and_amp_knobs(self):
         path = self._write_config(
             {
@@ -120,8 +144,18 @@ class ConfigSurfaceTests(unittest.TestCase):
                 'prototype': {
                     'normalize_for_self_interaction': True,
                     'normalize_for_routing': True,
+                },
+                'loss': {
                     'use_balancing_loss': True,
                     'balance_loss_weight': 0.1,
+                    'use_diversity_loss': True,
+                    'diversity_loss_weight': 0.01,
+                    'lambda_proxy': 1.0,
+                    'use_loss_proxy_image': True,
+                    'use_loss_proxy_text': True,
+                    'use_loss_proxy_text_exact': True,
+                    'lambda_align': 0.5,
+                    'lambda_diag': 0.25,
                 },
                 'text_pooling': {
                     'token_policy': 'content_only',
@@ -139,9 +173,6 @@ class ConfigSurfaceTests(unittest.TestCase):
                     'amp': True,
                     'amp_dtype': 'bf16',
                     'proxy_temperature': 0.2,
-                    'lambda_proxy': 1.0,
-                    'lambda_align': 0.5,
-                    'lambda_diag': 0.25,
                 },
                 'optimizer': {
                     'lr_class_proxies': 0.003,
@@ -173,6 +204,35 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertEqual(args.lr_class_proxies, 0.003)
         self.assertEqual(args.weight_decay_class_proxies, 0.02)
         self.assertEqual(args.retrieval_scorer, 'approximate')
+
+    def test_legacy_split_loss_config_still_loads_for_backward_compat(self):
+        path = self._write_config(
+            {
+                'prototype': {
+                    'use_balancing_loss': True,
+                    'balance_loss_weight': 0.1,
+                    'use_diversity_loss': False,
+                    'diversity_loss_weight': 0.0,
+                },
+                'training': {
+                    'lambda_proxy': 1.25,
+                    'use_loss_proxy_image': True,
+                    'use_loss_proxy_text': False,
+                    'use_loss_proxy_text_exact': True,
+                    'lambda_align': 0.2,
+                    'lambda_diag': 0.3,
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertTrue(args.use_balancing_loss)
+        self.assertEqual(args.prototype_balance_loss_weight, 0.1)
+        self.assertFalse(args.use_diversity_loss)
+        self.assertEqual(args.diversity_loss_weight, 0.0)
+        self.assertEqual(args.lambda_proxy, 1.25)
+        self.assertFalse(args.use_loss_proxy_text)
+        self.assertEqual(args.lambda_align, 0.2)
+        self.assertEqual(args.lambda_diag, 0.3)
 
     def test_authoritative_contextualization_flag_overrides_legacy_alias(self):
         path = self._write_config(
@@ -214,3 +274,4 @@ class ConfigSurfaceTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+

@@ -1,4 +1,4 @@
-﻿experiment:
+experiment:
   name: debug_pas_v1
   output_dir: runs
   seed: 7
@@ -39,11 +39,18 @@ prototype:
   contextualization_residual: true
   normalize_for_self_interaction: true
   normalize_for_routing: true
+  dead_prototype_threshold: 0.005
+
+loss:
   use_diversity_loss: true
   diversity_loss_weight: 0.01
   use_balancing_loss: false
   balance_loss_weight: 0.0
-  dead_prototype_threshold: 0.005
+  use_loss_proxy_image: true
+  use_loss_proxy_text: true
+  lambda_proxy: 1.0
+  lambda_align: 1.0
+  lambda_diag: 1.0
 
 text_pooling:
   token_policy: content_only
@@ -78,11 +85,6 @@ training:
   amp: false
   amp_dtype: fp16
   proxy_temperature: 0.07
-  use_loss_proxy_image: true
-  use_loss_proxy_text: true
-  lambda_proxy: 1.0
-  lambda_align: 1.0
-  lambda_diag: 1.0
 
 optimizer:
   type: AdamW

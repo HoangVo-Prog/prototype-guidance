@@ -1,4 +1,4 @@
-﻿from .head import PrototypeConditionedTextHead
+from .head import PrototypeConditionedTextHead
 
 
 def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeConditionedTextHead:
@@ -10,6 +10,9 @@ def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeCon
     token_temperature = getattr(args, 'tau_t', getattr(args, 'token_pooling_temperature', 0.07))
     diversity_loss_weight = getattr(args, 'lambda_div', getattr(args, 'diversity_loss_weight', 0.01))
     balance_loss_weight = getattr(args, 'lambda_bal', getattr(args, 'prototype_balance_loss_weight', 0.0))
+    prototype_init_seed = getattr(args, 'prototype_init_seed', None)
+    if prototype_init_seed is None:
+        prototype_init_seed = getattr(args, 'seed', None)
     use_balancing_loss = bool(getattr(args, 'use_balancing_loss', False))
     if use_balancing_loss and balance_loss_weight <= 0.0:
         raise ValueError('use_balancing_loss=true requires lambda_bal / balance_loss_weight to be positive.')
@@ -25,6 +28,10 @@ def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeCon
         projector_type=getattr(args, 'projector_type', 'mlp2'),
         prototype_init=getattr(args, 'prototype_init', 'normalized_random'),
         prototype_init_path=getattr(args, 'prototype_init_path', None),
+        prototype_init_hybrid_ratio=getattr(args, 'prototype_init_hybrid_ratio', 0.5),
+        prototype_init_max_iters=getattr(args, 'prototype_init_max_iters', 50),
+        prototype_init_tol=getattr(args, 'prototype_init_tol', 1e-4),
+        prototype_init_seed=prototype_init_seed,
         routing_type=routing_type,
         routing_temperature=routing_temperature,
         token_scoring_type=token_scoring_type,
@@ -55,3 +62,5 @@ def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeCon
         learnable_contrastive_temperature=False,
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
     )
+
+

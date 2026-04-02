@@ -1,4 +1,4 @@
-﻿experiment:
+experiment:
   name: kaggle_pas_quicktrain
   output_dir: runs
   seed: 11
@@ -32,6 +32,10 @@ prototype:
   prototype_dim: 512
   prototype_init: normalized_random
   prototype_init_path: null
+  prototype_init_hybrid_ratio: 0.5
+  prototype_init_max_iters: 50
+  prototype_init_tol: 1.0e-4
+  prototype_init_seed: null
   routing_type: cosine
   routing_temperature: 0.07
   contextualization_enabled: true
@@ -140,4 +144,3 @@ evaluation:
   prototype_image_chunk_size: 8
   prototype_text_chunk_size: 16
   retrieval_scorer: exact
-

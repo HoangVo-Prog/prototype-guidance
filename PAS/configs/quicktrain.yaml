@@ -1,4 +1,4 @@
-﻿experiment:
+experiment:
   name: kaggle_pas_quicktrain
   output_dir: runs
   seed: 11
@@ -39,11 +39,19 @@ prototype:
   contextualization_residual: true
   normalize_for_self_interaction: true
   normalize_for_routing: true
+  dead_prototype_threshold: 0.005
+
+loss:
   use_diversity_loss: true
   diversity_loss_weight: 0.01
   use_balancing_loss: true
   balance_loss_weight: 0.001
-  dead_prototype_threshold: 0.005
+  use_loss_proxy_image: true
+  use_loss_proxy_text: false
+  use_loss_proxy_text_exact: true
+  lambda_proxy: 1.0
+  lambda_align: 0.25
+  lambda_diag: 0.25
 
 text_pooling:
   token_policy: content_only
@@ -78,12 +86,6 @@ training:
   amp: false
   amp_dtype: fp16
   proxy_temperature: 0.1
-  use_loss_proxy_image: true
-  use_loss_proxy_text: false
-  use_loss_proxy_text_exact: true
-  lambda_proxy: 1.0
-  lambda_align: 0.25
-  lambda_diag: 0.25
 
 optimizer:
   type: AdamW

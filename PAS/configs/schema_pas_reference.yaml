@@ -124,10 +124,28 @@ prototype:
   # - normalized_random       -> random Gaussian then row-normalized
   # - sampled_image_embeddings -> load from prototype_init_path
   # - kmeans_centroids         -> load from prototype_init_path
+  # - orthogonal_normalized_random -> QR-based semi-orthogonal rows then row-normalized
+  # - spherical_kmeans_centroids   -> spherical k-means over normalized features from prototype_init_path
+  # - hybrid_spherical_kmeans_random -> spherical centers plus orthogonal random rows
   prototype_init: normalized_random
 
-  # null or path to a .pt/.pth tensor/checkpoint used by sampled_image_embeddings or kmeans_centroids.
+  # null or path to a .pt/.pth tensor/checkpoint used by sampled_image_embeddings, kmeans_centroids,
+  # spherical_kmeans_centroids, or hybrid_spherical_kmeans_random.
   prototype_init_path: null
+
+  # Ratio used only by hybrid_spherical_kmeans_random.
+  # K_data = round(num_prototypes * prototype_init_hybrid_ratio), K_rand = K - K_data.
+  prototype_init_hybrid_ratio: 0.5
+
+  # Maximum spherical k-means iterations used only by spherical/hybrid init modes.
+  prototype_init_max_iters: 50
+
+  # Spherical k-means convergence tolerance used only by spherical/hybrid init modes.
+  prototype_init_tol: 1.0e-4
+
+  # Optional deterministic seed for new prototype init modes.
+  # null falls back to experiment.seed.
+  prototype_init_seed: null
 
   # Supported routing values:
   # - cosine
@@ -459,4 +477,7 @@ evaluation:
   # Retrieval scorer used by Evaluator. Supported values: exact | approximate.
   # Default exact preserves deployed pairwise pooling.
   retrieval_scorer: exact
+
+
+
 

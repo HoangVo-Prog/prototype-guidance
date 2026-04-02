@@ -1,4 +1,4 @@
-﻿from typing import Dict, Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -26,6 +26,10 @@ class PrototypeConditionedTextHead(nn.Module):
         projector_type: str = 'mlp2',
         prototype_init: str = 'normalized_random',
         prototype_init_path: Optional[str] = None,
+        prototype_init_hybrid_ratio: float = 0.5,
+        prototype_init_max_iters: int = 50,
+        prototype_init_tol: float = 1e-4,
+        prototype_init_seed: Optional[int] = None,
         routing_type: str = 'cosine',
         routing_temperature: float = 0.07,
         token_scoring_type: str = 'cosine',
@@ -71,6 +75,10 @@ class PrototypeConditionedTextHead(nn.Module):
             init_mode=prototype_init,
             init_path=prototype_init_path,
             normalize_init=normalize_for_self_interaction,
+            init_hybrid_ratio=prototype_init_hybrid_ratio,
+            init_max_iters=prototype_init_max_iters,
+            init_tol=prototype_init_tol,
+            init_seed=prototype_init_seed,
         )
         self.contextualizer = PrototypeContextualizer(
             enabled=contextualization_enabled,
@@ -714,3 +722,5 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
+
+
