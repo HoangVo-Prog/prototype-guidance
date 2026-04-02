@@ -47,16 +47,17 @@ prototype:
 
 loss:
   use_diversity_loss: false
-  diversity_loss_weight: 0.01
+  diversity_loss_weight: 0.0
   use_balancing_loss: false
-  balance_loss_weight: 0.01
+  balance_loss_weight: 0.0
   use_loss_proxy_image: true
   use_loss_proxy_text: true
   use_loss_proxy_text_exact: false
   lambda_proxy: 1.0
+  use_loss_align: true
   lambda_align: 1.0
+  use_loss_diag: true
   lambda_diag: 1.0
-
 
 text_pooling:
   token_policy: content_only

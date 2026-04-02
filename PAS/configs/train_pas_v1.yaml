@@ -49,7 +49,9 @@ loss:
   use_loss_proxy_image: true
   use_loss_proxy_text: true
   lambda_proxy: 1.0
+  use_loss_align: true
   lambda_align: 1.0
+  use_loss_diag: true
   lambda_diag: 1.0
 
 text_pooling:

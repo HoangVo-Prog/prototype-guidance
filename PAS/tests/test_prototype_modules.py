@@ -87,7 +87,9 @@ class PrototypeModuleTests(unittest.TestCase):
             proxy_temperature=0.2,
             lambda_proxy=1.0,
             use_loss_proxy_text_exact=True,
+            use_loss_align=True,
             lambda_align=0.5,
+            use_loss_diag=True,
             lambda_diag=0.25,
             use_diversity_loss=True,
             diversity_loss_weight=0.05,
@@ -132,7 +134,9 @@ class PrototypeModuleTests(unittest.TestCase):
             proxy_temperature=0.2,
             lambda_proxy=1.0,
             use_loss_proxy_text_exact=True,
+            use_loss_align=True,
             lambda_align=0.5,
+            use_loss_diag=True,
             lambda_diag=0.25,
             use_diversity_loss=True,
             diversity_loss_weight=0.05,
@@ -451,6 +455,29 @@ class PrototypeModuleTests(unittest.TestCase):
         self.assertIsNotNone(image_embeddings.grad)
         self.assertIsNotNone(exact_embeddings.grad)
 
+
+    def test_loss_module_align_and_diag_can_be_disabled_explicitly(self):
+        losses = PrototypeLosses(
+            temperature_init=0.07,
+            normalize_embeddings=True,
+            num_classes=self.num_classes,
+            embedding_dim=4,
+            proxy_temperature=0.2,
+            use_loss_align=False,
+            lambda_align=0.5,
+            use_loss_diag=False,
+            lambda_diag=0.25,
+        )
+        outputs = losses(
+            torch.randn(self.batch_size, 4),
+            torch.randn(self.batch_size, 4),
+            torch.randn(self.batch_size, 4),
+            pids=torch.tensor([0, 1, 2]),
+        )
+        self.assertEqual(outputs['loss_align'].item(), 0.0)
+        self.assertEqual(outputs['loss_diag'].item(), 0.0)
+        self.assertEqual(outputs['loss_align_weighted'].item(), 0.0)
+        self.assertEqual(outputs['loss_diag_weighted'].item(), 0.0)
 
     def test_loss_module_exact_proxy_can_be_disabled_to_restore_detached_anchor_behavior(self):
         losses = PrototypeLosses(

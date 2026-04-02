@@ -18,7 +18,9 @@ class PrototypeLosses(nn.Module):
         use_loss_proxy_image: bool = True,
         use_loss_proxy_text: bool = True,
         use_loss_proxy_text_exact: bool = True,
+        use_loss_align: bool = True,
         lambda_align: float = 1.0,
+        use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
         use_diversity_loss: bool = False,
         diversity_loss_weight: float = 0.0,
@@ -49,7 +51,9 @@ class PrototypeLosses(nn.Module):
         self.use_loss_proxy_image = bool(use_loss_proxy_image)
         self.use_loss_proxy_text = bool(use_loss_proxy_text)
         self.use_loss_proxy_text_exact = bool(use_loss_proxy_text_exact)
+        self.use_loss_align = bool(use_loss_align)
         self.lambda_align = float(lambda_align)
+        self.use_loss_diag = bool(use_loss_diag)
         self.lambda_diag = float(lambda_diag)
         self.proxy_temperature = float(proxy_temperature)
         self.num_classes = int(num_classes)
@@ -60,7 +64,7 @@ class PrototypeLosses(nn.Module):
         if self.use_balance_loss and self.lambda_bal <= 0.0:
             raise ValueError('use_balance_loss requires lambda_bal to be positive.')
 
-        if not any((self.use_loss_proxy_image, self.use_loss_proxy_text, self.use_loss_proxy_text_exact, self.lambda_align > 0.0, self.lambda_diag > 0.0)):
+        if not any((self.use_loss_proxy_image, self.use_loss_proxy_text, self.use_loss_proxy_text_exact, self.use_loss_align, self.use_loss_diag)):
             raise ValueError('At least one task-supervised loss must remain enabled so the training objective does not collapse to prototype-only regularization.')
 
         initial_logit_scale = torch.log(torch.tensor(1.0 / temperature_init, dtype=torch.float32))
@@ -214,8 +218,8 @@ class PrototypeLosses(nn.Module):
         loss_proxy_text = loss_proxy_text_info['loss'] if self.use_loss_proxy_text else zero
         loss_proxy_text_exact = loss_proxy_text_exact_info['loss'] if self.use_loss_proxy_text_exact else zero
         loss_proxy = loss_proxy_image + loss_proxy_text + loss_proxy_text_exact
-        loss_align = self.cosine_alignment_loss(image_embeddings, surrogate_text_embeddings)
-        loss_diag = self.diagonal_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings)
+        loss_align = self.cosine_alignment_loss(image_embeddings, surrogate_text_embeddings) if self.use_loss_align else zero
+        loss_diag = self.diagonal_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings) if self.use_loss_diag else zero
         loss_diversity = self.diversity_loss(prototypes)
         loss_balance = self.balance_loss(routing_weights)
         loss_total = (
@@ -244,7 +248,9 @@ class PrototypeLosses(nn.Module):
             'use_loss_proxy_image': torch.tensor(float(self.use_loss_proxy_image), device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_proxy_text': torch.tensor(float(self.use_loss_proxy_text), device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_proxy_text_exact': torch.tensor(float(self.use_loss_proxy_text_exact), device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_align': torch.tensor(float(self.use_loss_align), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_align': torch.tensor(self.lambda_align, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_diag': torch.tensor(float(self.use_loss_diag), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_diag': torch.tensor(self.lambda_diag, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_div': torch.tensor(self.lambda_div, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_bal': torch.tensor(self.lambda_bal, device=loss_total.device, dtype=loss_total.dtype),

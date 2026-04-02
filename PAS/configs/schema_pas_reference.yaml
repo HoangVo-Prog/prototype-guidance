@@ -195,8 +195,14 @@ loss:
   use_loss_proxy_text: true
   use_loss_proxy_text_exact: true
 
+  # Explicit toggle for the image-vs-surrogate alignment term.
+  use_loss_align: true
+
   # Image / surrogate-text cosine alignment weight.
   lambda_align: 1.0
+
+  # Explicit toggle for the surrogate-vs-exact diagonal fidelity term.
+  use_loss_diag: true
 
   # Diagonal surrogate-vs-exact fidelity weight.
   lambda_diag: 1.0

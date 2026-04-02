@@ -154,7 +154,9 @@ class ConfigSurfaceTests(unittest.TestCase):
                     'use_loss_proxy_image': True,
                     'use_loss_proxy_text': True,
                     'use_loss_proxy_text_exact': True,
+                    'use_loss_align': False,
                     'lambda_align': 0.5,
+                    'use_loss_diag': False,
                     'lambda_diag': 0.25,
                 },
                 'text_pooling': {
@@ -199,11 +201,18 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertEqual(args.amp_dtype, 'bf16')
         self.assertEqual(args.proxy_temperature, 0.2)
         self.assertEqual(args.lambda_proxy, 1.0)
+        self.assertFalse(args.use_loss_align)
         self.assertEqual(args.lambda_align, 0.5)
+        self.assertFalse(args.use_loss_diag)
         self.assertEqual(args.lambda_diag, 0.25)
         self.assertEqual(args.lr_class_proxies, 0.003)
         self.assertEqual(args.weight_decay_class_proxies, 0.02)
         self.assertEqual(args.retrieval_scorer, 'approximate')
+
+    def test_new_align_and_diag_disable_flags_parse_from_cli(self):
+        args = get_args(['--use_loss_align', 'false', '--use_loss_diag', 'false'])
+        self.assertFalse(args.use_loss_align)
+        self.assertFalse(args.use_loss_diag)
 
     def test_legacy_split_loss_config_still_loads_for_backward_compat(self):
         path = self._write_config(
