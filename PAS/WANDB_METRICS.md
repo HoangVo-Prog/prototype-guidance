@@ -1,0 +1,225 @@
+# W&B Metrics Reference
+
+This document describes the metrics that PAS sends to Weights & Biases during training and evaluation.
+
+The logging path is implemented in:
+- `utils/experiment.py`
+- `utils/metric_logging.py`
+- `processor/processor.py`
+- `utils/metrics.py`
+- `model/prototype/head.py`
+- `model/prototype/losses.py`
+
+## Logging Behavior
+
+### Metric namespaces
+- `train/*`: training metrics.
+- `debug/*`: per-batch diagnostic metrics.
+- `val/*`: validation and retrieval metrics.
+
+### X-axes in W&B
+- `train/*` uses `train/step` as the step axis.
+- `debug/*` uses `train/step` as the step axis.
+- `val/*` uses `val/epoch` as the step axis.
+
+### When metrics are logged
+- Training metrics are logged every `wandb_log_interval` steps.
+- Training metrics are also logged once at the end of each epoch.
+- Validation metrics are logged every evaluation epoch.
+
+### Important runtime toggles
+- `logging.use_wandb=true`: enables W&B.
+- `logging.log_debug_metrics=true`: enables the `debug/*` metrics below.
+- `evaluation.retrieval_metrics`: controls which retrieval metrics appear under `val/pas/*`.
+
+### Notes on interpretation
+- `train/*` and `debug/*` are computed from the current batch at log time, not as epoch averages.
+- Some losses can be intentionally zero if their corresponding loss branch is disabled.
+- Prototype-bank initialization diagnostics are logged to the Python logger, not to W&B.
+
+## Always Logged Training Metrics
+
+### Core schedule metrics
+- `train/epoch`: current training epoch.
+- `train/step`: global optimization step.
+- `train/lr`: learning rate used for the logged step.
+
+### Total and component losses
+- `train/loss_total`: full optimized objective.
+- `train/loss_proxy`: sum of all enabled proxy-classification losses.
+- `train/loss_proxy_image`: proxy loss on the image embedding branch.
+- `train/loss_proxy_text`: proxy loss on the surrogate text branch.
+- `train/loss_proxy_text_exact`: proxy loss on the exact pooled text branch.
+- `train/loss_align`: cosine-alignment loss between image and surrogate text embeddings.
+- `train/loss_diag`: diagonal fidelity loss between surrogate and exact text embeddings.
+- `train/loss_diversity`: prototype diversity regularizer.
+- `train/loss_balance`: routing-usage balance regularizer.
+
+### Weighted objective terms
+- `train/loss_proxy_weighted`: `lambda_proxy * loss_proxy`.
+- `train/loss_align_weighted`: `lambda_align * loss_align`.
+- `train/loss_diag_weighted`: `lambda_diag * loss_diag`.
+- `train/loss_diversity_weighted`: `lambda_div * loss_diversity`.
+- `train/loss_balance_weighted`: `lambda_bal * loss_balance`.
+
+## Debug Metrics
+
+These are logged only when `logging.log_debug_metrics=true`.
+
+### Temperatures and retrieval scaling
+- `debug/logit_scale`: multiplicative retrieval scale used for exact similarity scoring.
+- `debug/proxy_temperature`: temperature used for proxy-classification logits.
+- `debug/retrieval_temperature`: reciprocal of `logit_scale`, shown as the effective retrieval temperature.
+
+### Embedding and pooled-feature norms
+- `debug/q_norm`: norm of the prototype summary vector `Q` used for token scoring.
+- `debug/t_pool_norm`: norm of the surrogate pooled text feature.
+- `debug/surrogate_t_pool_norm`: same surrogate pooled-text norm, logged under a more explicit name.
+- `debug/exact_t_pool_norm`: norm of the exact pooled text feature.
+- `debug/image_feature_norm`: norm of the image feature entering the image projector.
+- `debug/image_embed_norm`: mean norm of raw projected image embeddings before optional output normalization.
+- `debug/image_embed_norm_raw`: same quantity as `debug/image_embed_norm`.
+- `debug/image_embed_unit_norm`: mean norm of the final image embeddings after projector normalization.
+- `debug/image_embed_norm_std`: standard deviation of raw image embedding norms.
+- `debug/image_embed_norm_min`: minimum raw image embedding norm in the logged batch.
+- `debug/image_embed_norm_max`: maximum raw image embedding norm in the logged batch.
+- `debug/text_embed_norm`: mean norm of surrogate text embeddings before optional output normalization.
+- `debug/text_embed_norm_raw`: same quantity as `debug/text_embed_norm`.
+- `debug/text_embed_unit_norm`: mean norm of final surrogate text embeddings after projector normalization.
+- `debug/text_embed_norm_std`: standard deviation of surrogate text embedding norms.
+- `debug/text_embed_norm_min`: minimum surrogate text embedding norm.
+- `debug/text_embed_norm_max`: maximum surrogate text embedding norm.
+- `debug/surrogate_text_embed_norm`: mean norm of surrogate text projector outputs before normalization.
+- `debug/surrogate_text_embed_norm_raw`: same quantity as `debug/surrogate_text_embed_norm`.
+- `debug/surrogate_text_embed_unit_norm`: mean norm of final surrogate text embeddings after normalization.
+- `debug/surrogate_text_embed_norm_std`: standard deviation of surrogate text embedding norms.
+- `debug/surrogate_text_embed_norm_min`: minimum surrogate text embedding norm.
+- `debug/surrogate_text_embed_norm_max`: maximum surrogate text embedding norm.
+- `debug/exact_text_embed_norm`: mean norm of exact text embeddings before normalization.
+- `debug/exact_text_embed_norm_raw`: same quantity as `debug/exact_text_embed_norm`.
+- `debug/exact_text_embed_unit_norm`: mean norm of final exact text embeddings after normalization.
+- `debug/exact_text_embed_norm_std`: standard deviation of exact text embedding norms.
+- `debug/exact_text_embed_norm_min`: minimum exact text embedding norm.
+- `debug/exact_text_embed_norm_max`: maximum exact text embedding norm.
+
+### Routing and prototype-usage behavior
+- `debug/prototype_usage_entropy`: entropy of average prototype usage over the batch. Higher means usage is more evenly spread.
+- `debug/prototype_usage_max`: largest mean routing weight assigned to any prototype.
+- `debug/prototype_dead_count`: number of prototypes whose mean usage falls below `prototype.dead_prototype_threshold`.
+- `debug/routing_entropy`: mean entropy of per-sample routing distributions.
+- `debug/routing_max_prob`: mean top routing probability across samples.
+- `debug/routing_top1_usage_entropy`: entropy of the histogram of top-1 routed prototypes.
+- `debug/routing_top1_usage_max`: largest top-1 assignment fraction for any prototype.
+- `debug/routing_top1_dead_count`: number of prototypes that were never selected as top-1 in the batch.
+- `debug/prototype_assignment_entropy`: mean entropy of routing assignments, as reported by the router.
+- `debug/routing_effective_support`: exponentiated routing entropy, interpretable as the effective number of active prototypes per sample.
+
+### Prototype geometry and contextualization
+- `debug/prototype_pairwise_cosine_mean`: mean off-diagonal cosine similarity among base prototypes.
+- `debug/prototype_pairwise_cosine_std`: standard deviation of off-diagonal cosine similarity among base prototypes.
+- `debug/prototype_pairwise_cosine_max`: maximum off-diagonal cosine similarity among base prototypes.
+- `debug/contextualized_prototype_pairwise_cosine_mean`: mean off-diagonal cosine similarity among contextualized prototypes.
+- `debug/contextualized_prototype_pairwise_cosine_std`: standard deviation of off-diagonal cosine similarity among contextualized prototypes.
+- `debug/contextualized_prototype_pairwise_cosine_max`: maximum off-diagonal cosine similarity among contextualized prototypes.
+- `debug/prototype_contextualization_entropy`: entropy of the prototype contextualization attention weights. Higher means contextualization is more diffuse.
+
+### Token-pooling diagnostics
+- `debug/token_pool_entropy`: entropy of token weights used by the exact text pooler.
+- `debug/beta_max_prob`: mean maximum token weight assigned by the exact text pooler.
+- `debug/token_special_mass`: average total attention mass assigned to special tokens such as CLS and EOS.
+- `debug/token_valid_fraction`: fraction of token positions that are valid before keep-policy filtering.
+- `debug/valid_token_fraction`: fraction of token positions that remain after the keep-policy mask.
+
+### Proxy-logit diagnostics
+
+These describe the class-proxy supervision branches. “Positive” means the ground-truth class proxy. “Hardest negative” means the non-ground-truth proxy with highest cosine score.
+
+#### Image proxy branch
+- `debug/image_proxy_logit_mean`: mean image proxy logit.
+- `debug/image_proxy_logit_std`: standard deviation of image proxy logits.
+- `debug/image_proxy_logit_min`: minimum image proxy logit.
+- `debug/image_proxy_logit_max`: maximum image proxy logit.
+- `debug/image_positive_proxy_cosine_mean`: mean cosine similarity between image embeddings and their correct class proxy.
+- `debug/image_positive_proxy_cosine_std`: standard deviation of positive image-proxy cosine similarity.
+- `debug/image_hardest_negative_proxy_cosine_mean`: mean cosine similarity to the hardest negative proxy for image embeddings.
+- `debug/image_hardest_negative_proxy_cosine_std`: standard deviation of hardest-negative image-proxy cosine similarity.
+- `debug/image_proxy_margin_mean`: mean positive-minus-hardest-negative margin for image embeddings.
+- `debug/image_proxy_margin_min`: minimum positive-minus-hardest-negative margin for image embeddings.
+
+#### Surrogate text proxy branch
+- `debug/text_proxy_logit_mean`: mean surrogate-text proxy logit.
+- `debug/text_proxy_logit_std`: standard deviation of surrogate-text proxy logits.
+- `debug/text_proxy_logit_min`: minimum surrogate-text proxy logit.
+- `debug/text_proxy_logit_max`: maximum surrogate-text proxy logit.
+- `debug/text_positive_proxy_cosine_mean`: mean cosine similarity between surrogate text embeddings and their correct class proxy.
+- `debug/text_positive_proxy_cosine_std`: standard deviation of positive surrogate-text proxy cosine similarity.
+- `debug/text_hardest_negative_proxy_cosine_mean`: mean cosine similarity to the hardest negative proxy for surrogate text embeddings.
+- `debug/text_hardest_negative_proxy_cosine_std`: standard deviation of hardest-negative surrogate-text proxy cosine similarity.
+- `debug/text_proxy_margin_mean`: mean positive-minus-hardest-negative margin for surrogate text embeddings.
+- `debug/text_proxy_margin_min`: minimum positive-minus-hardest-negative margin for surrogate text embeddings.
+
+#### Exact text proxy branch
+- `debug/text_exact_proxy_logit_mean`: mean exact-text proxy logit.
+- `debug/text_exact_proxy_logit_std`: standard deviation of exact-text proxy logits.
+- `debug/text_exact_proxy_logit_min`: minimum exact-text proxy logit.
+- `debug/text_exact_proxy_logit_max`: maximum exact-text proxy logit.
+- `debug/text_exact_positive_proxy_cosine_mean`: mean cosine similarity between exact text embeddings and their correct class proxy.
+- `debug/text_exact_positive_proxy_cosine_std`: standard deviation of positive exact-text proxy cosine similarity.
+- `debug/text_exact_hardest_negative_proxy_cosine_mean`: mean cosine similarity to the hardest negative proxy for exact text embeddings.
+- `debug/text_exact_hardest_negative_proxy_cosine_std`: standard deviation of hardest-negative exact-text proxy cosine similarity.
+- `debug/text_exact_proxy_margin_mean`: mean positive-minus-hardest-negative margin for exact text embeddings.
+- `debug/text_exact_proxy_margin_min`: minimum positive-minus-hardest-negative margin for exact text embeddings.
+
+### Class-proxy parameter norms
+- `debug/class_proxy_norm_mean`: mean L2 norm of raw class-proxy parameters.
+- `debug/class_proxy_norm_std`: standard deviation of raw class-proxy norms.
+- `debug/class_proxy_norm_min`: minimum raw class-proxy norm.
+- `debug/class_proxy_norm_max`: maximum raw class-proxy norm.
+- `debug/class_proxy_norm_normalized_mean`: mean norm after explicit L2 normalization of class proxies.
+- `debug/class_proxy_norm_normalized_std`: standard deviation of normalized class-proxy norms.
+- `debug/class_proxy_norm_normalized_min`: minimum normalized class-proxy norm.
+- `debug/class_proxy_norm_normalized_max`: maximum normalized class-proxy norm.
+
+### Gradient-norm diagnostics
+- `debug/grad_norm_class_proxies`: gradient norm of the class-proxy parameters.
+- `debug/grad_norm_image_projector`: gradient norm of the image projector and image adapter.
+- `debug/grad_norm_text_projector`: gradient norm of the text projector and text adapter.
+- `debug/grad_norm_prototype_bank`: gradient norm of the prototype-bank parameters.
+- `debug/grad_norm_image_backbone`: gradient norm of the image backbone.
+- `debug/grad_norm_text_backbone`: gradient norm of the text backbone.
+- `debug/grad_norm_image_projected_output`: gradient norm observed at the image projected output tensor.
+- `debug/grad_norm_surrogate_text_projected_output`: gradient norm observed at the surrogate text projected output tensor.
+- `debug/grad_norm_exact_text_projected_output`: gradient norm observed at the exact text projected output tensor.
+- `debug/grad_norm_total`: total gradient norm across all parameters.
+
+## Validation Metrics
+
+These are logged during evaluation.
+
+- `val/epoch`: epoch at which validation was run.
+- `val/top1`: alias for `R1`, used as the primary model-selection metric.
+- `val/pas/R1`: rank-1 retrieval accuracy.
+- `val/pas/R5`: rank-5 retrieval accuracy.
+- `val/pas/R10`: rank-10 retrieval accuracy.
+- `val/pas/mAP`: mean average precision for retrieval.
+- `val/pas/mINP`: mean inverse negative penalty.
+- `val/pas/rSum`: `R1 + R5 + R10`.
+
+The `val/pas/*` metrics that appear depend on `evaluation.retrieval_metrics`. By default the repo requests all six.
+
+## Metrics Not Currently Sent to W&B
+
+These exist in code or helper interfaces but are not currently emitted as time-series W&B metrics in the normal training path:
+- prototype initialization diagnostics such as init mode, source path, clustering iterations, empty-cluster reseeds, and row-norm summaries
+- `val/loss_total` in `build_validation_metrics(...)`, because validation currently logs evaluator metrics only and does not pass a validation loss
+- full tensors such as routing weights, token weights, similarity matrices, basis banks, token masks, and logits arrays
+
+## Quick Reading Guide
+
+If you want a compact subset to watch first, start with:
+- optimization: `train/loss_total`, `train/lr`
+- retrieval quality: `val/top1`, `val/pas/mAP`, `val/pas/rSum`
+- routing health: `debug/prototype_usage_entropy`, `debug/prototype_dead_count`, `debug/routing_effective_support`
+- geometry health: `debug/prototype_pairwise_cosine_max`, `debug/contextualized_prototype_pairwise_cosine_max`
+- token pooling: `debug/token_pool_entropy`, `debug/token_special_mass`
+- optimization stability: `debug/grad_norm_total`, `debug/logit_scale`

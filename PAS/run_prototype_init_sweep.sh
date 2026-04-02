@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+if [ -f .env ]; then
+  set -a
+  . ./.env
+  set +a
+fi
+
+PYTHON_BIN="${PYTHON_BIN:-python}"
+CONFIG_FILE="${CONFIG_FILE:-configs/stage1/prototype_init.yaml}"
+CUDA_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+
+# Edit this list to choose which prototype initialization modes to run.
+PROTOTYPE_INITS=(
+  normalized_random
+  orthogonal_normalized_random
+  sampled_image_embeddings
+  kmeans_centroids
+  spherical_kmeans_centroids
+  hybrid_spherical_kmeans_random
+)
+
+for prototype_init in "${PROTOTYPE_INITS[@]}"; do
+  echo "============================================================"
+  echo "Running train.py with --prototype_init ${prototype_init}"
+  echo "Config: ${CONFIG_FILE}"
+  echo "============================================================"
+
+  CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" \
+  "${PYTHON_BIN}" train.py \
+    --config_file "${CONFIG_FILE}" \
+    --prototype_init "${prototype_init}" \
+    --nohup \
+    "$@"
+done
