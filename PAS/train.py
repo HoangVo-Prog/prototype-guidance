@@ -1,7 +1,7 @@
 import os
 import os.path as op
 import random
-import time
+import sys
 import warnings
 
 import numpy as np
@@ -16,6 +16,7 @@ from utils.comm import get_rank, synchronize
 from utils.env import load_runtime_environment
 from utils.experiment import ExperimentTracker
 from utils.iotools import save_train_configs
+from utils.launch import build_nohup_log_path, build_run_name, get_effective_wandb_run_name, launch_with_nohup
 from utils.logger import setup_logger
 from utils.metrics import Evaluator
 from utils.options import get_args
@@ -33,15 +34,24 @@ def set_seed(seed=1):
     torch.backends.cudnn.benchmark = True
 
 
-def _build_run_name(args):
-    timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
-    base_name = getattr(args, 'name', None) or getattr(args, 'model_variant', 'pas_v1')
-    return f'{timestamp}_{base_name}'
-
-
 if __name__ == '__main__':
     load_runtime_environment()
     args = get_args()
+    args.run_name = build_run_name(args)
+    if not args.wandb_run_name:
+        args.wandb_run_name = args.run_name
+
+    if args.nohup:
+        log_path = build_nohup_log_path(args)
+        pid = launch_with_nohup(
+            sys.argv,
+            log_path,
+            run_name_override=args.run_name,
+            cwd=os.getcwd(),
+        )
+        print(f'Launched PAS training in background with PID {pid}. Log: {log_path}')
+        raise SystemExit(0)
+
     set_seed(args.seed + get_rank())
 
     num_gpus = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
@@ -53,11 +63,11 @@ if __name__ == '__main__':
         synchronize()
 
     device = args.device
-    args.run_name = _build_run_name(args)
     args.output_dir = op.join(args.output_dir, args.dataset_name, args.run_name)
 
     logger = setup_logger('pas', save_dir=args.output_dir, if_train=args.training, distributed_rank=get_rank())
     logger.info('Using %s GPUs', num_gpus)
+    logger.info('W&B/log run name: %s', get_effective_wandb_run_name(args))
     logger.info(str(args).replace(',', '\n'))
 
     save_train_configs(args.output_dir, args)
@@ -103,8 +113,3 @@ if __name__ == '__main__':
         do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker=experiment_tracker)
     finally:
         experiment_tracker.finish()
-
-
-
-
-

@@ -147,6 +147,7 @@ def build_parser():
     parser.add_argument('--wandb_project', default='PAS')
     parser.add_argument('--wandb_entity', default=None)
     parser.add_argument('--wandb_run_name', default=None)
+    parser.add_argument('--nohup', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--wandb_group', default=None)
     parser.add_argument('--wandb_mode', default='online')
     parser.add_argument('--wandb_tags', nargs='*', default=[])

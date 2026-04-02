@@ -104,6 +104,10 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertEqual(args.wandb_project, 'from_cli')
         self.assertEqual(args.projection_dim, 128)
 
+    def test_nohup_flag_parses_from_cli(self):
+        args = get_args(['--nohup'])
+        self.assertTrue(args.nohup)
+
     def test_valid_runtime_surface_loads_special_token_ids_precision_and_amp_knobs(self):
         path = self._write_config(
             {
