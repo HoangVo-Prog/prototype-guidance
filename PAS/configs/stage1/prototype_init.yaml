@@ -76,7 +76,7 @@ text_pooling:
 training:
   batch_size: 4
   epochs: 10
-  log_period: 50
+  log_period: 100
   eval_frequency: 1
   save_interval: 1
   resume: false

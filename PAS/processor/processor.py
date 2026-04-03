@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
-from utils.metric_logging import TRACKED_SCALAR_KEYS, build_train_metrics, build_validation_metrics, collect_scalar_metrics
+from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_train_metrics, build_validation_metrics, collect_scalar_metrics
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
 from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
@@ -105,6 +105,8 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
     best_top1 = 0.0
     current_steps = 0
     best_epoch = start_epoch
+    log_debug_metrics = bool(getattr(args, 'log_debug_metrics', True))
+    coverage_tracker = RoutingCoverageTracker() if log_debug_metrics else None
 
     for epoch in range(start_epoch, num_epoch + 1):
         start_time = time.time()
@@ -140,7 +142,14 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 optimizer.step()
             synchronize()
 
-            scalar_metrics = collect_scalar_metrics(outputs, include_debug_metrics=getattr(args, 'log_debug_metrics', True))
+            if coverage_tracker is not None:
+                if not isinstance(outputs.get('debug'), dict):
+                    outputs['debug'] = {}
+                # Cross-batch coverage uses the existing routing weights and never feeds back into training.
+                coverage_tracker.update(outputs['alpha'])
+                outputs['debug'].update(coverage_tracker.get_debug_metrics())
+
+            scalar_metrics = collect_scalar_metrics(outputs, include_debug_metrics=log_debug_metrics)
             batch_size = batch['images'].shape[0]
             for key, meter in meters.items():
                 value = scalar_metrics.get(key)
@@ -154,7 +163,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                         current_steps,
                         outputs,
                         scheduler.get_lr()[0],
-                        include_debug_metrics=getattr(args, 'log_debug_metrics', True),
+                        include_debug_metrics=log_debug_metrics,
                     )
                 )
 
@@ -171,6 +180,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
             if meter.count > 0:
                 tb_writer.add_scalar(key, meter.avg, epoch)
 
+        epoch_coverage_metrics = coverage_tracker.flush_epoch_metrics(epoch) if coverage_tracker is not None else None
         if experiment_tracker is not None and get_rank() == 0:
             experiment_tracker.log(
                 build_train_metrics(
@@ -178,9 +188,13 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                     current_steps,
                     outputs,
                     scheduler.get_lr()[0],
-                    include_debug_metrics=getattr(args, 'log_debug_metrics', True),
+                    include_debug_metrics=log_debug_metrics,
                 )
             )
+            if epoch_coverage_metrics is not None:
+                experiment_tracker.log(epoch_coverage_metrics)
+        if coverage_tracker is not None:
+            coverage_tracker.reset_epoch()
 
         scheduler.step()
         if get_rank() == 0:
@@ -228,3 +242,5 @@ def do_inference(model, test_img_loader, test_txt_loader, args):
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
+
+

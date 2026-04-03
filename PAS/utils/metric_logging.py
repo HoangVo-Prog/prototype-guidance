@@ -1,4 +1,5 @@
-from typing import Dict, Iterable, Optional
+from collections import deque
+from typing import Deque, Dict, Iterable, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -52,6 +53,14 @@ DEBUG_METRIC_MAP = {
     'routing_top1_usage_entropy': 'debug/routing_top1_usage_entropy',
     'routing_top1_usage_max': 'debug/routing_top1_usage_max',
     'routing_top1_dead_count': 'debug/routing_top1_dead_count',
+    'routing_top1_active_count_window_100': 'debug/routing_top1_active_count_window_100',
+    'routing_top1_active_count_window_500': 'debug/routing_top1_active_count_window_500',
+    'routing_top1_dead_count_window_100': 'debug/routing_top1_dead_count_window_100',
+    'routing_top1_dead_count_window_500': 'debug/routing_top1_dead_count_window_500',
+    'routing_top1_usage_entropy_window_100': 'debug/routing_top1_usage_entropy_window_100',
+    'routing_top1_usage_entropy_window_500': 'debug/routing_top1_usage_entropy_window_500',
+    'routing_top1_usage_max_window_100': 'debug/routing_top1_usage_max_window_100',
+    'routing_top1_usage_max_window_500': 'debug/routing_top1_usage_max_window_500',
     'prototype_assignment_entropy': 'debug/prototype_assignment_entropy',
     'routing_effective_support': 'debug/routing_effective_support',
     'routing_effective_support_ipr': 'debug/routing_effective_support_ipr',
@@ -74,6 +83,14 @@ DEBUG_METRIC_MAP = {
     'loss_diag_top4': 'debug/loss_diag_top4',
     'prototype_active_count_eps_1e-3': 'debug/prototype_active_count_eps_1e-3',
     'prototype_active_count_eps_1e-2': 'debug/prototype_active_count_eps_1e-2',
+    'prototype_active_count_eps_1e-3_window_100': 'debug/prototype_active_count_eps_1e-3_window_100',
+    'prototype_active_count_eps_1e-3_window_500': 'debug/prototype_active_count_eps_1e-3_window_500',
+    'prototype_active_count_eps_1e-2_window_100': 'debug/prototype_active_count_eps_1e-2_window_100',
+    'prototype_active_count_eps_1e-2_window_500': 'debug/prototype_active_count_eps_1e-2_window_500',
+    'prototype_usage_entropy_window_100': 'debug/prototype_usage_entropy_window_100',
+    'prototype_usage_entropy_window_500': 'debug/prototype_usage_entropy_window_500',
+    'prototype_usage_max_window_100': 'debug/prototype_usage_max_window_100',
+    'prototype_usage_max_window_500': 'debug/prototype_usage_max_window_500',
     'image_proxy_logit_mean': 'debug/image_proxy_logit_mean',
     'image_proxy_logit_std': 'debug/image_proxy_logit_std',
     'image_proxy_logit_min': 'debug/image_proxy_logit_min',
@@ -195,6 +212,145 @@ DEBUG_SKIP_KEYS = {
 }
 
 TRACKED_SCALAR_KEYS = TRAIN_LOSS_KEYS + tuple(sorted(set(DEBUG_METRIC_MAP.keys())))
+
+
+class RoutingCoverageTracker:
+    """Tracks rolling routing coverage and epoch summaries for logging only."""
+
+    def __init__(
+        self,
+        window_sizes: Tuple[int, ...] = (100, 500),
+        activity_epsilons: Tuple[float, ...] = (1e-3, 1e-2),
+    ):
+        self.window_sizes = tuple(int(size) for size in window_sizes)
+        self.activity_epsilons = tuple(float(epsilon) for epsilon in activity_epsilons)
+        self.num_prototypes: Optional[int] = None
+        self._top1_windows: Dict[int, Deque[torch.Tensor]] = {size: deque() for size in self.window_sizes}
+        self._mean_usage_windows: Dict[int, Deque[torch.Tensor]] = {size: deque() for size in self.window_sizes}
+        self._top1_window_sums: Dict[int, Optional[torch.Tensor]] = {size: None for size in self.window_sizes}
+        self._mean_usage_window_sums: Dict[int, Optional[torch.Tensor]] = {size: None for size in self.window_sizes}
+        self._epoch_top1_counts: Optional[torch.Tensor] = None
+        self._epoch_mean_usage_sum: Optional[torch.Tensor] = None
+        self._epoch_top3_seen: Optional[torch.Tensor] = None
+        self._epoch_batch_count = 0
+
+    @staticmethod
+    def _epsilon_label(epsilon: float) -> str:
+        return format(epsilon, '.0e').replace('e-0', 'e-').replace('e+0', 'e+')
+
+    def _ensure_initialized(self, num_prototypes: int) -> None:
+        if self.num_prototypes is None:
+            self.num_prototypes = int(num_prototypes)
+            for size in self.window_sizes:
+                self._top1_window_sums[size] = torch.zeros(self.num_prototypes, dtype=torch.float32)
+                self._mean_usage_window_sums[size] = torch.zeros(self.num_prototypes, dtype=torch.float32)
+            self.reset_epoch()
+            return
+        if self.num_prototypes != int(num_prototypes):
+            raise ValueError(
+                f'RoutingCoverageTracker expected {self.num_prototypes} prototypes but received {num_prototypes}.'
+            )
+
+    def reset_epoch(self) -> None:
+        if self.num_prototypes is None:
+            self._epoch_top1_counts = None
+            self._epoch_mean_usage_sum = None
+            self._epoch_top3_seen = None
+            self._epoch_batch_count = 0
+            return
+        self._epoch_top1_counts = torch.zeros(self.num_prototypes, dtype=torch.float32)
+        self._epoch_mean_usage_sum = torch.zeros(self.num_prototypes, dtype=torch.float32)
+        self._epoch_top3_seen = torch.zeros(self.num_prototypes, dtype=torch.bool)
+        self._epoch_batch_count = 0
+
+    def _update_window(self, window: Deque[torch.Tensor], window_sum: torch.Tensor, value: torch.Tensor, size: int) -> None:
+        if len(window) == size:
+            window_sum.sub_(window.popleft())
+        window.append(value)
+        window_sum.add_(value)
+
+    def update(self, alpha: torch.Tensor) -> None:
+        if not isinstance(alpha, torch.Tensor) or alpha.ndim != 2:
+            raise ValueError('RoutingCoverageTracker.update expects alpha with shape [B, N].')
+
+        detached_alpha = alpha.detach().float()
+        num_prototypes = detached_alpha.size(1)
+        self._ensure_initialized(num_prototypes)
+
+        top1_assignments = detached_alpha.argmax(dim=-1)
+        top1_histogram = torch.bincount(top1_assignments, minlength=num_prototypes).to(dtype=torch.float32).cpu()
+        mean_usage = detached_alpha.mean(dim=0).to(dtype=torch.float32).cpu()
+        topk = min(3, num_prototypes)
+        topk_indices = torch.topk(detached_alpha, k=topk, dim=-1).indices.reshape(-1).cpu().unique()
+
+        for size in self.window_sizes:
+            self._update_window(self._top1_windows[size], self._top1_window_sums[size], top1_histogram.clone(), size)
+            self._update_window(self._mean_usage_windows[size], self._mean_usage_window_sums[size], mean_usage.clone(), size)
+
+        self._epoch_top1_counts.add_(top1_histogram)
+        self._epoch_mean_usage_sum.add_(mean_usage)
+        self._epoch_top3_seen[topk_indices] = True
+        self._epoch_batch_count += 1
+
+    @staticmethod
+    def _normalized_distribution(values: torch.Tensor) -> torch.Tensor:
+        return values / values.sum().clamp_min(1e-12)
+
+    @classmethod
+    def _distribution_entropy(cls, values: torch.Tensor) -> float:
+        probabilities = cls._normalized_distribution(values)
+        return float((-(probabilities * probabilities.clamp_min(1e-12).log()).sum()).item())
+
+    @classmethod
+    def _distribution_max(cls, values: torch.Tensor) -> float:
+        probabilities = cls._normalized_distribution(values)
+        return float(probabilities.max().item())
+
+    def get_debug_metrics(self) -> Dict[str, float]:
+        if self.num_prototypes is None:
+            return {}
+
+        metrics = {}
+        for size in self.window_sizes:
+            # Windowed top-1 coverage shows whether sparse winners rotate across recent batches.
+            top1_sum = self._top1_window_sums[size]
+            active_count = float((top1_sum > 0).sum().item())
+            metrics[f'routing_top1_active_count_window_{size}'] = active_count
+            metrics[f'routing_top1_dead_count_window_{size}'] = float(self.num_prototypes - active_count)
+            metrics[f'routing_top1_usage_entropy_window_{size}'] = self._distribution_entropy(top1_sum)
+            metrics[f'routing_top1_usage_max_window_{size}'] = self._distribution_max(top1_sum)
+
+            # Windowed mean-usage coverage catches diffuse cross-batch activity beyond top-1 winners.
+            window_length = max(len(self._mean_usage_windows[size]), 1)
+            mean_usage = self._mean_usage_window_sums[size] / float(window_length)
+            metrics[f'prototype_usage_entropy_window_{size}'] = self._distribution_entropy(mean_usage)
+            metrics[f'prototype_usage_max_window_{size}'] = self._distribution_max(mean_usage)
+            for epsilon in self.activity_epsilons:
+                epsilon_label = self._epsilon_label(epsilon)
+                metrics[f'prototype_active_count_eps_{epsilon_label}_window_{size}'] = float((mean_usage > epsilon).sum().item())
+        return metrics
+
+    def flush_epoch_metrics(self, epoch: int) -> Dict[str, float]:
+        metrics = {'train_epoch/epoch': float(epoch)}
+        if self.num_prototypes is None or self._epoch_batch_count == 0:
+            return metrics
+
+        # Epoch winner coverage separates rotating sparse usage from persistent hub collapse.
+        active_count = float((self._epoch_top1_counts > 0).sum().item())
+        metrics['train_epoch/routing_top1_active_count'] = active_count
+        metrics['train_epoch/routing_top1_dead_count'] = float(self.num_prototypes - active_count)
+        metrics['train_epoch/routing_top1_usage_entropy'] = self._distribution_entropy(self._epoch_top1_counts)
+        metrics['train_epoch/routing_top1_usage_max'] = self._distribution_max(self._epoch_top1_counts)
+
+        # Epoch-averaged usage summarizes how much of the prototype bank stayed active overall.
+        epoch_mean_usage = self._epoch_mean_usage_sum / float(self._epoch_batch_count)
+        metrics['train_epoch/prototype_usage_entropy'] = self._distribution_entropy(epoch_mean_usage)
+        metrics['train_epoch/prototype_usage_max'] = self._distribution_max(epoch_mean_usage)
+        for epsilon in self.activity_epsilons:
+            epsilon_label = self._epsilon_label(epsilon)
+            metrics[f'train_epoch/prototype_active_count_eps_{epsilon_label}'] = float((epoch_mean_usage > epsilon).sum().item())
+        metrics['train_epoch/routing_top3_active_count'] = float(self._epoch_top3_seen.sum().item())
+        return metrics
 
 
 def to_scalar(value):
