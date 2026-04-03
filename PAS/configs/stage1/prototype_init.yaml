@@ -74,7 +74,7 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 4
+  batch_size: 256
   epochs: 10
   log_period: 100
   eval_frequency: 1
@@ -147,7 +147,7 @@ evaluation:
   cross_domain_generalization: false
   target_domain: RSTPReid
   retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
-  batch_size: 64
+  batch_size: 512
   prototype_image_chunk_size: 8
   prototype_text_chunk_size: 16
   retrieval_scorer: exact
