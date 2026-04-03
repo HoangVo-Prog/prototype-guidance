@@ -2,6 +2,7 @@ from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .aggregator import PrototypeAggregator
 from .contextualizer import PrototypeContextualizer
@@ -171,18 +172,71 @@ class PrototypeConditionedTextHead(nn.Module):
         top1_assignments = routing_weights.argmax(dim=-1)
         top1_histogram = torch.bincount(top1_assignments, minlength=routing_weights.size(1)).to(dtype=routing_weights.dtype)
         top1_usage = top1_histogram / top1_histogram.sum().clamp_min(1.0)
+        support_ipr = torch.reciprocal(routing_weights.pow(2).sum(dim=-1).clamp_min(1e-12)).float()
+        top_values = torch.topk(routing_weights, k=min(4, routing_weights.size(1)), dim=-1).values
+        top1_values = top_values[:, 0]
+        top2_values = top_values[:, 1] if top_values.size(1) > 1 else torch.zeros_like(top1_values)
+        support_quantiles = torch.quantile(
+            support_ipr,
+            torch.tensor([0.1, 0.5, 0.9], device=support_ipr.device, dtype=support_ipr.dtype),
+        )
         return {
             'prototype_usage': usage.detach(),
             'prototype_usage_entropy': (-(usage * usage.clamp_min(1e-12).log()).sum()).detach(),
             'prototype_usage_max': usage.max().detach(),
             'prototype_dead_count': (usage < self.dead_prototype_threshold).sum().detach(),
             'routing_entropy': (-(routing_weights * routing_weights.clamp_min(1e-12).log()).sum(dim=-1).mean()).detach(),
-            'routing_effective_support_ipr': torch.reciprocal(routing_weights.pow(2).sum(dim=-1).clamp_min(1e-12)).mean().detach(),
+            'routing_effective_support_ipr': support_ipr.mean().detach(),
+            'routing_effective_support_ipr_p10': support_quantiles[0].detach(),
+            'routing_effective_support_ipr_p50': support_quantiles[1].detach(),
+            'routing_effective_support_ipr_p90': support_quantiles[2].detach(),
+            'routing_support_below_2_frac': (support_ipr < 2.0).float().mean().detach(),
+            'routing_support_below_3_frac': (support_ipr < 3.0).float().mean().detach(),
+            'routing_support_below_min_frac': (support_ipr < self.losses.support_min).float().mean().detach(),
+            # These summarize whether routing is truly mixed or mostly top-1 plus residual mass.
+            'routing_top1_minus_top2': (top1_values - top2_values).mean().detach(),
+            'routing_top2_mass': top_values[:, :min(2, top_values.size(1))].sum(dim=-1).mean().detach(),
+            'routing_top4_mass': top_values.sum(dim=-1).mean().detach(),
             'routing_top1_histogram': top1_usage.detach(),
             'routing_top1_usage_entropy': (-(top1_usage * top1_usage.clamp_min(1e-12).log()).sum()).detach(),
             'routing_top1_usage_max': top1_usage.max().detach(),
             'routing_top1_dead_count': (top1_usage == 0).sum().detach(),
+            'prototype_active_count_eps_1e-3': (usage > 1e-3).sum().detach(),
+            'prototype_active_count_eps_1e-2': (usage > 1e-2).sum().detach(),
         }
+
+    def _truncate_routing_weights(self, routing_weights: torch.Tensor, k: int) -> torch.Tensor:
+        keep_count = min(max(int(k), 1), routing_weights.size(1))
+        topk_values, topk_indices = torch.topk(routing_weights, k=keep_count, dim=-1)
+        truncated = torch.zeros_like(routing_weights)
+        truncated.scatter_(1, topk_indices, topk_values)
+        return truncated / truncated.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+
+    def _mean_diagonal_cosine(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> torch.Tensor:
+        surrogate_normalized = F.normalize(surrogate_embeddings, dim=-1)
+        exact_normalized = F.normalize(exact_embeddings, dim=-1)
+        return (surrogate_normalized * exact_normalized).sum(dim=-1).mean()
+
+    def _compute_routing_certification_metrics(
+        self,
+        routing_weights: torch.Tensor,
+        basis_bank: torch.Tensor,
+        surrogate_text_projected: torch.Tensor,
+        exact_text_projected: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        metrics = {}
+        with torch.no_grad():
+            # Re-run surrogate reconstruction under truncated top-k routing to verify that
+            # diagonal fidelity depends on a genuine mixture rather than only a softened lookup.
+            metrics['diag_cos_full'] = self._mean_diagonal_cosine(surrogate_text_projected, exact_text_projected).detach()
+            metrics['loss_diag_full'] = self.losses.diagonal_fidelity_loss(surrogate_text_projected, exact_text_projected).detach()
+            for k in (1, 2, 4):
+                truncated_routing = self._truncate_routing_weights(routing_weights.detach(), k=k)
+                truncated_pooled_text = self.reconstruct_surrogate_text(truncated_routing, basis_bank.detach())
+                truncated_projected = self.text_projector(truncated_pooled_text)
+                metrics[f'diag_cos_top{k}'] = self._mean_diagonal_cosine(truncated_projected, exact_text_projected.detach()).detach()
+                metrics[f'loss_diag_top{k}'] = self.losses.diagonal_fidelity_loss(truncated_projected, exact_text_projected.detach()).detach()
+        return metrics
 
     def _compute_pairwise_cosine_metrics(self, prefix: str, prototypes: torch.Tensor) -> Dict[str, torch.Tensor]:
         normalized = torch.nn.functional.normalize(prototypes, dim=-1)
@@ -647,6 +701,14 @@ class PrototypeConditionedTextHead(nn.Module):
             contextualizer_debug=context.get('contextualizer_debug'),
             router_debug=image_outputs['router_debug'],
             pooler_debug=exact_outputs['pooler_debug'],
+        )
+        scalar_metrics.update(
+            self._compute_routing_certification_metrics(
+                routing_weights=image_outputs['routing_weights'],
+                basis_bank=basis_outputs['basis_bank'],
+                surrogate_text_projected=surrogate_text_projected,
+                exact_text_projected=exact_outputs['text_projected'],
+            )
         )
         loss_outputs = self.losses(
             image_outputs['image_projected'],

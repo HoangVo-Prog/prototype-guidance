@@ -116,6 +116,27 @@ These are logged only when `logging.log_debug_metrics=true`.
 - `debug/prototype_assignment_entropy`: mean entropy of routing assignments, as reported by the router.
 - `debug/routing_effective_support`: exponentiated routing entropy, interpretable as the effective number of active prototypes per sample.
 - `debug/routing_effective_support_ipr`: inverse-participation-ratio effective support, matching the `L_support` definition.
+- `debug/routing_effective_support_ipr_p10`: 10th percentile of inverse-participation-ratio support across the batch.
+- `debug/routing_effective_support_ipr_p50`: median inverse-participation-ratio support across the batch.
+- `debug/routing_effective_support_ipr_p90`: 90th percentile of inverse-participation-ratio support across the batch.
+- `debug/routing_support_below_2_frac`: fraction of samples whose IPR support is below 2.
+- `debug/routing_support_below_3_frac`: fraction of samples whose IPR support is below 3.
+- `debug/routing_support_below_min_frac`: fraction of samples whose IPR support is below the configured `support_min`.
+- `debug/routing_top1_minus_top2`: mean gap between the largest and second-largest routing weights.
+- `debug/routing_top2_mass`: mean mass carried by the top-2 routing weights.
+- `debug/routing_top4_mass`: mean mass carried by the top-4 routing weights.
+- `debug/prototype_active_count_eps_1e-3`: number of prototypes whose batch-mean usage exceeds `1e-3`.
+- `debug/prototype_active_count_eps_1e-2`: number of prototypes whose batch-mean usage exceeds `1e-2`.
+
+### Top-k reconstruction certification
+- `debug/diag_cos_full`: mean diagonal cosine between the full surrogate embedding and exact text embedding.
+- `debug/diag_cos_top1`: mean diagonal cosine after truncating routing to top-1 and renormalizing.
+- `debug/diag_cos_top2`: mean diagonal cosine after truncating routing to top-2 and renormalizing.
+- `debug/diag_cos_top4`: mean diagonal cosine after truncating routing to top-4 and renormalizing.
+- `debug/loss_diag_full`: current diagonal fidelity loss for the full surrogate path.
+- `debug/loss_diag_top1`: diagonal fidelity loss for the top-1 truncated surrogate.
+- `debug/loss_diag_top2`: diagonal fidelity loss for the top-2 truncated surrogate.
+- `debug/loss_diag_top4`: diagonal fidelity loss for the top-4 truncated surrogate.
 
 ### Prototype geometry and contextualization
 - `debug/prototype_pairwise_cosine_mean`: mean off-diagonal cosine similarity among base prototypes.
