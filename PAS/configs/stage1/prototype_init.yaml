@@ -30,7 +30,7 @@ model:
 prototype:
   num_prototypes: 32
   prototype_dim: 512
-  prototype_init: normalized_random
+  prototype_init: kmeans_centroids
   prototype_init_path: null
   prototype_init_hybrid_ratio: 0.5
   prototype_init_max_iters: 50
@@ -85,7 +85,7 @@ training:
   pretrain: ''
   img_aug: false
   txt_aug: false
-  sampler: identity
+  sampler: random
   num_instance: 2
   num_workers: 4
   training: true
