@@ -30,6 +30,9 @@ class PrototypeConditionedTextHead(nn.Module):
         prototype_init_max_iters: int = 50,
         prototype_init_tol: float = 1e-4,
         prototype_init_seed: Optional[int] = None,
+        prototype_init_features: Optional[torch.Tensor] = None,
+        image_adapter: Optional[nn.Module] = None,
+        text_adapter: Optional[nn.Module] = None,
         routing_type: str = 'cosine',
         routing_temperature: float = 0.07,
         token_scoring_type: str = 'cosine',
@@ -69,8 +72,8 @@ class PrototypeConditionedTextHead(nn.Module):
         self.projector_output_dim = int(projector_output_dim)
         self.dead_prototype_threshold = float(dead_prototype_threshold)
 
-        self.image_adapter = nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim)
-        self.text_adapter = nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim)
+        self.image_adapter = image_adapter if image_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
+        self.text_adapter = text_adapter if text_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
         self.prototype_bank = PrototypeBank(
             num_prototypes=num_prototypes,
             prototype_dim=prototype_dim,
@@ -81,6 +84,7 @@ class PrototypeConditionedTextHead(nn.Module):
             init_max_iters=prototype_init_max_iters,
             init_tol=prototype_init_tol,
             init_seed=prototype_init_seed,
+            init_features=prototype_init_features,
         )
         self.contextualizer = PrototypeContextualizer(
             enabled=contextualization_enabled,
@@ -726,5 +730,6 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
+
 
 

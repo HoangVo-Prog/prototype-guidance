@@ -18,12 +18,25 @@ _HYBRID_DUPLICATE_MAX_ATTEMPTS = 4
 
 INIT_MODE_ALIASES = {
     'normalized_random': 'normalized_random',
-    'sampled_image_embeddings': 'external_embeddings',
-    'kmeans_centroids': 'external_embeddings',
+    'sampled_image_embeddings': 'sampled_image_embeddings',
+    'kmeans_centroids': 'kmeans_centroids',
     'orthogonal_normalized_random': 'orthogonal_normalized_random',
     'spherical_kmeans_centroids': 'spherical_kmeans_centroids',
     'hybrid_spherical_kmeans_random': 'hybrid_spherical_kmeans_random',
 }
+DATA_DRIVEN_INIT_MODES = {
+    'sampled_image_embeddings',
+    'kmeans_centroids',
+    'spherical_kmeans_centroids',
+    'hybrid_spherical_kmeans_random',
+}
+
+
+def init_mode_requires_data(init_mode: str) -> bool:
+    canonical_init_mode = INIT_MODE_ALIASES.get(str(init_mode).lower())
+    if canonical_init_mode is None:
+        raise ValueError(f'Unsupported prototype init mode: {init_mode}')
+    return canonical_init_mode in DATA_DRIVEN_INIT_MODES
 
 
 class PrototypeBank(nn.Module):
@@ -39,6 +52,7 @@ class PrototypeBank(nn.Module):
         init_max_iters: int = 50,
         init_tol: float = 1e-4,
         init_seed: Optional[int] = None,
+        init_features: Optional[torch.Tensor] = None,
     ):
         super().__init__()
         if num_prototypes <= 0:
@@ -59,6 +73,7 @@ class PrototypeBank(nn.Module):
         self.init_max_iters = int(init_max_iters)
         self.init_tol = float(init_tol)
         self.init_seed = None if init_seed is None else int(init_seed)
+        self.init_features = None if init_features is None else torch.as_tensor(init_features, dtype=torch.float32, device='cpu')
         self.last_init_diagnostics: Dict[str, Any] = {}
         self.prototypes = nn.Parameter(torch.empty(self.num_prototypes, self.prototype_dim))
         self.reset_parameters()
@@ -159,28 +174,19 @@ class PrototypeBank(nn.Module):
             f'Candidate tensor keys/shapes: {candidate_summary}'
         )
 
-    def _load_feature_matrix(self) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        if not self.init_path:
-            raise ValueError(
-                f'Prototype init mode `{self.requested_init_mode}` requires `prototype_init_path` '
-                'to point to a feature tensor or feature checkpoint.'
-            )
-        loaded = torch.load(self.init_path, map_location='cpu')
-        feature_key = '<root>'
-        if torch.is_tensor(loaded) or (np is not None and isinstance(loaded, np.ndarray)):
-            features = torch.as_tensor(loaded)
-        elif isinstance(loaded, dict):
-            feature_key, features = self._select_feature_tensor(loaded)
-        else:
-            raise ValueError(
-                f'Prototype init mode `{self.requested_init_mode}` expected a tensor or dict checkpoint at '
-                f'`{self.init_path}`, but found `{type(loaded).__name__}`.'
-            )
-
+    def _prepare_feature_matrix(
+        self,
+        features: torch.Tensor,
+        *,
+        source_path: Optional[str],
+        feature_key: str,
+        source_kind: str,
+        normalize: bool,
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         features = torch.as_tensor(features, dtype=torch.float32)
         if features.ndim == 0:
             raise ValueError(
-                f'Loaded feature tensor from `{self.init_path}` must have at least one dimension, '
+                f'Loaded feature tensor for prototype init mode `{self.requested_init_mode}` must have at least one dimension, '
                 f'but got scalar shape {tuple(features.shape)}.'
             )
         if features.ndim == 1:
@@ -189,22 +195,65 @@ class PrototypeBank(nn.Module):
             features = features.reshape(-1, features.shape[-1])
         if features.shape[-1] != self.prototype_dim:
             raise ValueError(
-                f'Loaded features from `{self.init_path}` have feature dim {features.shape[-1]} but '
-                f'expected prototype_dim={self.prototype_dim}.'
+                f'Prototype init mode `{self.requested_init_mode}` expected image features in prototype space with '
+                f'feature dim {self.prototype_dim}, but found feature dim {features.shape[-1]} '
+                f'from source `{source_path or source_kind}`.'
             )
         if features.shape[0] == 0:
-            raise ValueError(f'Loaded features from `{self.init_path}` are empty after flattening.')
+            raise ValueError(
+                f'Prototype init mode `{self.requested_init_mode}` found zero usable feature rows in source '
+                f'`{source_path or source_kind}` after flattening.'
+            )
         if not torch.isfinite(features).all():
-            raise ValueError(f'Loaded features from `{self.init_path}` contain non-finite values.')
-
-        features = self._normalize_rows(features)
+            raise ValueError(
+                f'Prototype init mode `{self.requested_init_mode}` found non-finite values in feature source '
+                f'`{source_path or source_kind}`.'
+            )
+        if normalize:
+            features = self._normalize_rows(features)
         diagnostics = {
-            'source_path': self.init_path,
+            'source_path': source_path,
+            'source_kind': source_kind,
             'feature_key': feature_key,
             'feature_count': int(features.shape[0]),
             'feature_dim': int(features.shape[1]),
+            'feature_normalized_for_init': bool(normalize),
+            'auto_train_image_fallback_used': bool(self.init_features is not None and not self.init_path),
         }
         return features, diagnostics
+
+    def _load_feature_matrix(self, *, normalize: bool) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        if self.init_path:
+            loaded = torch.load(self.init_path, map_location='cpu')
+            feature_key = '<root>'
+            if torch.is_tensor(loaded) or (np is not None and isinstance(loaded, np.ndarray)):
+                features = torch.as_tensor(loaded)
+            elif isinstance(loaded, dict):
+                feature_key, features = self._select_feature_tensor(loaded)
+            else:
+                raise ValueError(
+                    f'Prototype init mode `{self.requested_init_mode}` expected a tensor or dict checkpoint at '
+                    f'`{self.init_path}`, but found `{type(loaded).__name__}`.'
+                )
+            return self._prepare_feature_matrix(
+                features,
+                source_path=self.init_path,
+                feature_key=feature_key,
+                source_kind='path_checkpoint',
+                normalize=normalize,
+            )
+        if self.init_features is not None:
+            return self._prepare_feature_matrix(
+                self.init_features,
+                source_path=None,
+                feature_key='<in_memory>',
+                source_kind='train_image_embeddings',
+                normalize=normalize,
+            )
+        raise ValueError(
+            f'Prototype init mode `{self.requested_init_mode}` requires a data source. '
+            'Provide `prototype_init_path` or supply in-memory train image embeddings in prototype space.'
+        )
 
     def _initialize_spherical_centers(
         self,
@@ -224,10 +273,12 @@ class PrototypeBank(nn.Module):
 
     def _select_worst_fit_reseed_index(
         self,
-        assigned_similarity: torch.Tensor,
+        assigned_metric: torch.Tensor,
         used_mask: torch.Tensor,
+        *,
+        largest: bool,
     ) -> int:
-        candidate_order = torch.argsort(assigned_similarity)
+        candidate_order = torch.argsort(assigned_metric, descending=largest)
         for candidate in candidate_order.tolist():
             if not bool(used_mask[candidate].item()):
                 used_mask[candidate] = True
@@ -235,6 +286,70 @@ class PrototypeBank(nn.Module):
         candidate = int(candidate_order[0].item())
         used_mask[candidate] = True
         return candidate
+
+    def _initialize_kmeans_centers(
+        self,
+        features: torch.Tensor,
+        num_centers: int,
+        generator: Optional[torch.Generator],
+    ) -> torch.Tensor:
+        num_samples = features.size(0)
+        first_index = int(self._randint(num_samples, (1,), generator=generator).item())
+        selected_indices = [first_index]
+        best_sq_distance = ((features - features[first_index]) ** 2).sum(dim=1)
+        for _ in range(1, num_centers):
+            next_index = int(torch.argmax(best_sq_distance).item())
+            selected_indices.append(next_index)
+            candidate_sq_distance = ((features - features[next_index]) ** 2).sum(dim=1)
+            best_sq_distance = torch.minimum(best_sq_distance, candidate_sq_distance)
+        return features[selected_indices].clone()
+
+    def _run_kmeans(
+        self,
+        features: torch.Tensor,
+        num_centers: int,
+        generator: Optional[torch.Generator],
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        if self.init_max_iters <= 0:
+            raise ValueError('prototype_init_max_iters must be positive for k-means prototype initialization.')
+        if self.init_tol < 0:
+            raise ValueError('prototype_init_tol must be non-negative for k-means prototype initialization.')
+
+        centers = self._initialize_kmeans_centers(features, num_centers, generator=generator)
+        empty_reseeds = 0
+        iterations = 0
+
+        for iteration in range(1, self.init_max_iters + 1):
+            distances = torch.cdist(features, centers, p=2)
+            assignments = distances.argmin(dim=1)
+            assigned_distance = distances.gather(1, assignments.unsqueeze(1)).squeeze(1)
+            previous_centers = centers.clone()
+            updated_centers = torch.empty_like(centers)
+            reseed_used_mask = torch.zeros(features.size(0), dtype=torch.bool, device=features.device)
+
+            for cluster_index in range(num_centers):
+                cluster_mask = assignments.eq(cluster_index)
+                if cluster_mask.any():
+                    updated_centers[cluster_index] = features[cluster_mask].mean(dim=0)
+                    continue
+                reseed_index = self._select_worst_fit_reseed_index(
+                    assigned_distance,
+                    reseed_used_mask,
+                    largest=True,
+                )
+                updated_centers[cluster_index] = features[reseed_index]
+                empty_reseeds += 1
+
+            centers = updated_centers
+            max_center_change = (centers - previous_centers).norm(dim=-1).max().item()
+            iterations = iteration
+            if max_center_change <= self.init_tol:
+                break
+
+        return centers, {
+            'cluster_iterations': iterations,
+            'empty_cluster_reseeds': empty_reseeds,
+        }
 
     def _run_spherical_kmeans(
         self,
@@ -266,7 +381,11 @@ class PrototypeBank(nn.Module):
                     if candidate_center.norm(p=2).item() > _NORMALIZATION_EPS:
                         updated_centers[cluster_index] = self._normalize_rows(candidate_center.unsqueeze(0)).squeeze(0)
                         continue
-                reseed_index = self._select_worst_fit_reseed_index(assigned_similarity, reseed_used_mask)
+                reseed_index = self._select_worst_fit_reseed_index(
+                    assigned_similarity,
+                    reseed_used_mask,
+                    largest=False,
+                )
                 updated_centers[cluster_index] = features[reseed_index]
                 empty_reseeds += 1
 
@@ -310,23 +429,61 @@ class PrototypeBank(nn.Module):
         )
         return value, {
             'source_path': None,
+            'source_kind': 'random',
             'feature_count': None,
             'feature_dim': self.prototype_dim,
+            'feature_normalized_for_init': False,
+            'auto_train_image_fallback_used': False,
             'cluster_iterations': 0,
             'empty_cluster_reseeds': 0,
+            'clustering_strategy': 'none',
         }
+
+    def _build_sampled_embedding_init(
+        self,
+        generator: Optional[torch.Generator],
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        features, diagnostics = self._load_feature_matrix(normalize=False)
+        if features.size(0) >= self.num_prototypes:
+            sample_indices = torch.randperm(features.size(0), generator=generator)[:self.num_prototypes]
+            sampled_with_replacement = False
+        else:
+            sample_indices = self._randint(features.size(0), (self.num_prototypes,), generator=generator)
+            sampled_with_replacement = True
+        diagnostics.update({
+            'cluster_iterations': 0,
+            'empty_cluster_reseeds': 0,
+            'clustering_strategy': 'sampled_image_embeddings',
+            'sampled_with_replacement': sampled_with_replacement,
+        })
+        return features.index_select(0, sample_indices), diagnostics
+
+    def _build_kmeans_init(
+        self,
+        generator: Optional[torch.Generator],
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        features, diagnostics = self._load_feature_matrix(normalize=False)
+        centers, clustering_diagnostics = self._run_kmeans(
+            features,
+            self.num_prototypes,
+            generator=generator,
+        )
+        diagnostics.update(clustering_diagnostics)
+        diagnostics['clustering_strategy'] = 'kmeans'
+        return centers, diagnostics
 
     def _build_spherical_kmeans_init(
         self,
         generator: Optional[torch.Generator],
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        features, diagnostics = self._load_feature_matrix()
+        features, diagnostics = self._load_feature_matrix(normalize=True)
         centers, clustering_diagnostics = self._run_spherical_kmeans(
             features,
             self.num_prototypes,
             generator=generator,
         )
         diagnostics.update(clustering_diagnostics)
+        diagnostics['clustering_strategy'] = 'spherical_kmeans'
         return centers, diagnostics
 
     def _build_hybrid_spherical_random_init(
@@ -336,7 +493,7 @@ class PrototypeBank(nn.Module):
         if not 0.0 <= self.init_hybrid_ratio <= 1.0:
             raise ValueError('prototype_init_hybrid_ratio must be in the range [0, 1].')
 
-        features, diagnostics = self._load_feature_matrix()
+        features, diagnostics = self._load_feature_matrix(normalize=True)
         data_count = int(round(self.num_prototypes * self.init_hybrid_ratio))
         data_count = max(0, min(self.num_prototypes, data_count))
         random_count = self.num_prototypes - data_count
@@ -375,6 +532,7 @@ class PrototypeBank(nn.Module):
             'hybrid_data_count': data_count,
             'hybrid_random_count': random_count,
             'hybrid_cleanup_replacements': cleanup_replacements,
+            'clustering_strategy': 'hybrid_spherical_kmeans_random',
         })
         return combined, diagnostics
 
@@ -396,15 +554,22 @@ class PrototypeBank(nn.Module):
 
     def _log_init_diagnostics(self, diagnostics: Dict[str, Any]) -> None:
         LOGGER.info(
-            'Initialized prototype bank mode=%s source_path=%s feature_count=%s feature_dim=%s '
-            'cluster_iterations=%s empty_cluster_reseeds=%s row_norm_min=%.6f row_norm_mean=%.6f '
-            'row_norm_max=%.6f max_offdiag_cosine=%.6f',
+            'Initialized prototype bank mode=%s path_provided=%s source_kind=%s source_path=%s '
+            'auto_train_image_fallback=%s feature_count=%s feature_dim=%s feature_normalized=%s '
+            'clustering=%s cluster_iterations=%s empty_cluster_reseeds=%s prototype_shape=%s '
+            'row_norm_min=%.6f row_norm_mean=%.6f row_norm_max=%.6f max_offdiag_cosine=%.6f',
             self.requested_init_mode,
+            bool(self.init_path),
+            diagnostics.get('source_kind'),
             diagnostics.get('source_path'),
+            diagnostics.get('auto_train_image_fallback_used', False),
             diagnostics.get('feature_count'),
             diagnostics.get('feature_dim'),
+            diagnostics.get('feature_normalized_for_init', False),
+            diagnostics.get('clustering_strategy', 'none'),
             diagnostics.get('cluster_iterations', 0),
             diagnostics.get('empty_cluster_reseeds', 0),
+            diagnostics.get('prototype_shape'),
             diagnostics['row_norm_min'],
             diagnostics['row_norm_mean'],
             diagnostics['row_norm_max'],
@@ -415,15 +580,32 @@ class PrototypeBank(nn.Module):
         generator = self._make_generator()
         diagnostics: Dict[str, Any] = {
             'source_path': self.init_path,
+            'source_kind': 'path_checkpoint' if self.init_path else ('train_image_embeddings' if self.init_features is not None else 'random'),
             'feature_count': None,
             'feature_dim': self.prototype_dim,
+            'feature_normalized_for_init': False,
+            'auto_train_image_fallback_used': bool(self.init_features is not None and not self.init_path),
             'cluster_iterations': 0,
             'empty_cluster_reseeds': 0,
+            'clustering_strategy': 'none',
         }
         with torch.no_grad():
-            if self.init_mode == 'external_embeddings':
-                value = self._load_external_prototypes()
+            if self.init_mode == 'sampled_image_embeddings':
+                if self.init_path:
+                    diagnostics['source_kind'] = 'path_prototypes'
+                    diagnostics['clustering_strategy'] = 'precomputed_prototypes'
+                    value = self._load_external_prototypes()
+                else:
+                    value, diagnostics = self._build_sampled_embedding_init(generator=generator)
+            elif self.init_mode == 'kmeans_centroids':
+                if self.init_path:
+                    diagnostics['source_kind'] = 'path_prototypes'
+                    diagnostics['clustering_strategy'] = 'precomputed_prototypes'
+                    value = self._load_external_prototypes()
+                else:
+                    value, diagnostics = self._build_kmeans_init(generator=generator)
             elif self.init_mode == 'normalized_random':
+                diagnostics['source_kind'] = 'random'
                 value = torch.randn_like(self.prototypes) * self.init_scale
             elif self.init_mode == 'orthogonal_normalized_random':
                 value, diagnostics = self._build_orthogonal_init(generator=generator)
@@ -442,15 +624,15 @@ class PrototypeBank(nn.Module):
             if force_normalize:
                 value = self._normalize_rows(value.to(dtype=torch.float32))
             elif self.normalize_init:
-                value = self._normalize_rows(value)
-            if force_normalize and not torch.isfinite(value).all():
+                value = self._normalize_rows(value.to(dtype=torch.float32))
+            if not torch.isfinite(value).all():
                 raise ValueError(f'Prototype init mode `{self.requested_init_mode}` produced non-finite values.')
 
             summary = self._summarize_initialized_tensor(value)
             diagnostics.update(summary)
+            diagnostics['prototype_shape'] = tuple(value.shape)
             self.last_init_diagnostics = diagnostics
-            if force_normalize:
-                self._log_init_diagnostics(diagnostics)
+            self._log_init_diagnostics(diagnostics)
 
             self.prototypes.copy_(value.to(dtype=self.prototypes.dtype))
 
@@ -469,7 +651,3 @@ class PrototypeBank(nn.Module):
             'prototype_init_diagnostics': dict(self.last_init_diagnostics),
         }
         return prototypes, debug
-
-
-
-

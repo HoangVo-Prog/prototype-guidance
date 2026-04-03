@@ -76,7 +76,7 @@ if __name__ == '__main__':
     experiment_tracker = ExperimentTracker(args, args.output_dir, distributed_rank=get_rank())
 
     train_loader, val_img_loader, val_txt_loader, num_classes = build_dataloader(args)
-    model = build_model(args, num_classes)
+    model = build_model(args, num_classes, train_loader=train_loader)
     logger.info('Total params: %2.fM', sum(p.numel() for p in model.parameters()) / 1000000.0)
     model.to(device)
 
@@ -113,3 +113,4 @@ if __name__ == '__main__':
         do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker=experiment_tracker)
     finally:
         experiment_tracker.finish()
+

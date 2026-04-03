@@ -1,7 +1,19 @@
+from typing import Optional
+
+import torch
+import torch.nn as nn
+
 from .head import PrototypeConditionedTextHead
 
 
-def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeConditionedTextHead:
+def build_prototype_head(
+    args,
+    input_dim: int,
+    num_classes: int,
+    image_adapter: Optional[nn.Module] = None,
+    text_adapter: Optional[nn.Module] = None,
+    prototype_init_features: Optional[torch.Tensor] = None,
+) -> PrototypeConditionedTextHead:
     contextualization_enabled = bool(getattr(args, 'prototype_contextualization_enabled', True))
     projector_output_dim = getattr(args, 'projector_output_dim', getattr(args, 'projection_dim', 256))
     routing_type = getattr(args, 'routing_similarity', getattr(args, 'prototype_routing_type', 'cosine'))
@@ -32,6 +44,9 @@ def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeCon
         prototype_init_max_iters=getattr(args, 'prototype_init_max_iters', 50),
         prototype_init_tol=getattr(args, 'prototype_init_tol', 1e-4),
         prototype_init_seed=prototype_init_seed,
+        prototype_init_features=prototype_init_features,
+        image_adapter=image_adapter,
+        text_adapter=text_adapter,
         routing_type=routing_type,
         routing_temperature=routing_temperature,
         token_scoring_type=token_scoring_type,
@@ -64,5 +79,3 @@ def build_prototype_head(args, input_dim: int, num_classes: int) -> PrototypeCon
         learnable_contrastive_temperature=False,
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
     )
-
-

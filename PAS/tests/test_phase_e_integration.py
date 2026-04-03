@@ -281,6 +281,44 @@ class PhaseEIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r'num_classes > 0'):
             build_model(self._build_args(training=False), num_classes=0)
 
+
+    def test_random_init_without_path_skips_automatic_feature_fallback(self):
+        with mock.patch.object(PASModel, '_extract_train_image_embeddings', wraps=PASModel._extract_train_image_embeddings) as extract_mock:
+            PASModel(self._build_args(prototype_init='normalized_random'), num_classes=2)
+        self.assertEqual(extract_mock.call_count, 0)
+
+    def test_data_driven_init_with_path_preserves_existing_behavior_and_skips_fallback(self):
+        prototypes = torch.nn.functional.normalize(torch.randn(4, 8), dim=-1)
+        with mock.patch.object(PASModel, '_extract_train_image_embeddings', wraps=PASModel._extract_train_image_embeddings) as extract_mock:
+            with mock.patch('model.prototype.prototype_bank.PrototypeBank._load_external_prototypes', return_value=prototypes):
+                build_model(
+                    self._build_args(prototype_init='sampled_image_embeddings', prototype_init_path='features.pt'),
+                    num_classes=2,
+                )
+        self.assertEqual(extract_mock.call_count, 0)
+
+    def test_missing_path_data_driven_init_uses_train_image_fallback_once(self):
+        fallback_features = torch.randn(12, 8)
+        train_loader = SimpleNamespace(dataset=SimpleNamespace(dataset=[(0, 0, 'unused.jpg', 'caption')]))
+        with mock.patch.object(PASModel, '_extract_train_image_embeddings', return_value=fallback_features) as extract_mock:
+            model = build_model(
+                self._build_args(prototype_init='sampled_image_embeddings', prototype_init_path=None),
+                num_classes=2,
+                train_loader=train_loader,
+            )
+        self.assertEqual(extract_mock.call_count, 1)
+        diagnostics = model.prototype_head.prototype_bank.last_init_diagnostics
+        self.assertTrue(diagnostics['auto_train_image_fallback_used'])
+        self.assertEqual(diagnostics['feature_count'], fallback_features.size(0))
+        self.assertEqual(diagnostics['clustering_strategy'], 'sampled_image_embeddings')
+
+    def test_missing_path_data_driven_init_requires_train_loader(self):
+        with self.assertRaisesRegex(ValueError, r'requires train image embeddings'):
+            build_model(
+                self._build_args(prototype_init='kmeans_centroids', prototype_init_path=None),
+                num_classes=2,
+            )
+
     def test_tiny_overfit_reduces_loss(self):
         model = PASModel(self._build_args(), num_classes=2)
         optimizer = torch.optim.Adam([parameter for parameter in model.parameters() if parameter.requires_grad], lr=0.05)

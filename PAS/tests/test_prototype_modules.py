@@ -20,6 +20,7 @@ if torch is not None:
         PrototypeAggregator,
         PrototypeBank,
         PrototypeConditionedTextHead,
+        init_mode_requires_data,
         PrototypeContextualizer,
         PrototypeLosses,
         Router,
@@ -192,6 +193,113 @@ class PrototypeModuleTests(unittest.TestCase):
             feature_groups.append(group)
         features = torch.cat(feature_groups, dim=0)
         return features, centers
+
+
+    def test_init_mode_requires_data_matches_supported_surface(self):
+        self.assertFalse(init_mode_requires_data('normalized_random'))
+        self.assertFalse(init_mode_requires_data('orthogonal_normalized_random'))
+        for init_mode in (
+            'sampled_image_embeddings',
+            'kmeans_centroids',
+            'spherical_kmeans_centroids',
+            'hybrid_spherical_kmeans_random',
+        ):
+            self.assertTrue(init_mode_requires_data(init_mode))
+
+    def test_sampled_image_embeddings_accepts_in_memory_features_without_path(self):
+        features = torch.randn(self.num_prototypes + 4, self.feature_dim)
+        bank = PrototypeBank(
+            num_prototypes=self.num_prototypes,
+            prototype_dim=self.feature_dim,
+            init_mode='sampled_image_embeddings',
+            init_features=features,
+            init_seed=11,
+        )
+        prototypes = bank.get_prototypes()
+        self._assert_unit_norm_rows(prototypes)
+        normalized_features = torch.nn.functional.normalize(features, dim=-1)
+        best_match = (prototypes @ normalized_features.t()).max(dim=1).values
+        self.assertTrue(bool(torch.all(best_match > 0.999)))
+        self.assertTrue(bank.last_init_diagnostics['auto_train_image_fallback_used'])
+        self.assertEqual(bank.last_init_diagnostics['feature_count'], features.size(0))
+        self.assertEqual(bank.last_init_diagnostics['clustering_strategy'], 'sampled_image_embeddings')
+
+    def test_kmeans_centroids_accepts_in_memory_features_without_path(self):
+        features, true_centers = self._make_clustered_features()
+        bank = PrototypeBank(
+            num_prototypes=true_centers.size(0),
+            prototype_dim=true_centers.size(1),
+            init_mode='kmeans_centroids',
+            init_features=features,
+            init_seed=77,
+            init_max_iters=40,
+            init_tol=1e-5,
+        )
+        prototypes = bank.get_prototypes()
+        self._assert_unit_norm_rows(prototypes)
+        cosine_to_true = prototypes @ true_centers.t()
+        best_match = cosine_to_true.max(dim=1).values
+        self.assertTrue(bool(torch.all(best_match > 0.9)))
+        self.assertTrue(bank.last_init_diagnostics['auto_train_image_fallback_used'])
+        self.assertEqual(bank.last_init_diagnostics['clustering_strategy'], 'kmeans')
+        self.assertFalse(bank.last_init_diagnostics['feature_normalized_for_init'])
+
+    def test_spherical_kmeans_centroids_accepts_in_memory_features_without_path(self):
+        features, true_centers = self._make_clustered_features()
+        bank_a = PrototypeBank(
+            num_prototypes=true_centers.size(0),
+            prototype_dim=true_centers.size(1),
+            init_mode='spherical_kmeans_centroids',
+            init_features=features,
+            init_seed=77,
+            init_max_iters=40,
+            init_tol=1e-5,
+        )
+        bank_b = PrototypeBank(
+            num_prototypes=true_centers.size(0),
+            prototype_dim=true_centers.size(1),
+            init_mode='spherical_kmeans_centroids',
+            init_features=features,
+            init_seed=77,
+            init_max_iters=40,
+            init_tol=1e-5,
+        )
+        prototypes = bank_a.get_prototypes()
+        torch.testing.assert_close(prototypes, bank_b.get_prototypes())
+        self._assert_unit_norm_rows(prototypes)
+        cosine_to_true = prototypes @ true_centers.t()
+        best_match = cosine_to_true.max(dim=1).values
+        self.assertTrue(bool(torch.all(best_match > 0.9)))
+        self.assertTrue(bank_a.last_init_diagnostics['auto_train_image_fallback_used'])
+        self.assertTrue(bank_a.last_init_diagnostics['feature_normalized_for_init'])
+
+    def test_hybrid_spherical_kmeans_random_accepts_in_memory_features_without_path(self):
+        features, _ = self._make_clustered_features()
+        hybrid_bank = PrototypeBank(
+            num_prototypes=6,
+            prototype_dim=features.size(1),
+            init_mode='hybrid_spherical_kmeans_random',
+            init_features=features,
+            init_seed=91,
+            init_hybrid_ratio=0.5,
+            init_max_iters=40,
+            init_tol=1e-5,
+        )
+        spherical_bank = PrototypeBank(
+            num_prototypes=3,
+            prototype_dim=features.size(1),
+            init_mode='spherical_kmeans_centroids',
+            init_features=features,
+            init_seed=91,
+            init_max_iters=40,
+            init_tol=1e-5,
+        )
+        prototypes = hybrid_bank.get_prototypes()
+        self._assert_unit_norm_rows(prototypes)
+        self.assertEqual(hybrid_bank.last_init_diagnostics['hybrid_data_count'], 3)
+        self.assertEqual(hybrid_bank.last_init_diagnostics['hybrid_random_count'], 3)
+        self.assertTrue(hybrid_bank.last_init_diagnostics['auto_train_image_fallback_used'])
+        torch.testing.assert_close(prototypes[:3], spherical_bank.get_prototypes(), atol=1e-5, rtol=1e-5)
 
     def test_orthogonal_normalized_random_init_is_deterministic_and_normalized(self):
         bank_a = PrototypeBank(

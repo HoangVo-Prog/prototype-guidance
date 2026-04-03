@@ -1,13 +1,17 @@
-﻿from collections import OrderedDict
+from collections import OrderedDict
+import logging
 from typing import Dict, Optional
+
+from torch.utils.data import DataLoader
 
 import torch
 import torch.nn as nn
 
 from .clip_model import build_CLIP_from_openai_pretrained, convert_weights
 from .interfaces import EncoderOutput
-from .prototype import TokenMaskBuilder, build_prototype_head
+from .prototype import TokenMaskBuilder, build_prototype_head, init_mode_requires_data
 from utils.precision import (
+    build_autocast_context,
     canonicalize_amp_dtype,
     canonicalize_backbone_precision,
     canonicalize_prototype_precision,
@@ -23,7 +27,7 @@ SUPPORTED_PAS_CLIP_BACKBONES = (
 
 
 class PASModel(nn.Module):
-    def __init__(self, args, num_classes):
+    def __init__(self, args, num_classes, train_loader=None):
         super().__init__()
         self.args = args
         self.num_classes = num_classes
@@ -45,7 +49,17 @@ class PASModel(nn.Module):
         self.prototype_eval_text_chunk_size = int(getattr(args, 'prototype_eval_text_chunk_size', 128) or 128)
 
         self._validate_configuration()
-        self.prototype_head = build_prototype_head(args, input_dim=self.embed_dim, num_classes=self.num_classes)
+        image_adapter = nn.Identity() if self.embed_dim == self.prototype_dim else nn.Linear(self.embed_dim, self.prototype_dim)
+        text_adapter = nn.Identity() if self.embed_dim == self.prototype_dim else nn.Linear(self.embed_dim, self.prototype_dim)
+        prototype_init_features = self._maybe_build_prototype_init_features(train_loader=train_loader, image_adapter=image_adapter)
+        self.prototype_head = build_prototype_head(
+            args,
+            input_dim=self.embed_dim,
+            num_classes=self.num_classes,
+            image_adapter=image_adapter,
+            text_adapter=text_adapter,
+            prototype_init_features=prototype_init_features,
+        )
         self._apply_freeze_policy()
 
     def _validate_pretrain_choice(self):
@@ -134,6 +148,232 @@ class PASModel(nn.Module):
             self.base_model.ln_final.weight.requires_grad = False
             self.base_model.ln_final.bias.requires_grad = False
             self.base_model.text_projection.requires_grad = False
+
+
+    def _collect_train_image_records(self, train_loader) -> list:
+        train_dataset = getattr(train_loader, 'dataset', None)
+        raw_records = getattr(train_dataset, 'dataset', None)
+        if raw_records is None:
+            raise ValueError(
+                'Automatic prototype init fallback expected `train_loader.dataset.dataset` to expose raw training '
+                'records of the form `(pid, image_id, img_path, caption)`, but that structure was not found. '
+                'Provide `prototype_init_path` or update the training dataset wrapper so the raw train split is accessible.'
+            )
+
+        unique_records = []
+        seen_image_keys = set()
+        for record_index, record in enumerate(raw_records):
+            if not isinstance(record, (tuple, list)) or len(record) < 3:
+                raise ValueError(
+                    'Automatic prototype init fallback expected each raw train record to look like '
+                    f'`(pid, image_id, img_path, caption)`, but found `{record!r}` at index {record_index}. '
+                    'Provide `prototype_init_path` or update the dataset contract.'
+                )
+            pid = int(record[0])
+            image_key = record[1]
+            img_path = record[2]
+            try:
+                is_duplicate = image_key in seen_image_keys
+            except TypeError:
+                image_key = img_path
+                is_duplicate = image_key in seen_image_keys
+            if is_duplicate:
+                continue
+            seen_image_keys.add(image_key)
+            unique_records.append((pid, img_path))
+
+        if not unique_records:
+            raise ValueError(
+                'Automatic prototype init fallback found no unique training images. '
+                'Provide `prototype_init_path` or verify that the train split is populated.'
+            )
+        return unique_records
+
+    def _extract_train_image_embeddings(self, train_loader, image_adapter: nn.Module) -> torch.Tensor:
+        from datasets.bases import ImageDataset
+        from datasets.build import build_transforms
+
+        logger = logging.getLogger('pas.prototype_init')
+        unique_records = self._collect_train_image_records(train_loader)
+        transform = build_transforms(img_size=getattr(self.args, 'img_size', (384, 128)), aug=False, is_train=False)
+        image_dataset = ImageDataset(
+            image_pids=[pid for pid, _ in unique_records],
+            img_paths=[img_path for _, img_path in unique_records],
+            transform=transform,
+        )
+        batch_size = max(1, min(int(getattr(self.args, 'batch_size', 32) or 32), len(image_dataset)))
+        num_workers = max(int(getattr(self.args, 'num_workers', 0) or 0), 0)
+        image_loader = DataLoader(
+            image_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+        )
+
+        extraction_device = torch.device(getattr(self.args, 'device', 'cpu'))
+        if extraction_device.type == 'cuda' and not torch.cuda.is_available():
+            extraction_device = torch.device('cpu')
+
+        self.base_model.to(extraction_device)
+        image_adapter.to(extraction_device)
+        base_model_was_training = self.base_model.training
+        adapter_was_training = image_adapter.training
+        self.base_model.eval()
+        image_adapter.eval()
+
+        feature_batches = []
+        adapter_parameter = next(image_adapter.parameters(), None)
+        adapter_dtype = adapter_parameter.dtype if adapter_parameter is not None else torch.float32
+        try:
+            with torch.no_grad():
+                with build_autocast_context(self.args, extraction_device):
+                    for _, images in image_loader:
+                        images = images.to(extraction_device)
+                        image_outputs = self.base_model.encode_image_intermediates(
+                            images,
+                            return_all=False,
+                            average_attn_weights=True,
+                        )
+                        projected_tokens = image_outputs.get('projected_tokens')
+                        if not torch.is_tensor(projected_tokens) or projected_tokens.ndim != 3:
+                            raise ValueError(
+                                'Automatic prototype init fallback expected the image encoder to return '
+                                '`projected_tokens` with shape [B, T, D], but that representation was unavailable. '
+                                'Update the image encoder contract or provide `prototype_init_path`.'
+                            )
+                        projected_pooled = projected_tokens[:, 0, :].float()
+                        if projected_pooled.size(-1) != self.embed_dim:
+                            raise ValueError(
+                                'Automatic prototype init fallback expected CLS-pooled image embeddings with '
+                                f'dim {self.embed_dim}, but found dim {projected_pooled.size(-1)}. '
+                                'Update the image encoder contract or provide `prototype_init_path`.'
+                            )
+                        prototype_features = image_adapter(projected_pooled.to(dtype=adapter_dtype, device=extraction_device))
+                        if prototype_features.ndim != 2:
+                            raise ValueError(
+                                'Automatic prototype init fallback expected prototype-space image embeddings '
+                                f'with shape [B, D], but found shape {tuple(prototype_features.shape)} after `image_adapter`. '
+                                'Update the prototype projection path or provide `prototype_init_path`.'
+                            )
+                        if prototype_features.size(-1) != self.prototype_dim:
+                            raise ValueError(
+                                'Automatic prototype init fallback expected prototype-space image embeddings '
+                                f'with dim {self.prototype_dim}, but found dim {prototype_features.size(-1)} after `image_adapter`. '
+                                'Update the adapter/prototype configuration or provide `prototype_init_path`.'
+                            )
+                        feature_batches.append(prototype_features.detach().float().cpu())
+        finally:
+            self.base_model.train(base_model_was_training)
+            image_adapter.train(adapter_was_training)
+
+        if not feature_batches:
+            raise ValueError(
+                'Automatic prototype init fallback did not extract any train image embeddings. '
+                'Provide `prototype_init_path` or verify the train split and image loader.'
+            )
+        features = torch.cat(feature_batches, dim=0)
+        logger.info(
+            'Built prototype init features from train split unique_images=%s embedding_shape=%s representation=%s',
+            features.size(0),
+            tuple(features.shape),
+            'image.projected_pooled->prototype_head.image_adapter',
+        )
+        return features
+
+    def _broadcast_train_image_embeddings(
+        self,
+        features: Optional[torch.Tensor],
+        extraction_error: Optional[Exception] = None,
+    ) -> torch.Tensor:
+        logger = logging.getLogger('pas.prototype_init')
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized() or torch.distributed.get_world_size() == 1:
+            if extraction_error is not None:
+                raise RuntimeError(f'Automatic prototype init fallback failed: {extraction_error}') from extraction_error
+            if features is None:
+                raise ValueError('Distributed prototype init broadcast expected local features, but none were provided.')
+            return features.cpu()
+
+        rank = torch.distributed.get_rank()
+        broadcast_device = torch.device(getattr(self.args, 'device', 'cpu'))
+        if broadcast_device.type != 'cuda':
+            raise ValueError(
+                'Automatic prototype init fallback under distributed training expected a CUDA device so ranks can '
+                f'broadcast image embeddings consistently, but got device={broadcast_device}. '
+                'Provide `prototype_init_path` or run distributed training on CUDA.'
+            )
+
+        payload = [None]
+        if rank == 0:
+            if extraction_error is not None:
+                payload[0] = {
+                    'ok': False,
+                    'error': str(extraction_error),
+                }
+            elif features is None:
+                payload[0] = {
+                    'ok': False,
+                    'error': 'Rank 0 did not produce train image embeddings for prototype initialization.',
+                }
+            else:
+                payload[0] = {
+                    'ok': True,
+                    'shape': tuple(features.shape),
+                }
+        torch.distributed.broadcast_object_list(payload, src=0)
+        metadata = payload[0]
+        if not metadata.get('ok', False):
+            raise RuntimeError(
+                'Automatic prototype init fallback failed on rank 0: '
+                f"{metadata.get('error', 'unknown error')}"
+            )
+
+        if rank == 0:
+            broadcast_tensor = features.to(device=broadcast_device, dtype=torch.float32)
+        else:
+            broadcast_tensor = torch.empty(metadata['shape'], device=broadcast_device, dtype=torch.float32)
+        torch.distributed.broadcast(broadcast_tensor, src=0)
+        logger.info(
+            'Received broadcast prototype init features from rank 0 embedding_shape=%s',
+            tuple(metadata['shape']),
+        )
+        return broadcast_tensor.cpu()
+
+    def _maybe_build_prototype_init_features(self, train_loader, image_adapter: nn.Module) -> Optional[torch.Tensor]:
+        logger = logging.getLogger('pas.prototype_init')
+        init_mode = getattr(self.args, 'prototype_init', 'normalized_random')
+        init_path = getattr(self.args, 'prototype_init_path', None)
+        requires_data = init_mode_requires_data(init_mode)
+        logger.info(
+            'Prototype init selection mode=%s path_provided=%s requires_data=%s',
+            init_mode,
+            bool(init_path),
+            requires_data,
+        )
+        if not requires_data:
+            return None
+        if init_path:
+            logger.info('Prototype init path provided; preserving existing path-based initialization behavior.')
+            return None
+        if not bool(getattr(self.args, 'training', True)):
+            raise ValueError(
+                f'Prototype init mode `{init_mode}` requires train image embeddings when `prototype_init_path` is missing, '
+                'but the model is not in training mode so no train split is available. Provide `prototype_init_path`.'
+            )
+        if train_loader is None:
+            raise ValueError(
+                f'Prototype init mode `{init_mode}` requires train image embeddings when `prototype_init_path` is missing. '
+                'Build the model with `train_loader=...` or provide `prototype_init_path`.'
+            )
+        logger.info('Triggering automatic train-image-embedding fallback for prototype init mode=%s', init_mode)
+        rank = torch.distributed.get_rank() if torch.distributed.is_available() and torch.distributed.is_initialized() else 0
+        local_features = None
+        extraction_error = None
+        if rank == 0:
+            try:
+                local_features = self._extract_train_image_embeddings(train_loader, image_adapter)
+            except Exception as exc:  # pragma: no cover - distributed safety path
+                extraction_error = exc
+        return self._broadcast_train_image_embeddings(local_features, extraction_error=extraction_error)
 
     def _resolve_text_states(self, text_output: EncoderOutput) -> torch.Tensor:
         if text_output.pre_projection_tokens is None:
@@ -403,8 +643,8 @@ PrototypeGuidedRetrievalModel = PASModel
 Model = PASModel
 
 
-def build_model(args, num_classes):
-    model = PASModel(args, num_classes=num_classes)
+def build_model(args, num_classes, train_loader=None):
+    model = PASModel(args, num_classes=num_classes, train_loader=train_loader)
     if model.backbone_precision == 'fp16':
         convert_weights(model.base_model)
     else:
@@ -414,3 +654,4 @@ def build_model(args, num_classes):
     else:
         model.prototype_head.float()
     return model
+
