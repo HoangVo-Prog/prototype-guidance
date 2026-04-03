@@ -58,6 +58,9 @@ class PrototypeConditionedTextHead(nn.Module):
         lambda_align: float = 1.0,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
+        use_loss_ret_exact: bool = False,
+        lambda_ret_exact: float = 1.0,
+        ret_exact_temperature: Optional[float] = None,
         use_loss_support: bool = False,
         support_loss_weight: float = 0.0,
         support_min: float = 2.0,
@@ -144,6 +147,9 @@ class PrototypeConditionedTextHead(nn.Module):
             lambda_align=lambda_align,
             use_loss_diag=use_loss_diag,
             lambda_diag=lambda_diag,
+            use_loss_ret_exact=use_loss_ret_exact,
+            lambda_ret_exact=lambda_ret_exact,
+            ret_exact_temperature=ret_exact_temperature,
             use_loss_support=use_loss_support,
             support_loss_weight=support_loss_weight,
             support_min=support_min,
@@ -577,19 +583,18 @@ class PrototypeConditionedTextHead(nn.Module):
             raise FloatingPointError('Approximate prototype retrieval similarity contains NaN or Inf values.')
         return similarity
 
-    def compute_pairwise_similarity(
+    def _compute_exact_pairwise_similarity_logits(
         self,
         image_projected: torch.Tensor,
         summaries: torch.Tensor,
         text_token_states: torch.Tensor,
         token_ids: torch.Tensor,
-        pids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         image_chunk_size: int = 32,
         text_chunk_size: int = 128,
+        prepared_text: Optional[Dict[str, object]] = None,
     ) -> torch.Tensor:
-        del pids
         if image_projected.ndim != 2 or summaries.ndim != 2:
             raise ValueError('image_projected and summaries must have shape [N, D].')
         if text_token_states.ndim != 3 or token_ids.ndim != 2:
@@ -601,13 +606,14 @@ class PrototypeConditionedTextHead(nn.Module):
 
         image_chunk_size = max(int(image_chunk_size), 1)
         text_chunk_size = max(int(text_chunk_size), 1)
-        text_features = self.text_adapter(text_token_states)
-        token_keep_mask = self.token_mask_builder.build(
+        text_inputs = prepared_text or self._prepare_text_inputs(
+            text_token_states,
             token_ids,
             attention_mask=attention_mask,
             special_token_positions=special_token_positions,
-            return_debug=False,
         )
+        text_features = text_inputs['text_token_states']
+        token_keep_mask = text_inputs['mask_debug']['token_keep_mask']
 
         num_text = text_features.size(0)
         num_image = summaries.size(0)
@@ -633,12 +639,35 @@ class PrototypeConditionedTextHead(nn.Module):
                 pooled_text, _ = self.token_pooler(token_scores, expanded_tokens, expanded_mask)
                 projected_text = self.text_projector(pooled_text)
                 block_similarity = self.losses.compute_paired_similarity(expanded_image_projected, projected_text)
-                block_similarity = block_similarity.view(image_batch, text_batch).t()
-                similarity[text_start:text_end, image_start:image_end] = block_similarity
+                similarity[text_start:text_end, image_start:image_end] = block_similarity.view(image_batch, text_batch).t()
 
         if not torch.isfinite(similarity).all():
             raise FloatingPointError('Prototype retrieval similarity contains NaN or Inf values.')
         return similarity
+
+    def compute_pairwise_similarity(
+        self,
+        image_projected: torch.Tensor,
+        summaries: torch.Tensor,
+        text_token_states: torch.Tensor,
+        token_ids: torch.Tensor,
+        pids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
+        image_chunk_size: int = 32,
+        text_chunk_size: int = 128,
+    ) -> torch.Tensor:
+        del pids
+        return self._compute_exact_pairwise_similarity_logits(
+            image_projected=image_projected,
+            summaries=summaries,
+            text_token_states=text_token_states,
+            token_ids=token_ids,
+            attention_mask=attention_mask,
+            special_token_positions=special_token_positions,
+            image_chunk_size=image_chunk_size,
+            text_chunk_size=text_chunk_size,
+        )
 
     def forward(
         self,
@@ -710,6 +739,19 @@ class PrototypeConditionedTextHead(nn.Module):
                 exact_text_projected=exact_outputs['text_projected'],
             )
         )
+        exact_pairwise_logits = None
+        if self.losses.use_loss_ret_exact:
+            exact_pairwise_logits = self._compute_exact_pairwise_similarity_logits(
+                image_projected=image_outputs['image_projected'],
+                summaries=image_outputs['summary'],
+                text_token_states=text_token_states,
+                token_ids=token_ids,
+                attention_mask=attention_mask,
+                special_token_positions=special_token_positions,
+                image_chunk_size=image_outputs['image_projected'].size(0),
+                text_chunk_size=token_ids.size(0),
+                prepared_text=prepared_text,
+            ).t().contiguous()
         loss_outputs = self.losses(
             image_outputs['image_projected'],
             surrogate_text_projected,
@@ -717,6 +759,7 @@ class PrototypeConditionedTextHead(nn.Module):
             pids=pids,
             prototypes=context['prototypes'],
             routing_weights=image_outputs['routing_weights'],
+            exact_pairwise_logits=exact_pairwise_logits,
             return_debug=return_debug,
         )
         scalar_metrics.update(loss_outputs.get('debug_metrics', {}))
@@ -758,6 +801,7 @@ class PrototypeConditionedTextHead(nn.Module):
             'Z_t_raw': surrogate_text_projector_debug['projected_features_raw'],
             'Z_t_exact': exact_outputs['text_projected'],
             'Z_t_exact_raw': exact_outputs['text_projected_raw'],
+            'exact_pairwise_logits': exact_pairwise_logits,
             'losses': loss_outputs,
             'metrics': scalar_metrics,
         }
@@ -789,6 +833,10 @@ class PrototypeConditionedTextHead(nn.Module):
                     'basis_bank': basis_outputs['basis_bank'].detach(),
                 }
             )
+            if exact_pairwise_logits is not None:
+                outputs['debug']['exact_pairwise_logits'] = exact_pairwise_logits.detach()
+            if 'ret_exact_logits' in loss_outputs:
+                outputs['debug']['ret_exact_logits'] = loss_outputs['ret_exact_logits'].detach()
             if 'basis_token_scores' in basis_outputs:
                 outputs['debug']['basis_token_scores'] = basis_outputs['basis_token_scores'].detach()
                 outputs['debug']['basis_token_weights'] = basis_outputs['basis_token_weights'].detach()

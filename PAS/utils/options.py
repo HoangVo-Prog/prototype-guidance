@@ -53,6 +53,9 @@ def build_parser():
     parser.add_argument('--lambda_align', type=float, default=1.0)
     parser.add_argument('--use_loss_diag', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_diag', type=float, default=1.0)
+    parser.add_argument('--use_loss_ret_exact', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--lambda_ret_exact', type=float, default=1.0)
+    parser.add_argument('--ret_exact_temperature', type=float, default=None)
     parser.add_argument('--use_loss_support', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_support', type=float, default=0.0)
     parser.add_argument('--support_min', type=float, default=2.0)
@@ -213,7 +216,13 @@ def get_args(argv=None):
     override_config_path = args.config_file or None
     config_data = load_yaml_config(default_config_path, override_config_path)
     override_config_data = load_yaml_config(None, override_config_path) if override_config_path else {}
-    args = apply_config_to_args(parser, args, config_data, argv if argv is not None else sys.argv[1:])
+    args = apply_config_to_args(
+        parser,
+        args,
+        config_data,
+        argv if argv is not None else sys.argv[1:],
+        override_config_data=override_config_data,
+    )
     args.override_config_data = override_config_data
     args = _finalize_args(args)
     validate_runtime_args_namespace(args)

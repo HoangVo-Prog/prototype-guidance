@@ -88,6 +88,9 @@ class PrototypeModuleTests(unittest.TestCase):
             proxy_temperature=0.2,
             lambda_proxy=1.0,
             use_loss_proxy_text_exact=True,
+            use_loss_ret_exact=False,
+            lambda_ret_exact=1.0,
+            ret_exact_temperature=None,
             use_loss_align=True,
             lambda_align=0.5,
             use_loss_diag=True,
@@ -138,6 +141,9 @@ class PrototypeModuleTests(unittest.TestCase):
             proxy_temperature=0.2,
             lambda_proxy=1.0,
             use_loss_proxy_text_exact=True,
+            use_loss_ret_exact=False,
+            lambda_ret_exact=1.0,
+            ret_exact_temperature=None,
             use_loss_align=True,
             lambda_align=0.5,
             use_loss_diag=True,
@@ -668,6 +674,92 @@ class PrototypeModuleTests(unittest.TestCase):
         self.assertIsNotNone(surrogate_embeddings.grad)
         self.assertIsNotNone(image_embeddings.grad)
         self.assertIsNone(exact_embeddings.grad)
+
+
+    def test_exact_retrieval_loss_prefers_stronger_diagonal_logits(self):
+        losses = PrototypeLosses(
+            temperature_init=0.07,
+            normalize_embeddings=True,
+            num_classes=self.num_classes,
+            embedding_dim=4,
+            proxy_temperature=0.2,
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=False,
+            use_loss_ret_exact=True,
+            use_diversity_loss=False,
+            use_balance_loss=False,
+            balance_loss_weight=0.0,
+        )
+        strong = torch.tensor(
+            [
+                [5.0, 0.5, 0.1],
+                [0.4, 4.5, 0.2],
+                [0.3, 0.6, 4.0],
+            ],
+            dtype=torch.float32,
+        )
+        weak = torch.tensor(
+            [
+                [0.5, 1.4, 0.8],
+                [1.1, 0.4, 1.2],
+                [1.0, 0.9, 0.3],
+            ],
+            dtype=torch.float32,
+        )
+        self.assertLess(losses.exact_retrieval_loss(strong)['loss'].item(), losses.exact_retrieval_loss(weak)['loss'].item())
+
+    def test_head_exact_retrieval_loss_exposes_pairwise_logits(self):
+        head = self._build_head(use_loss_ret_exact=True)
+        image_embeddings = torch.randn(self.batch_size, self.feature_dim, requires_grad=True)
+        text_states = torch.randn(self.batch_size, self.seq_len, self.feature_dim, requires_grad=True)
+        outputs = head(
+            image_embeddings=image_embeddings,
+            text_token_states=text_states,
+            token_ids=self.token_ids,
+            pids=torch.tensor([0, 1, 2], dtype=torch.long),
+            attention_mask=self.attention_mask,
+            special_token_positions=self.special_positions,
+            return_debug=False,
+        )
+        self.assertEqual(tuple(outputs['exact_pairwise_logits'].shape), (self.batch_size, self.batch_size))
+        self.assertIn('loss_ret_exact', outputs['losses'])
+        self.assertTrue(torch.isfinite(outputs['losses']['loss_ret_exact']))
+
+    def test_head_exact_retrieval_loss_drives_exact_branch_gradients(self):
+        head = self._build_head(
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=False,
+            use_loss_ret_exact=True,
+            use_diversity_loss=False,
+            use_balance_loss=False,
+            balance_loss_weight=0.0,
+        )
+        image_embeddings = torch.randn(self.batch_size, self.feature_dim, requires_grad=True)
+        text_states = torch.randn(self.batch_size, self.seq_len, self.feature_dim, requires_grad=True)
+        outputs = head(
+            image_embeddings=image_embeddings,
+            text_token_states=text_states,
+            token_ids=self.token_ids,
+            pids=torch.tensor([0, 1, 2], dtype=torch.long),
+            attention_mask=self.attention_mask,
+            special_token_positions=self.special_positions,
+            return_debug=False,
+        )
+        outputs['exact_pairwise_logits'].retain_grad()
+        outputs['losses']['loss_total'].backward()
+        self.assertIsNotNone(outputs['exact_pairwise_logits'].grad)
+        text_projector_grad = sum(
+            parameter.grad.detach().abs().sum().item()
+            for name, parameter in head.named_parameters()
+            if name.startswith('text_projector') and parameter.grad is not None
+        )
+        self.assertGreater(text_projector_grad, 0.0)
 
     def test_loss_module_proxy_parameters_exist(self):
         losses = PrototypeLosses(

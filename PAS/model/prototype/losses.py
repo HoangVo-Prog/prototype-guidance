@@ -1,4 +1,4 @@
-﻿from typing import Dict, Optional
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
@@ -22,6 +22,9 @@ class PrototypeLosses(nn.Module):
         lambda_align: float = 1.0,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
+        use_loss_ret_exact: bool = False,
+        lambda_ret_exact: float = 1.0,
+        ret_exact_temperature: Optional[float] = None,
         use_loss_support: bool = False,
         support_loss_weight: float = 0.0,
         support_min: float = 2.0,
@@ -35,6 +38,8 @@ class PrototypeLosses(nn.Module):
             raise ValueError('temperature_init must be positive.')
         if proxy_temperature <= 0:
             raise ValueError('proxy_temperature must be positive.')
+        if ret_exact_temperature is not None and ret_exact_temperature <= 0:
+            raise ValueError('ret_exact_temperature must be positive when provided.')
         if num_classes <= 0:
             raise ValueError('num_classes must be positive for the amortized proxy objective.')
         if embedding_dim <= 0:
@@ -58,6 +63,9 @@ class PrototypeLosses(nn.Module):
         self.lambda_align = float(lambda_align)
         self.use_loss_diag = bool(use_loss_diag)
         self.lambda_diag = float(lambda_diag)
+        self.use_loss_ret_exact = bool(use_loss_ret_exact)
+        self.lambda_ret_exact = float(lambda_ret_exact)
+        self.ret_exact_temperature = None if ret_exact_temperature is None else float(ret_exact_temperature)
         self.use_loss_support = bool(use_loss_support)
         self.lambda_support = float(support_loss_weight)
         self.support_min = float(support_min)
@@ -76,7 +84,14 @@ class PrototypeLosses(nn.Module):
         if self.use_balance_loss and self.lambda_bal <= 0.0:
             raise ValueError('use_balance_loss requires lambda_bal to be positive.')
 
-        if not any((self.use_loss_proxy_image, self.use_loss_proxy_text, self.use_loss_proxy_text_exact, self.use_loss_align, self.use_loss_diag)):
+        if not any((
+            self.use_loss_proxy_image,
+            self.use_loss_proxy_text,
+            self.use_loss_proxy_text_exact,
+            self.use_loss_align,
+            self.use_loss_diag,
+            self.use_loss_ret_exact,
+        )):
             raise ValueError('At least one task-supervised loss must remain enabled so the training objective does not collapse to prototype-only regularization.')
 
         initial_logit_scale = torch.log(torch.tensor(1.0 / temperature_init, dtype=torch.float32))
@@ -90,6 +105,11 @@ class PrototypeLosses(nn.Module):
 
     def get_retrieval_temperature(self) -> torch.Tensor:
         return torch.reciprocal(self.get_logit_scale())
+
+    def get_ret_exact_temperature(self) -> torch.Tensor:
+        if self.ret_exact_temperature is None:
+            return self.get_retrieval_temperature()
+        return torch.tensor(self.ret_exact_temperature, device=self.logit_scale.device, dtype=self.logit_scale.dtype)
 
     def prepare_embeddings(self, image_embeddings: torch.Tensor, text_embeddings: torch.Tensor):
         if image_embeddings.ndim != 2 or text_embeddings.ndim != 2:
@@ -171,6 +191,98 @@ class PrototypeLosses(nn.Module):
             f'{prefix}_proxy_margin_min': margin.min().detach(),
         }
 
+    def _cross_modal_debug_metrics(
+        self,
+        prefix: str,
+        image_embeddings: torch.Tensor,
+        text_embeddings: torch.Tensor,
+        pids: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        if image_embeddings.ndim != 2 or text_embeddings.ndim != 2:
+            return {}
+        if image_embeddings.shape != text_embeddings.shape:
+            return {}
+
+        image_normalized = F.normalize(image_embeddings, dim=-1)
+        text_normalized = F.normalize(text_embeddings, dim=-1)
+        cosine_matrix = text_normalized @ image_normalized.t()
+        positive = cosine_matrix.diagonal()
+        if positive.numel() == 0:
+            return {}
+
+        same_pid_mask = pids.view(-1, 1).eq(pids.view(1, -1))
+        negative_mask = ~same_pid_mask
+        if negative_mask.size(1) <= 1 or not negative_mask.any(dim=1).all():
+            negative_mask = ~torch.eye(cosine_matrix.size(0), device=cosine_matrix.device, dtype=torch.bool)
+        if negative_mask.size(1) <= 1 or not negative_mask.any(dim=1).all():
+            hardest_negative = torch.zeros_like(positive)
+        else:
+            hardest_negative = cosine_matrix.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+        margin = positive - hardest_negative
+
+        logit_scale = self.get_logit_scale().to(device=cosine_matrix.device, dtype=cosine_matrix.dtype)
+        scaled_similarity = cosine_matrix * logit_scale
+        positive_logits = scaled_similarity.diagonal()
+        if negative_mask.size(1) <= 1 or not negative_mask.any(dim=1).all():
+            hardest_negative_logits = torch.zeros_like(positive_logits)
+        else:
+            hardest_negative_logits = scaled_similarity.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+        return {
+            f'{prefix}_positive_cosine_mean': positive.mean().detach(),
+            f'{prefix}_positive_cosine_std': positive.std(unbiased=False).detach(),
+            f'{prefix}_hardest_negative_cosine_mean': hardest_negative.mean().detach(),
+            f'{prefix}_hardest_negative_cosine_std': hardest_negative.std(unbiased=False).detach(),
+            f'{prefix}_margin_mean': margin.mean().detach(),
+            f'{prefix}_margin_min': margin.min().detach(),
+            f'{prefix}_positive_logit_mean': positive_logits.mean().detach(),
+            f'{prefix}_hardest_negative_logit_mean': hardest_negative_logits.mean().detach(),
+        }
+
+    def _pairwise_retrieval_debug_metrics(
+        self,
+        exact_pairwise_logits: Optional[torch.Tensor],
+        loss_pairwise_logits: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        if exact_pairwise_logits is None:
+            return {}
+        if exact_pairwise_logits.ndim != 2 or exact_pairwise_logits.size(0) != exact_pairwise_logits.size(1):
+            return {}
+
+        batch_size = exact_pairwise_logits.size(0)
+        base_logit_scale = self.get_logit_scale().to(device=exact_pairwise_logits.device, dtype=exact_pairwise_logits.dtype)
+        pairwise_cosine = exact_pairwise_logits / base_logit_scale.clamp_min(1e-12)
+        positive = pairwise_cosine.diagonal()
+        if batch_size <= 1:
+            hardest_negative = torch.zeros_like(positive)
+        else:
+            negative_mask = ~torch.eye(batch_size, device=pairwise_cosine.device, dtype=torch.bool)
+            hardest_negative = pairwise_cosine.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+        margin = positive - hardest_negative
+
+        scaled_logits = exact_pairwise_logits if loss_pairwise_logits is None else loss_pairwise_logits
+        positive_logits = scaled_logits.diagonal()
+        if batch_size <= 1:
+            hardest_negative_logits = torch.zeros_like(positive_logits)
+        else:
+            negative_mask = ~torch.eye(batch_size, device=scaled_logits.device, dtype=torch.bool)
+            hardest_negative_logits = scaled_logits.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+
+        effective_logit_scale = self.get_logit_scale() if self.ret_exact_temperature is None else torch.reciprocal(self.get_ret_exact_temperature())
+        effective_logit_scale = effective_logit_scale.to(device=scaled_logits.device, dtype=scaled_logits.dtype)
+        return {
+            'image_exact_positive_cosine_mean': positive.mean().detach(),
+            'image_exact_positive_cosine_std': positive.std(unbiased=False).detach(),
+            'image_exact_hardest_negative_cosine_mean': hardest_negative.mean().detach(),
+            'image_exact_hardest_negative_cosine_std': hardest_negative.std(unbiased=False).detach(),
+            'image_exact_margin_mean': margin.mean().detach(),
+            'image_exact_margin_min': margin.min().detach(),
+            'image_exact_positive_logit_mean': positive_logits.mean().detach(),
+            'image_exact_hardest_negative_logit_mean': hardest_negative_logits.mean().detach(),
+            'exact_pairwise_logit_mean': scaled_logits.mean().detach(),
+            'exact_pairwise_logit_std': scaled_logits.std(unbiased=False).detach(),
+            'exact_pairwise_logit_scale_or_norm': effective_logit_scale.detach(),
+        }
+
     def _normalized_norm_stats(self, prefix: str, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
         normalized = F.normalize(tensor, dim=-1)
         norms = normalized.norm(dim=-1)
@@ -217,6 +329,26 @@ class PrototypeLosses(nn.Module):
         target = torch.full_like(usage, 1.0 / usage.numel())
         return (usage - target).pow(2).sum()
 
+    def scale_pairwise_retrieval_logits(self, exact_pairwise_logits: torch.Tensor) -> torch.Tensor:
+        if exact_pairwise_logits.ndim != 2 or exact_pairwise_logits.size(0) != exact_pairwise_logits.size(1):
+            raise ValueError(
+                f'exact_pairwise_logits must have shape [B, B]; received {tuple(exact_pairwise_logits.shape)}.'
+            )
+        if self.ret_exact_temperature is None:
+            return exact_pairwise_logits
+        base_logit_scale = self.get_logit_scale().to(device=exact_pairwise_logits.device, dtype=exact_pairwise_logits.dtype)
+        pairwise_cosine = exact_pairwise_logits / base_logit_scale.clamp_min(1e-12)
+        ret_logit_scale = torch.reciprocal(self.get_ret_exact_temperature()).to(device=exact_pairwise_logits.device, dtype=exact_pairwise_logits.dtype)
+        return pairwise_cosine * ret_logit_scale
+
+    def exact_retrieval_loss(self, exact_pairwise_logits: torch.Tensor) -> Dict[str, torch.Tensor]:
+        loss_logits = self.scale_pairwise_retrieval_logits(exact_pairwise_logits)
+        targets = torch.arange(loss_logits.size(0), device=loss_logits.device)
+        return {
+            'loss': F.cross_entropy(loss_logits, targets),
+            'logits': loss_logits,
+        }
+
     def forward(
         self,
         image_embeddings: torch.Tensor,
@@ -225,6 +357,7 @@ class PrototypeLosses(nn.Module):
         pids: Optional[torch.Tensor] = None,
         prototypes: Optional[torch.Tensor] = None,
         routing_weights: Optional[torch.Tensor] = None,
+        exact_pairwise_logits: Optional[torch.Tensor] = None,
         return_debug: bool = False,
     ) -> Dict[str, torch.Tensor]:
         if image_embeddings.ndim != 2 or surrogate_text_embeddings.ndim != 2 or exact_text_embeddings.ndim != 2:
@@ -232,10 +365,21 @@ class PrototypeLosses(nn.Module):
         if image_embeddings.shape != surrogate_text_embeddings.shape or image_embeddings.shape != exact_text_embeddings.shape:
             raise ValueError('Image, surrogate text, and exact text embeddings must share shape [B, D].')
 
-        pids = self._validate_class_labels(pids, image_embeddings.size(0), image_embeddings.device)
+        batch_size = image_embeddings.size(0)
+        if self.use_loss_ret_exact:
+            if exact_pairwise_logits is None:
+                raise ValueError('exact_pairwise_logits must be provided when use_loss_ret_exact is enabled.')
+            if exact_pairwise_logits.ndim != 2 or exact_pairwise_logits.shape != (batch_size, batch_size):
+                raise ValueError(
+                    'exact_pairwise_logits must have shape [B, B] matching the image batch; '
+                    f'got {tuple(exact_pairwise_logits.shape)} for batch size {batch_size}.'
+                )
+
+        pids = self._validate_class_labels(pids, batch_size, image_embeddings.device)
         loss_proxy_image_info = self.proxy_loss(image_embeddings, pids)
         loss_proxy_text_info = self.proxy_loss(surrogate_text_embeddings, pids)
         loss_proxy_text_exact_info = self.proxy_loss(exact_text_embeddings, pids)
+        loss_ret_exact_info = self.exact_retrieval_loss(exact_pairwise_logits) if self.use_loss_ret_exact else None
         zero = image_embeddings.new_zeros(())
         loss_proxy_image = loss_proxy_image_info['loss'] if self.use_loss_proxy_image else zero
         loss_proxy_text = loss_proxy_text_info['loss'] if self.use_loss_proxy_text else zero
@@ -243,6 +387,7 @@ class PrototypeLosses(nn.Module):
         loss_proxy = loss_proxy_image + loss_proxy_text + loss_proxy_text_exact
         loss_align = self.cosine_alignment_loss(image_embeddings, surrogate_text_embeddings) if self.use_loss_align else zero
         loss_diag = self.diagonal_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings) if self.use_loss_diag else zero
+        loss_ret_exact = loss_ret_exact_info['loss'] if self.use_loss_ret_exact else zero
         loss_support = self.support_loss(routing_weights)
         loss_diversity = self.diversity_loss(prototypes)
         loss_balance = self.balance_loss(routing_weights)
@@ -250,9 +395,16 @@ class PrototypeLosses(nn.Module):
             (self.lambda_proxy * loss_proxy)
             + (self.lambda_align * loss_align)
             + (self.lambda_diag * loss_diag)
+            + (self.lambda_ret_exact * loss_ret_exact)
             + (self.lambda_support * loss_support)
             + (self.lambda_div * loss_diversity)
             + (self.lambda_bal * loss_balance)
+        )
+
+        exact_debug_metrics = (
+            self._pairwise_retrieval_debug_metrics(exact_pairwise_logits, loss_ret_exact_info['logits'])
+            if self.use_loss_ret_exact and loss_ret_exact_info is not None
+            else self._cross_modal_debug_metrics('image_exact', image_embeddings, exact_text_embeddings, pids)
         )
         outputs = {
             'loss_total': loss_total,
@@ -260,12 +412,14 @@ class PrototypeLosses(nn.Module):
             'loss_proxy_image': loss_proxy_image,
             'loss_proxy_text': loss_proxy_text,
             'loss_proxy_text_exact': loss_proxy_text_exact,
+            'loss_ret_exact': loss_ret_exact,
             'loss_align': loss_align,
             'loss_diag': loss_diag,
             'loss_support': loss_support,
             'loss_diversity': loss_diversity,
             'loss_balance': loss_balance,
             'loss_proxy_weighted': self.lambda_proxy * loss_proxy,
+            'loss_ret_exact_weighted': self.lambda_ret_exact * loss_ret_exact,
             'loss_align_weighted': self.lambda_align * loss_align,
             'loss_diag_weighted': self.lambda_diag * loss_diag,
             'loss_support_weighted': self.lambda_support * loss_support,
@@ -275,6 +429,9 @@ class PrototypeLosses(nn.Module):
             'use_loss_proxy_image': torch.tensor(float(self.use_loss_proxy_image), device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_proxy_text': torch.tensor(float(self.use_loss_proxy_text), device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_proxy_text_exact': torch.tensor(float(self.use_loss_proxy_text_exact), device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_ret_exact': torch.tensor(float(self.use_loss_ret_exact), device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_ret_exact': torch.tensor(self.lambda_ret_exact, device=loss_total.device, dtype=loss_total.dtype),
+            'ret_exact_temperature': self.get_ret_exact_temperature().to(device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_align': torch.tensor(float(self.use_loss_align), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_align': torch.tensor(self.lambda_align, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_diag': torch.tensor(float(self.use_loss_diag), device=loss_total.device, dtype=loss_total.dtype),
@@ -290,6 +447,8 @@ class PrototypeLosses(nn.Module):
                 **self._proxy_debug_metrics('image', loss_proxy_image_info['logits'], pids),
                 **self._proxy_debug_metrics('text', loss_proxy_text_info['logits'], pids),
                 **self._proxy_debug_metrics('text_exact', loss_proxy_text_exact_info['logits'], pids),
+                **self._cross_modal_debug_metrics('image_surrogate', image_embeddings, surrogate_text_embeddings, pids),
+                **exact_debug_metrics,
                 **self._norm_stats('class_proxy_norm', self.class_proxies.detach()),
                 **self._normalized_norm_stats('class_proxy_norm_normalized', self.class_proxies.detach()),
             },
@@ -298,5 +457,7 @@ class PrototypeLosses(nn.Module):
             outputs['image_proxy_logits'] = loss_proxy_image_info['logits']
             outputs['text_proxy_logits'] = loss_proxy_text_info['logits']
             outputs['text_exact_proxy_logits'] = loss_proxy_text_exact_info['logits']
+            if loss_ret_exact_info is not None:
+                outputs['ret_exact_logits'] = loss_ret_exact_info['logits']
             outputs['class_proxies'] = self.class_proxies.detach()
         return outputs

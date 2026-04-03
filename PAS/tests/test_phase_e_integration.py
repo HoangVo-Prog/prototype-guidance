@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import unittest
 from types import SimpleNamespace
@@ -97,6 +97,8 @@ class PhaseEIntegrationTests(unittest.TestCase):
                 dtype=torch.long,
             ),
             'pids': torch.tensor([0, 1, 0, 1], dtype=torch.long),
+            'image_pids': torch.tensor([0, 1, 0, 1], dtype=torch.long),
+            'caption_pids': torch.tensor([0, 1, 0, 1], dtype=torch.long),
         }
         self.text_loader = [
             (
@@ -146,6 +148,9 @@ class PhaseEIntegrationTests(unittest.TestCase):
             proxy_temperature=0.2,
             lambda_proxy=1.0,
             use_loss_proxy_text_exact=True,
+            use_loss_ret_exact=False,
+            lambda_ret_exact=1.0,
+            ret_exact_temperature=None,
             lambda_align=0.5,
             lambda_diag=0.25,
             use_loss_support=False,
@@ -208,11 +213,39 @@ class PhaseEIntegrationTests(unittest.TestCase):
     def test_forward_returns_structured_amortized_losses_and_lightweight_debug_metrics(self):
         model = PASModel(self._build_args(), num_classes=2)
         outputs = model(self.batch, return_debug=False)
-        for key in ('loss_total', 'loss_proxy', 'loss_proxy_text_exact', 'loss_align', 'loss_diag', 'loss_support', 'loss_diversity', 'loss_balance', 'debug'):
+        for key in ('loss_total', 'loss_proxy', 'loss_proxy_text_exact', 'loss_ret_exact', 'loss_align', 'loss_diag', 'loss_support', 'loss_diversity', 'loss_balance', 'debug'):
             self.assertIn(key, outputs)
-        for key in ('prototype_usage_entropy', 'routing_entropy', 'token_pool_entropy', 'q_norm'):
+        for key in (
+            'prototype_usage_entropy',
+            'routing_entropy',
+            'token_pool_entropy',
+            'q_norm',
+            'image_surrogate_positive_cosine_mean',
+            'image_surrogate_hardest_negative_cosine_mean',
+            'image_exact_positive_cosine_mean',
+            'image_exact_hardest_negative_cosine_mean',
+        ):
             self.assertIn(key, outputs['debug'])
         self.assertTrue(torch.isfinite(outputs['loss_total']))
+
+
+    def test_forward_with_exact_retrieval_loss_exposes_pairwise_logits(self):
+        model = PASModel(self._build_args(
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=False,
+            use_loss_ret_exact=True,
+            use_diversity_loss=False,
+            prototype_balance_loss_weight=0.0,
+            use_balancing_loss=False,
+        ), num_classes=2)
+        outputs = model(self.batch, return_debug=False)
+        self.assertIn('loss_ret_exact', outputs)
+        self.assertIn('exact_pairwise_logits', outputs)
+        self.assertEqual(tuple(outputs['exact_pairwise_logits'].shape), (4, 4))
+        self.assertGreaterEqual(outputs['loss_ret_exact'].item(), 0.0)
 
     def test_forward_with_full_debug_exposes_surrogate_and_exact_tensors(self):
         model = PASModel(self._build_args(), num_classes=2)
@@ -257,6 +290,13 @@ class PhaseEIntegrationTests(unittest.TestCase):
     def test_forward_requires_num_classes_for_training(self):
         with self.assertRaisesRegex(ValueError, r'num_classes > 0'):
             PASModel(self._build_args(), num_classes=0)
+
+    def test_forward_rejects_mismatched_caption_pids(self):
+        model = PASModel(self._build_args(), num_classes=2)
+        batch = dict(self.batch)
+        batch['caption_pids'] = torch.tensor([1, 1, 0, 1], dtype=torch.long)
+        with self.assertRaisesRegex(ValueError, r'Batch label mismatch'):
+            model(batch)
 
     def test_optimizer_groups_follow_named_group_contract(self):
         args = self._build_args(freeze_backbones=False)
@@ -383,6 +423,9 @@ class PhaseEIntegrationTests(unittest.TestCase):
         top1 = evaluator.eval(model.eval())
         self.assertTrue(torch.isfinite(torch.tensor(top1)))
         self.assertIn('val/pas/R1', evaluator.latest_metrics)
+        self.assertIn('val/debug/eval_positive_exact_cosine_mean', evaluator.latest_metrics)
+        self.assertIn('val/debug/eval_hardest_negative_exact_cosine_mean', evaluator.latest_metrics)
+        self.assertIn('val/debug/eval_exact_margin_mean', evaluator.latest_metrics)
 
     def test_evaluator_runs_approximate_end_to_end(self):
         args = self._build_args(retrieval_scorer='approximate')
@@ -461,3 +504,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+
+
+
+

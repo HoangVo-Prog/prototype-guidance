@@ -215,6 +215,31 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertEqual(args.weight_decay_class_proxies, 0.02)
         self.assertEqual(args.retrieval_scorer, 'approximate')
 
+
+    def test_exact_retrieval_loss_surface_loads_from_config_and_cli(self):
+        path = self._write_config(
+            {
+                'loss': {
+                    'use_loss_ret_exact': True,
+                    'lambda_ret_exact': 1.75,
+                    'ret_exact_temperature': 0.11,
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertTrue(args.use_loss_ret_exact)
+        self.assertEqual(args.lambda_ret_exact, 1.75)
+        self.assertEqual(args.ret_exact_temperature, 0.11)
+
+        cli_args = get_args([
+            '--use_loss_ret_exact', 'true',
+            '--lambda_ret_exact', '2.5',
+            '--ret_exact_temperature', '0.09',
+        ])
+        self.assertTrue(cli_args.use_loss_ret_exact)
+        self.assertEqual(cli_args.lambda_ret_exact, 2.5)
+        self.assertEqual(cli_args.ret_exact_temperature, 0.09)
+
     def test_new_align_and_diag_disable_flags_parse_from_cli(self):
         args = get_args(['--use_loss_align', 'false', '--use_loss_diag', 'false'])
         self.assertFalse(args.use_loss_align)

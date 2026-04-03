@@ -86,8 +86,29 @@ if __name__ == '__main__':
         refined = {}
         for key, value in param_dict.items():
             refined[key.replace('module.', '')] = value.detach().clone()
-        model.load_state_dict(refined, strict=False)
-
+        incompatible = model.load_state_dict(refined, strict=False)
+        missing_keys = list(getattr(incompatible, 'missing_keys', []))
+        unexpected_keys = list(getattr(incompatible, 'unexpected_keys', []))
+        logger.info(
+            'Finetune load summary: missing_keys=%s unexpected_keys=%s',
+            len(missing_keys),
+            len(unexpected_keys),
+        )
+        critical_prefixes = (
+            'prototype_head.prototype_bank',
+            'prototype_head.image_projector',
+            'prototype_head.text_projector',
+            'prototype_head.image_adapter',
+            'prototype_head.text_adapter',
+        )
+        critical_missing = [key for key in missing_keys if any(key.startswith(prefix) for prefix in critical_prefixes)]
+        if critical_missing:
+            logger.warning(
+                'Finetune checkpoint is missing critical PAS modules: %s',
+                critical_missing[:20],
+            )
+        if unexpected_keys:
+            logger.warning('Finetune checkpoint has unexpected keys: %s', unexpected_keys[:20])
     optimizer = build_optimizer(args, model)
     scheduler = build_lr_scheduler(args, optimizer)
 
@@ -113,4 +134,5 @@ if __name__ == '__main__':
         do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker=experiment_tracker)
     finally:
         experiment_tracker.finish()
+
 

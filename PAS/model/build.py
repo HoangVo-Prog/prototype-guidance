@@ -542,7 +542,7 @@ class PASModel(nn.Module):
                 'Z_t_exact_raw': prototype_outputs['exact_text_projected_raw'].detach(),
             }
         )
-        for key in ('basis_token_scores', 'basis_token_weights', 'basis_beta_logits_masked', 'image_proxy_logits', 'text_proxy_logits', 'text_exact_proxy_logits', 'class_proxies'):
+        for key in ('basis_token_scores', 'basis_token_weights', 'basis_beta_logits_masked', 'image_proxy_logits', 'text_proxy_logits', 'text_exact_proxy_logits', 'ret_exact_logits', 'exact_pairwise_logits', 'class_proxies'):
             value = prototype_outputs.get('debug', {}).get(key)
             if isinstance(value, torch.Tensor):
                 debug[key] = value.detach()
@@ -583,6 +583,15 @@ class PASModel(nn.Module):
         if 'pids' not in batch:
             raise KeyError("PASModel.forward requires batch['pids'] as class labels for the amortized proxy objective.")
         pids = batch['pids']
+        for label_key in ('image_pids', 'caption_pids'):
+            paired_labels = batch.get(label_key)
+            if paired_labels is None:
+                continue
+            paired_labels = paired_labels.to(device=pids.device, dtype=pids.dtype)
+            if paired_labels.shape != pids.shape or not torch.equal(paired_labels, pids):
+                raise ValueError(
+                    f"Batch label mismatch: batch['pids'] and batch['{label_key}'] must match exactly for paired training samples."
+                )
         image_output = self.extract_image_features(images)
         text_output = self.extract_text_features(caption_ids)
         should_return_debug = self.return_debug_outputs if return_debug is None else bool(return_debug)
@@ -606,12 +615,14 @@ class PASModel(nn.Module):
             'loss_proxy_image': losses['loss_proxy_image'],
             'loss_proxy_text': losses['loss_proxy_text'],
             'loss_proxy_text_exact': losses['loss_proxy_text_exact'],
+            'loss_ret_exact': losses['loss_ret_exact'],
             'loss_align': losses['loss_align'],
             'loss_diag': losses['loss_diag'],
             'loss_support': losses['loss_support'],
             'loss_diversity': losses['loss_diversity'],
             'loss_balance': losses['loss_balance'],
             'loss_proxy_weighted': losses['loss_proxy_weighted'],
+            'loss_ret_exact_weighted': losses['loss_ret_exact_weighted'],
             'loss_align_weighted': losses['loss_align_weighted'],
             'loss_diag_weighted': losses['loss_diag_weighted'],
             'loss_support_weighted': losses['loss_support_weighted'],
@@ -619,6 +630,9 @@ class PASModel(nn.Module):
             'loss_balance_weighted': losses['loss_balance_weighted'],
             'lambda_proxy': losses['lambda_proxy'],
             'use_loss_proxy_text_exact': losses['use_loss_proxy_text_exact'],
+            'use_loss_ret_exact': losses['use_loss_ret_exact'],
+            'lambda_ret_exact': losses['lambda_ret_exact'],
+            'ret_exact_temperature': losses['ret_exact_temperature'].detach(),
             'lambda_align': losses['lambda_align'],
             'lambda_diag': losses['lambda_diag'],
             'use_loss_support': losses['use_loss_support'],
@@ -632,9 +646,10 @@ class PASModel(nn.Module):
             'z_v': prototype_outputs['image_projected'],
             'z_t_hat_diag': prototype_outputs['surrogate_text_projected'],
             'z_t_exact_diag': prototype_outputs['exact_text_projected'],
+            'exact_pairwise_logits': prototype_outputs.get('exact_pairwise_logits'),
             'debug': dict(prototype_outputs.get('metrics', {})),
         }
-        for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag'):
+        for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'exact_pairwise_logits'):
             tensor = outputs.get(grad_tensor_key)
             if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
                 tensor.retain_grad()
@@ -658,4 +673,5 @@ def build_model(args, num_classes, train_loader=None):
     else:
         model.prototype_head.float()
     return model
+
 

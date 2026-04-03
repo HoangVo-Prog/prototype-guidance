@@ -60,6 +60,9 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('loss', 'lambda_align'): 'lambda_align',
     ('loss', 'use_loss_diag'): 'use_loss_diag',
     ('loss', 'lambda_diag'): 'lambda_diag',
+    ('loss', 'use_loss_ret_exact'): 'use_loss_ret_exact',
+    ('loss', 'lambda_ret_exact'): 'lambda_ret_exact',
+    ('loss', 'ret_exact_temperature'): 'ret_exact_temperature',
     ('loss', 'use_loss_support'): 'use_loss_support',
     ('loss', 'lambda_support'): 'lambda_support',
     ('loss', 'support_min'): 'support_min',
@@ -176,6 +179,9 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'lambda_align'): 'lambda_align',
     ('training', 'use_loss_diag'): 'use_loss_diag',
     ('training', 'lambda_diag'): 'lambda_diag',
+    ('training', 'use_loss_ret_exact'): 'use_loss_ret_exact',
+    ('training', 'lambda_ret_exact'): 'lambda_ret_exact',
+    ('training', 'ret_exact_temperature'): 'ret_exact_temperature',
     ('text_pooling', 'token_similarity'): 'token_scoring_type',
     ('text_pooling', 'tau_t'): 'token_pooling_temperature',
     ('optimizer', 'weight_decay_prototypes'): 'weight_decay_prototype_bank',
@@ -436,16 +442,31 @@ def _iter_config_value_paths(config_key_map: Dict[Tuple[str, ...], str], config_
             yield path, dest, current
 
 
-def apply_config_to_args(parser, args, config_data: Dict[str, Any], argv: Optional[List[str]] = None):
+def apply_config_to_args(
+    parser,
+    args,
+    config_data: Dict[str, Any],
+    argv: Optional[List[str]] = None,
+    override_config_data: Optional[Dict[str, Any]] = None,
+):
     cli_dests = _extract_cli_destinations(parser, argv or [])
     args.cli_dests = set(cli_dests)
     applied_dests = set()
-    for mapping in (PRIMARY_CONFIG_KEY_MAP, READ_ALIAS_CONFIG_KEY_MAP):
-        for _, dest, value in _iter_config_value_paths(mapping, config_data):
-            if dest in cli_dests or dest in applied_dests:
-                continue
-            setattr(args, dest, _normalize_value(dest, value))
-            applied_dests.add(dest)
+
+    def _apply_from_source(source_config: Optional[Dict[str, Any]]) -> None:
+        if not source_config:
+            return
+        for mapping in (PRIMARY_CONFIG_KEY_MAP, READ_ALIAS_CONFIG_KEY_MAP):
+            for _, dest, value in _iter_config_value_paths(mapping, source_config):
+                if dest in cli_dests or dest in applied_dests:
+                    continue
+                setattr(args, dest, _normalize_value(dest, value))
+                applied_dests.add(dest)
+
+    # Explicit override-file entries must beat defaults, even when they arrive through
+    # backward-compatible alias paths such as prototype.* or training.* legacy knobs.
+    _apply_from_source(override_config_data)
+    _apply_from_source(config_data)
     args.config_data = config_data
     return args
 

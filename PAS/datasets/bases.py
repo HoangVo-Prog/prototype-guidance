@@ -125,6 +125,8 @@ class ImageTextDataset(Dataset):
 
         ret = {
             'pids': pid,
+            'image_pids': pid,
+            'caption_pids': pid,
             'image_ids': image_id,
             'images': img,
             'caption_ids': caption_tokens,
@@ -159,4 +161,5 @@ class ImageTextDataset(Dataset):
                 aug_tokens.append(tokens[i])
         new_tokens[0:len(aug_tokens)] = np.array(aug_tokens)
         return torch.tensor(new_tokens)
+
 

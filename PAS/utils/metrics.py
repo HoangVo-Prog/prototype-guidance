@@ -2,6 +2,7 @@ import logging
 
 from prettytable import PrettyTable
 import torch
+import torch.nn.functional as F
 
 from utils.precision import build_autocast_context, is_cuda_device
 
@@ -92,6 +93,96 @@ class Evaluator:
             return {key: self._concat_feature_batches([batch[key] for batch in batches]) for key in first.keys()}
         raise TypeError(f'Unsupported feature batch type: {type(first)}')
 
+    def _feature_batch_size(self, features):
+        if isinstance(features, torch.Tensor):
+            if features.ndim == 0:
+                raise ValueError('Feature tensors must have a batch dimension.')
+            return int(features.size(0))
+        if isinstance(features, dict):
+            if not features:
+                raise ValueError('Feature dictionaries must not be empty.')
+            first_key = next(iter(features))
+            return self._feature_batch_size(features[first_key])
+        raise TypeError(f'Unsupported feature container type: {type(features)}')
+
+    def _positive_gallery_structure(self, text_ids: torch.Tensor, image_ids: torch.Tensor):
+        positive_mask = text_ids.view(-1, 1).eq(image_ids.view(1, -1))
+        positive_counts = positive_mask.sum(dim=1)
+        if not positive_mask.any(dim=1).all():
+            missing = (~positive_mask.any(dim=1)).nonzero(as_tuple=False).view(-1).tolist()
+            preview = missing[:10]
+            suffix = '' if len(missing) <= 10 else '...'
+            raise ValueError(
+                'Each text query must have at least one positive gallery image. '
+                f'Missing positives for query indices {preview}{suffix}.'
+            )
+        first_positive = positive_mask.to(dtype=torch.int64).argmax(dim=1)
+        return positive_mask, positive_counts, first_positive
+
+    def _compute_eval_debug_metrics(self, model, similarity, text_ids, image_ids, image_features, text_features):
+        metrics = {}
+        core_model = model.module if hasattr(model, 'module') else model
+        similarity = similarity.detach().float().cpu()
+        positive_mask, positive_counts, first_positive = self._positive_gallery_structure(text_ids, image_ids)
+        metrics['val/debug/eval_positive_gallery_count_min'] = float(positive_counts.min().item())
+        metrics['val/debug/eval_positive_gallery_count_mean'] = float(positive_counts.float().mean().item())
+
+        logit_scale_value = None
+        if hasattr(core_model, 'prototype_head') and hasattr(core_model.prototype_head, 'losses'):
+            logit_scale = core_model.prototype_head.losses.get_logit_scale().detach().float().cpu()
+            retrieval_temperature = core_model.prototype_head.losses.get_retrieval_temperature().detach().float().cpu()
+            logit_scale_value = float(logit_scale.item())
+            metrics['val/debug/eval_logit_scale'] = logit_scale_value
+            metrics['val/debug/eval_retrieval_temperature'] = float(retrieval_temperature.item())
+
+        cosine_similarity = similarity
+        if logit_scale_value is not None and logit_scale_value > 0.0:
+            cosine_similarity = similarity / logit_scale_value
+
+        positive_scores = cosine_similarity.gather(1, first_positive.view(-1, 1)).squeeze(1)
+        negative_mask = ~positive_mask
+        if negative_mask.any(dim=1).all():
+            hardest_negative = cosine_similarity.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+        else:
+            hardest_negative = torch.zeros_like(positive_scores)
+        metrics['val/debug/eval_positive_exact_cosine_mean'] = float(positive_scores.mean().item())
+        metrics['val/debug/eval_hardest_negative_exact_cosine_mean'] = float(hardest_negative.mean().item())
+        metrics['val/debug/eval_exact_margin_mean'] = float((positive_scores - hardest_negative).mean().item())
+
+        image_projected = image_features.get('image_projected') if isinstance(image_features, dict) else None
+        if isinstance(image_projected, torch.Tensor):
+            image_norms = image_projected.detach().float().norm(dim=-1).cpu()
+            metrics['val/debug/eval_image_projected_norm_mean'] = float(image_norms.mean().item())
+            metrics['val/debug/eval_image_projected_norm_std'] = float(image_norms.std(unbiased=False).item())
+
+        if self.retrieval_scorer == 'exact' and isinstance(image_projected, torch.Tensor):
+            required_text_keys = ('text_token_states', 'token_ids')
+            if all(isinstance(text_features.get(key), torch.Tensor) for key in required_text_keys):
+                with torch.no_grad():
+                    positive_indices_device = first_positive.to(device=image_projected.device, dtype=torch.long)
+                    positive_summaries = image_features['summary'].index_select(0, positive_indices_device)
+                    positive_image_projected = image_projected.index_select(0, positive_indices_device)
+                    exact_outputs = core_model.prototype_head.pool_text_with_summary(
+                        positive_summaries,
+                        text_features['text_token_states'],
+                        text_features['token_ids'],
+                        attention_mask=text_features.get('attention_mask'),
+                        special_token_positions=text_features.get('special_token_positions'),
+                        return_debug=False,
+                    )
+                exact_raw_norms = exact_outputs['text_projected_raw'].detach().float().norm(dim=-1).cpu()
+                exact_unit_norms = exact_outputs['text_projected'].detach().float().norm(dim=-1).cpu()
+                paired_cosine = (
+                    F.normalize(positive_image_projected.detach().float(), dim=-1)
+                    * F.normalize(exact_outputs['text_projected'].detach().float(), dim=-1)
+                ).sum(dim=-1).cpu()
+                metrics['val/debug/eval_positive_exact_text_embed_norm_mean'] = float(exact_raw_norms.mean().item())
+                metrics['val/debug/eval_positive_exact_text_embed_norm_std'] = float(exact_raw_norms.std(unbiased=False).item())
+                metrics['val/debug/eval_positive_exact_text_embed_unit_norm_mean'] = float(exact_unit_norms.mean().item())
+                metrics['val/debug/eval_positive_exact_pair_cosine_mean'] = float(paired_cosine.mean().item())
+
+        return metrics
+
     def _compute_similarity(self, model):
         model = model.eval()
         device = next(model.parameters()).device
@@ -128,6 +219,11 @@ class Evaluator:
         text_features = self._concat_feature_batches(text_batches)
         image_features = self._concat_feature_batches(image_batches)
 
+        if self._feature_batch_size(text_features) != int(text_ids.numel()):
+            raise ValueError('Text feature concatenation produced a batch size that does not match text_ids ordering.')
+        if self._feature_batch_size(image_features) != int(image_ids.numel()):
+            raise ValueError('Image feature concatenation produced a batch size that does not match image_ids ordering.')
+
         text_features = {
             key: value.to(device) if isinstance(value, torch.Tensor) else {sub_key: sub_value.to(device) for sub_key, sub_value in value.items()}
             for key, value in text_features.items()
@@ -141,10 +237,20 @@ class Evaluator:
                 else:
                     similarity = model.compute_retrieval_similarity(image_features, text_features).cpu()
 
-        return similarity, text_ids, image_ids
+        expected_shape = (int(text_ids.numel()), int(image_ids.numel()))
+        if tuple(similarity.shape) != expected_shape:
+            raise ValueError(
+                f'Retrieval similarity has shape {tuple(similarity.shape)} but expected {expected_shape} '
+                'from concatenated text/image ordering.'
+            )
+        if not torch.isfinite(similarity).all():
+            raise FloatingPointError('Retrieval similarity contains NaN or Inf values after evaluation.')
+
+        debug_metrics = self._compute_eval_debug_metrics(model, similarity, text_ids, image_ids, image_features, text_features)
+        return similarity, text_ids, image_ids, debug_metrics
 
     def eval(self, model):
-        similarity, text_ids, image_ids = self._compute_similarity(model)
+        similarity, text_ids, image_ids, debug_metrics = self._compute_similarity(model)
         metrics = get_metrics(similarity, text_ids, image_ids, 'pas-t2i')
 
         table = PrettyTable(['task'] + list(self.requested_metrics))
@@ -157,7 +263,21 @@ class Evaluator:
             for metric_name in self.requested_metrics
         }
         self.latest_metrics['val/top1'] = metrics['R1']
+        self.latest_metrics.update(debug_metrics)
 
         self.logger.info('\n' + str(table))
+        if debug_metrics:
+            positive_cos = debug_metrics.get('val/debug/eval_positive_exact_cosine_mean')
+            hardest_negative = debug_metrics.get('val/debug/eval_hardest_negative_exact_cosine_mean')
+            margin = debug_metrics.get('val/debug/eval_exact_margin_mean')
+            if positive_cos is not None and hardest_negative is not None and margin is not None:
+                self.logger.info(
+                    'Retrieval sanity: positive_exact_cos=%.4f hardest_negative_exact_cos=%.4f margin=%.4f',
+                    positive_cos,
+                    hardest_negative,
+                    margin,
+                )
         self.logger.info('\nbest R1 = ' + str(metrics['R1']))
         return metrics['R1']
+
+
