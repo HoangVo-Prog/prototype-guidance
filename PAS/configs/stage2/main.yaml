@@ -79,7 +79,7 @@ text_pooling:
 training:
   batch_size: 256
   epochs: 10
-  log_period: 100
+  log_period: 20
   eval_frequency: 1
   save_interval: 1
   resume: false
@@ -140,7 +140,7 @@ logging:
   mode: online
   tags: [pas, stage1, quicktrain]
   notes: stage 1
-  log_interval: 50
+  log_interval: 20
   log_code: false
   log_debug_metrics: true
 
