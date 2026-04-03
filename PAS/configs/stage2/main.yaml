@@ -48,7 +48,7 @@ prototype:
 loss:
   use_diversity_loss: false
   diversity_loss_weight: 0.0
-  use_balancing_loss: true
+  use_balancing_loss: false
   balance_loss_weight: 0.0
   use_loss_proxy_image: false
   use_loss_proxy_text: false
