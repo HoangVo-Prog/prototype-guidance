@@ -46,7 +46,7 @@ prototype:
   dead_prototype_threshold: 0.005
 
 loss:
-  use_diversity_loss: true
+  use_diversity_loss: false
   diversity_loss_weight: 0.0
   use_balancing_loss: true
   balance_loss_weight: 0.0
@@ -60,7 +60,7 @@ loss:
   lambda_diag: 0.0
   use_loss_ret_exact: true
   lambda_ret_exact: 1.0
-  ret_exact_temperature: null
+  ret_exact_temperature: 0.07
   use_loss_support: false
   lambda_support: 0.0
   support_min: 2.0
