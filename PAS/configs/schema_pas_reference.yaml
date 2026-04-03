@@ -207,6 +207,16 @@ loss:
   # Diagonal surrogate-vs-exact fidelity weight.
   lambda_diag: 1.0
 
+  # Enables the optional low-support routing penalty.
+  use_loss_support: false
+
+  # Support loss coefficient. Non-negative float.
+  # Must be positive when use_loss_support=true and 0.0 otherwise.
+  lambda_support: 0.0
+
+  # Minimum inverse-participation-ratio support before the penalty activates.
+  support_min: 2.0
+
   # Enables the optional prototype balancing loss.
   use_balancing_loss: false
 

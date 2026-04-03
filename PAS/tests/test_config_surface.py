@@ -158,6 +158,9 @@ class ConfigSurfaceTests(unittest.TestCase):
                     'lambda_align': 0.5,
                     'use_loss_diag': False,
                     'lambda_diag': 0.25,
+                    'use_loss_support': True,
+                    'lambda_support': 0.15,
+                    'support_min': 2.5,
                 },
                 'text_pooling': {
                     'token_policy': 'content_only',
@@ -205,6 +208,9 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertEqual(args.lambda_align, 0.5)
         self.assertFalse(args.use_loss_diag)
         self.assertEqual(args.lambda_diag, 0.25)
+        self.assertTrue(args.use_loss_support)
+        self.assertEqual(args.lambda_support, 0.15)
+        self.assertEqual(args.support_min, 2.5)
         self.assertEqual(args.lr_class_proxies, 0.003)
         self.assertEqual(args.weight_decay_class_proxies, 0.02)
         self.assertEqual(args.retrieval_scorer, 'approximate')
@@ -213,6 +219,27 @@ class ConfigSurfaceTests(unittest.TestCase):
         args = get_args(['--use_loss_align', 'false', '--use_loss_diag', 'false'])
         self.assertFalse(args.use_loss_align)
         self.assertFalse(args.use_loss_diag)
+
+    def test_support_loss_flags_parse_from_cli(self):
+        args = get_args(['--use_loss_support', 'true', '--lambda_support', '0.2', '--support_min', '3.0'])
+        self.assertTrue(args.use_loss_support)
+        self.assertEqual(args.lambda_support, 0.2)
+        self.assertEqual(args.support_min, 3.0)
+
+    def test_support_loss_disabled_config_remains_backward_compatible(self):
+        path = self._write_config(
+            {
+                'loss': {
+                    'use_loss_support': False,
+                    'lambda_support': 0.0,
+                    'support_min': 2.0,
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertFalse(args.use_loss_support)
+        self.assertEqual(args.lambda_support, 0.0)
+        self.assertEqual(args.support_min, 2.0)
 
     def test_legacy_split_loss_config_still_loads_for_backward_compat(self):
         path = self._write_config(

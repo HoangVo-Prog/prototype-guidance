@@ -92,6 +92,9 @@ class PrototypeModuleTests(unittest.TestCase):
             lambda_align=0.5,
             use_loss_diag=True,
             lambda_diag=0.25,
+            use_loss_support=False,
+            lambda_support=0.0,
+            support_min=2.0,
             use_diversity_loss=True,
             diversity_loss_weight=0.05,
             use_balancing_loss=True,
@@ -139,6 +142,9 @@ class PrototypeModuleTests(unittest.TestCase):
             lambda_align=0.5,
             use_loss_diag=True,
             lambda_diag=0.25,
+            use_loss_support=False,
+            support_loss_weight=0.0,
+            support_min=2.0,
             use_diversity_loss=True,
             diversity_loss_weight=0.05,
             use_balance_loss=True,
@@ -516,6 +522,58 @@ class PrototypeModuleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Learnable retrieval logit scaling'):
             PrototypeLosses(temperature_init=0.07, learnable_temperature=True, num_classes=self.num_classes, embedding_dim=4)
 
+    def test_support_loss_matches_ipr_formula(self):
+        losses = PrototypeLosses(
+            temperature_init=0.07,
+            normalize_embeddings=True,
+            num_classes=self.num_classes,
+            embedding_dim=4,
+            proxy_temperature=0.2,
+            use_loss_support=True,
+            support_loss_weight=0.5,
+            support_min=2.0,
+        )
+        routing = torch.tensor([
+            [1.0, 0.0, 0.0],
+            [0.5, 0.5, 0.0],
+        ], dtype=torch.float32)
+        expected_support = torch.tensor([1.0, 2.0], dtype=torch.float32)
+        expected_loss = torch.tensor(((2.0 - 1.0) ** 2 + 0.0) / 2.0, dtype=torch.float32)
+        torch.testing.assert_close(losses.effective_support(routing), expected_support)
+        torch.testing.assert_close(losses.support_loss(routing), expected_loss)
+
+    def test_support_loss_is_zero_when_effective_support_meets_threshold(self):
+        losses = PrototypeLosses(
+            temperature_init=0.07,
+            normalize_embeddings=True,
+            num_classes=self.num_classes,
+            embedding_dim=4,
+            proxy_temperature=0.2,
+            use_loss_support=True,
+            support_loss_weight=0.5,
+            support_min=2.0,
+        )
+        routing = torch.full((self.batch_size, self.num_prototypes), 1.0 / self.num_prototypes)
+        self.assertEqual(losses.support_loss(routing).item(), 0.0)
+
+    def test_support_loss_is_positive_for_peaked_routing(self):
+        losses = PrototypeLosses(
+            temperature_init=0.07,
+            normalize_embeddings=True,
+            num_classes=self.num_classes,
+            embedding_dim=4,
+            proxy_temperature=0.2,
+            use_loss_support=True,
+            support_loss_weight=0.5,
+            support_min=2.0,
+        )
+        routing = torch.tensor([
+            [0.97, 0.01, 0.01, 0.01, 0.0],
+            [0.99, 0.01, 0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0, 0.0],
+        ], dtype=torch.float32)
+        self.assertGreater(losses.support_loss(routing).item(), 0.0)
+
     def test_loss_module_reports_amortized_components(self):
         losses = PrototypeLosses(
             temperature_init=0.07,
@@ -526,6 +584,9 @@ class PrototypeModuleTests(unittest.TestCase):
             lambda_proxy=1.0,
             lambda_align=0.5,
             lambda_diag=0.25,
+            use_loss_support=True,
+            support_loss_weight=0.2,
+            support_min=2.0,
             use_diversity_loss=True,
             diversity_loss_weight=0.05,
             use_balance_loss=True,
@@ -541,6 +602,7 @@ class PrototypeModuleTests(unittest.TestCase):
             outputs['loss_proxy_weighted']
             + outputs['loss_align_weighted']
             + outputs['loss_diag_weighted']
+            + outputs['loss_support_weighted']
             + outputs['loss_diversity_weighted']
             + outputs['loss_balance_weighted']
         )
@@ -586,6 +648,8 @@ class PrototypeModuleTests(unittest.TestCase):
         self.assertEqual(outputs['loss_diag'].item(), 0.0)
         self.assertEqual(outputs['loss_align_weighted'].item(), 0.0)
         self.assertEqual(outputs['loss_diag_weighted'].item(), 0.0)
+        self.assertEqual(outputs['loss_support'].item(), 0.0)
+        self.assertEqual(outputs['loss_support_weighted'].item(), 0.0)
 
     def test_loss_module_exact_proxy_can_be_disabled_to_restore_detached_anchor_behavior(self):
         losses = PrototypeLosses(

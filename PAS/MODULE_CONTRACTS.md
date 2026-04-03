@@ -63,6 +63,7 @@
   - `loss_proxy`, `loss_proxy_image`, `loss_proxy_text`
   - `loss_align`
   - `loss_diag`
+  - `loss_support`
   - `loss_diversity`
   - `loss_balance`
   - weighted terms, lambda scalars, `proxy_temperature`, and fixed retrieval scaling values

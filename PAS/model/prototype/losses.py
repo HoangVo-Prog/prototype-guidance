@@ -22,6 +22,9 @@ class PrototypeLosses(nn.Module):
         lambda_align: float = 1.0,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
+        use_loss_support: bool = False,
+        support_loss_weight: float = 0.0,
+        support_min: float = 2.0,
         use_diversity_loss: bool = False,
         diversity_loss_weight: float = 0.0,
         use_balance_loss: bool = False,
@@ -55,10 +58,19 @@ class PrototypeLosses(nn.Module):
         self.lambda_align = float(lambda_align)
         self.use_loss_diag = bool(use_loss_diag)
         self.lambda_diag = float(lambda_diag)
+        self.use_loss_support = bool(use_loss_support)
+        self.lambda_support = float(support_loss_weight)
+        self.support_min = float(support_min)
         self.proxy_temperature = float(proxy_temperature)
         self.num_classes = int(num_classes)
         self.embedding_dim = int(embedding_dim)
 
+        if self.support_min <= 0.0:
+            raise ValueError('support_min must be positive.')
+        if not self.use_loss_support and self.lambda_support != 0.0:
+            raise ValueError('lambda_support must be 0.0 when use_loss_support is disabled.')
+        if self.use_loss_support and self.lambda_support <= 0.0:
+            raise ValueError('use_loss_support requires lambda_support to be positive.')
         if not self.use_balance_loss and self.lambda_bal != 0.0:
             raise ValueError('lambda_bal must be 0.0 when use_balance_loss is disabled.')
         if self.use_balance_loss and self.lambda_bal <= 0.0:
@@ -177,6 +189,17 @@ class PrototypeLosses(nn.Module):
     def diagonal_fidelity_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> torch.Tensor:
         return self.cosine_alignment_loss(surrogate_embeddings, exact_embeddings.detach())
 
+    def effective_support(self, routing_weights: torch.Tensor) -> torch.Tensor:
+        return torch.reciprocal(routing_weights.pow(2).sum(dim=-1).clamp_min(1e-12))
+
+    def support_loss(self, routing_weights: Optional[torch.Tensor]) -> torch.Tensor:
+        if routing_weights is None or not self.use_loss_support:
+            device = self.logit_scale.device if routing_weights is None else routing_weights.device
+            return torch.zeros((), device=device)
+        # Penalize only degenerate low-support routing without pushing toward full uniform usage.
+        effective_support = self.effective_support(routing_weights)
+        return (self.support_min - effective_support).clamp_min(0.0).pow(2).mean()
+
     def diversity_loss(self, prototypes: Optional[torch.Tensor]) -> torch.Tensor:
         if prototypes is None or not self.use_diversity_loss:
             device = self.logit_scale.device if prototypes is None else prototypes.device
@@ -220,12 +243,14 @@ class PrototypeLosses(nn.Module):
         loss_proxy = loss_proxy_image + loss_proxy_text + loss_proxy_text_exact
         loss_align = self.cosine_alignment_loss(image_embeddings, surrogate_text_embeddings) if self.use_loss_align else zero
         loss_diag = self.diagonal_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings) if self.use_loss_diag else zero
+        loss_support = self.support_loss(routing_weights)
         loss_diversity = self.diversity_loss(prototypes)
         loss_balance = self.balance_loss(routing_weights)
         loss_total = (
             (self.lambda_proxy * loss_proxy)
             + (self.lambda_align * loss_align)
             + (self.lambda_diag * loss_diag)
+            + (self.lambda_support * loss_support)
             + (self.lambda_div * loss_diversity)
             + (self.lambda_bal * loss_balance)
         )
@@ -237,11 +262,13 @@ class PrototypeLosses(nn.Module):
             'loss_proxy_text_exact': loss_proxy_text_exact,
             'loss_align': loss_align,
             'loss_diag': loss_diag,
+            'loss_support': loss_support,
             'loss_diversity': loss_diversity,
             'loss_balance': loss_balance,
             'loss_proxy_weighted': self.lambda_proxy * loss_proxy,
             'loss_align_weighted': self.lambda_align * loss_align,
             'loss_diag_weighted': self.lambda_diag * loss_diag,
+            'loss_support_weighted': self.lambda_support * loss_support,
             'loss_diversity_weighted': self.lambda_div * loss_diversity,
             'loss_balance_weighted': self.lambda_bal * loss_balance,
             'lambda_proxy': torch.tensor(self.lambda_proxy, device=loss_total.device, dtype=loss_total.dtype),
@@ -252,6 +279,8 @@ class PrototypeLosses(nn.Module):
             'lambda_align': torch.tensor(self.lambda_align, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_diag': torch.tensor(float(self.use_loss_diag), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_diag': torch.tensor(self.lambda_diag, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_support': torch.tensor(float(self.use_loss_support), device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_support': torch.tensor(self.lambda_support, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_div': torch.tensor(self.lambda_div, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_bal': torch.tensor(self.lambda_bal, device=loss_total.device, dtype=loss_total.dtype),
             'proxy_temperature': torch.tensor(self.proxy_temperature, device=loss_total.device, dtype=loss_total.dtype),

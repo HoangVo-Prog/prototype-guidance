@@ -52,6 +52,7 @@ The logging path is implemented in:
 - `train/loss_proxy_text_exact`: proxy loss on the exact pooled text branch.
 - `train/loss_align`: cosine-alignment loss between image and surrogate text embeddings.
 - `train/loss_diag`: diagonal fidelity loss between surrogate and exact text embeddings.
+- `train/loss_support`: low-support routing penalty based on inverse participation ratio.
 - `train/loss_diversity`: prototype diversity regularizer.
 - `train/loss_balance`: routing-usage balance regularizer.
 
@@ -59,6 +60,7 @@ The logging path is implemented in:
 - `train/loss_proxy_weighted`: `lambda_proxy * loss_proxy`.
 - `train/loss_align_weighted`: `lambda_align * loss_align`.
 - `train/loss_diag_weighted`: `lambda_diag * loss_diag`.
+- `train/loss_support_weighted`: `lambda_support * loss_support`.
 - `train/loss_diversity_weighted`: `lambda_div * loss_diversity`.
 - `train/loss_balance_weighted`: `lambda_bal * loss_balance`.
 
@@ -113,6 +115,7 @@ These are logged only when `logging.log_debug_metrics=true`.
 - `debug/routing_top1_dead_count`: number of prototypes that were never selected as top-1 in the batch.
 - `debug/prototype_assignment_entropy`: mean entropy of routing assignments, as reported by the router.
 - `debug/routing_effective_support`: exponentiated routing entropy, interpretable as the effective number of active prototypes per sample.
+- `debug/routing_effective_support_ipr`: inverse-participation-ratio effective support, matching the `L_support` definition.
 
 ### Prototype geometry and contextualization
 - `debug/prototype_pairwise_cosine_mean`: mean off-diagonal cosine similarity among base prototypes.

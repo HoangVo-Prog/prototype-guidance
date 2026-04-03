@@ -134,6 +134,7 @@ Returned fields:
   - `loss_proxy_text`
   - `loss_align`
   - `loss_diag`
+  - `loss_support`
   - `loss_diversity`
   - `loss_balance`
   - weighted terms and lambda scalars
@@ -173,6 +174,7 @@ The training objective is amortized surrogate training:
   - `loss_proxy`
   - `loss_align`
   - `loss_diag`
+  - `loss_support`
   - `loss_diversity`
   - `loss_balance`
   - `proxy_temperature`
@@ -199,7 +201,7 @@ The `debug` dict may include:
 - `Z_v`
 - `Z_t`
 - `Z_t_exact`
-- routing / prototype-usage / geometry / norm diagnostics
+- routing / prototype-usage / geometry / norm diagnostics, including both entropy-based and IPR-based effective support metrics
 
 ## 8. Phase E Constraints
 

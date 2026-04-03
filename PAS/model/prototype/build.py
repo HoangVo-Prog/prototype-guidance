@@ -20,6 +20,7 @@ def build_prototype_head(
     routing_temperature = getattr(args, 'tau_p', getattr(args, 'prototype_temperature', 0.07))
     token_scoring_type = getattr(args, 'token_similarity', getattr(args, 'token_scoring_type', 'cosine'))
     token_temperature = getattr(args, 'tau_t', getattr(args, 'token_pooling_temperature', 0.07))
+    support_loss_weight = getattr(args, 'lambda_support', 0.0)
     diversity_loss_weight = getattr(args, 'lambda_div', getattr(args, 'diversity_loss_weight', 0.01))
     balance_loss_weight = getattr(args, 'lambda_bal', getattr(args, 'prototype_balance_loss_weight', 0.0))
     prototype_init_seed = getattr(args, 'prototype_init_seed', None)
@@ -71,6 +72,9 @@ def build_prototype_head(
         lambda_align=getattr(args, 'lambda_align', 1.0),
         use_loss_diag=getattr(args, 'use_loss_diag', True),
         lambda_diag=getattr(args, 'lambda_diag', 1.0),
+        use_loss_support=getattr(args, 'use_loss_support', False),
+        support_loss_weight=support_loss_weight,
+        support_min=getattr(args, 'support_min', 2.0),
         use_diversity_loss=getattr(args, 'use_diversity_loss', True),
         diversity_loss_weight=diversity_loss_weight,
         use_balance_loss=use_balancing_loss,

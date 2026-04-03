@@ -58,6 +58,9 @@ loss:
   lambda_align: 0.0
   use_loss_diag: true
   lambda_diag: 1.0
+  use_loss_support: true
+  lambda_support: 0.1
+  support_min: 2.0
 
 text_pooling:
   token_policy: content_only

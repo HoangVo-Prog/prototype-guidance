@@ -148,6 +148,9 @@ class PhaseEIntegrationTests(unittest.TestCase):
             use_loss_proxy_text_exact=True,
             lambda_align=0.5,
             lambda_diag=0.25,
+            use_loss_support=False,
+            lambda_support=0.0,
+            support_min=2.0,
             text_length=77,
             vocab_size=50010,
             use_prototype_bank=True,
@@ -205,7 +208,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
     def test_forward_returns_structured_amortized_losses_and_lightweight_debug_metrics(self):
         model = PASModel(self._build_args(), num_classes=2)
         outputs = model(self.batch, return_debug=False)
-        for key in ('loss_total', 'loss_proxy', 'loss_proxy_text_exact', 'loss_align', 'loss_diag', 'loss_diversity', 'loss_balance', 'debug'):
+        for key in ('loss_total', 'loss_proxy', 'loss_proxy_text_exact', 'loss_align', 'loss_diag', 'loss_support', 'loss_diversity', 'loss_balance', 'debug'):
             self.assertIn(key, outputs)
         for key in ('prototype_usage_entropy', 'routing_entropy', 'token_pool_entropy', 'q_norm'):
             self.assertIn(key, outputs['debug'])
@@ -216,6 +219,32 @@ class PhaseEIntegrationTests(unittest.TestCase):
         outputs = model(self.batch, return_debug=True)
         for key in ('alpha', 'Q', 'Theta_v', 'Theta_tilde', 'basis_bank', 'Z_t', 'Z_t_exact', 'text_exact_proxy_logits'):
             self.assertIn(key, outputs['debug'])
+        self.assertTrue(torch.isfinite(outputs['loss_total']))
+
+    def test_stage1_support_recipe_runs_with_diag_support_and_diversity_only(self):
+        model = PASModel(
+            self._build_args(
+                use_loss_proxy_image=False,
+                use_loss_proxy_text=False,
+                use_loss_proxy_text_exact=False,
+                lambda_proxy=0.0,
+                use_loss_align=False,
+                lambda_align=0.0,
+                use_loss_support=True,
+                lambda_support=0.1,
+                support_min=2.0,
+                use_balancing_loss=False,
+                prototype_balance_loss_weight=0.0,
+                use_diversity_loss=True,
+                diversity_loss_weight=0.01,
+            ),
+            num_classes=2,
+        )
+        outputs = model(self.batch, return_debug=False)
+        self.assertIn('loss_support', outputs)
+        self.assertEqual(outputs['use_loss_support'].item(), 1.0)
+        self.assertAlmostEqual(outputs['lambda_support'].item(), 0.1, places=6)
+        self.assertEqual(outputs['loss_balance'].item(), 0.0)
         self.assertTrue(torch.isfinite(outputs['loss_total']))
 
     def test_forward_requires_pids_for_proxy_training(self):
