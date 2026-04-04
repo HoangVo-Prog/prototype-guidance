@@ -138,6 +138,7 @@ class PASModel(nn.Module):
     def _apply_freeze_policy(self):
         self.freeze_image_backbone = bool(getattr(self.args, 'freeze_image_backbone', True))
         self.freeze_text_backbone = bool(getattr(self.args, 'freeze_text_backbone', True))
+        self.freeze_prototype = bool(getattr(self.args, 'freeze_prototype', False))
         self.freeze_proxy = bool(getattr(self.args, 'freeze_proxy', False))
 
         if self.freeze_image_backbone:
@@ -149,6 +150,8 @@ class PASModel(nn.Module):
             self.base_model.ln_final.weight.requires_grad = False
             self.base_model.ln_final.bias.requires_grad = False
             self.base_model.text_projection.requires_grad = False
+        if self.freeze_prototype:
+            self._freeze_module(self.prototype_head.prototype_bank)
         if self.freeze_proxy:
             self.prototype_head.losses.class_proxies.requires_grad = False
 

@@ -102,6 +102,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'training'): 'training',
     ('training', 'freeze_image_backbone'): 'freeze_image_backbone',
     ('training', 'freeze_text_backbone'): 'freeze_text_backbone',
+    ('training', 'freeze_prototype'): 'freeze_prototype',
     ('training', 'freeze_proxy'): 'freeze_proxy',
     ('training', 'grad_clip'): 'grad_clip',
     ('training', 'amp'): 'amp',

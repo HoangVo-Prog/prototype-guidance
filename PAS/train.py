@@ -73,11 +73,11 @@ def log_parameter_trainability(logger, model, args):
     projector_total, projector_trainable = _count_parameters(projector_params)
     proxy_total, proxy_trainable = _count_parameters([model.prototype_head.losses.class_proxies])
     logger.info(
-        'Freeze status: image_backbone=%s text_backbone=%s proxy=%s prototype_bank=%s projectors=%s',
+        'Freeze status: image_backbone=%s text_backbone=%s prototype_bank=%s proxy=%s projectors=%s',
         'frozen' if bool(getattr(args, 'freeze_image_backbone', True)) else 'trainable',
         'frozen' if bool(getattr(args, 'freeze_text_backbone', True)) else 'trainable',
+        'frozen' if bool(getattr(args, 'freeze_prototype', False)) else 'trainable',
         'frozen' if bool(getattr(args, 'freeze_proxy', False)) else 'trainable',
-        'frozen' if prototype_trainable == 0 else 'trainable',
         'frozen' if projector_trainable == 0 else 'trainable',
     )
     logger.info(

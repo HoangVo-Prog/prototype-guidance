@@ -320,6 +320,17 @@ class PhaseEIntegrationTests(unittest.TestCase):
         groups = {group['name']: group for group in optimizer.param_groups}
         self.assertNotIn('class_proxies', groups)
 
+
+    def test_freeze_prototype_removes_prototype_bank_from_trainable_optimizer_groups(self):
+        args = self._build_args(freeze_prototype=True)
+        model = PASModel(args, num_classes=2)
+        prototype_parameters = list(model.prototype_head.prototype_bank.parameters())
+        self.assertTrue(prototype_parameters)
+        self.assertTrue(all(not parameter.requires_grad for parameter in prototype_parameters))
+        optimizer = build_optimizer(args, model)
+        groups = {group['name']: group for group in optimizer.param_groups}
+        self.assertNotIn('prototype_bank', groups)
+
     def test_build_model_respects_prototype_precision_setting(self):
         model_fp32 = build_model(self._build_args(prototype_precision='fp32'), num_classes=2)
         prototype_dtypes_fp32 = {parameter.dtype for parameter in model_fp32.prototype_head.parameters()}

@@ -227,6 +227,7 @@ class ConfigSurfaceTests(unittest.TestCase):
                     'ret_exact_temperature': 0.11,
                 },
                 'training': {
+                    'freeze_prototype': True,
                     'freeze_proxy': True,
                 },
             }
@@ -239,6 +240,7 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertEqual(args.lambda_ret_exact_image, 1.75)
         self.assertEqual(args.lambda_ret_exact_text, 0.6)
         self.assertEqual(args.ret_exact_temperature, 0.11)
+        self.assertTrue(args.freeze_prototype)
         self.assertTrue(args.freeze_proxy)
 
         cli_args = get_args([
@@ -249,6 +251,7 @@ class ConfigSurfaceTests(unittest.TestCase):
             '--lambda_proxy_image', '1.1',
             '--lambda_proxy_text', '0.7',
             '--lambda_proxy_text_exact', '0.2',
+            '--freeze_prototype', 'true',
             '--freeze_proxy', 'true',
             '--ret_exact_temperature', '0.09',
         ])
@@ -260,6 +263,7 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertEqual(cli_args.lambda_proxy_image, 1.1)
         self.assertEqual(cli_args.lambda_proxy_text, 0.7)
         self.assertEqual(cli_args.lambda_proxy_text_exact, 0.2)
+        self.assertTrue(cli_args.freeze_prototype)
         self.assertTrue(cli_args.freeze_proxy)
         self.assertEqual(cli_args.ret_exact_temperature, 0.09)
 

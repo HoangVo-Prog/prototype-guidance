@@ -234,6 +234,9 @@ loss:
   # Minimum inverse-participation-ratio support before the penalty activates.
   support_min: 2.0
 
+  # If true, freeze the prototype bank parameters.
+  freeze_prototype: false
+
   # If true, freeze the class-proxy matrix so proxy losses update only the encoders/projectors.
   freeze_proxy: false
 

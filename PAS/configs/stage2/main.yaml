@@ -99,6 +99,7 @@ training:
   training: true
   freeze_image_backbone: true
   freeze_text_backbone: true
+  freeze_prototype: false
   freeze_proxy: false
   grad_clip: 1.0
   amp: false

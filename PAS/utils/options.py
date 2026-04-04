@@ -121,6 +121,7 @@ def build_parser():
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--freeze_image_backbone', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--freeze_text_backbone', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--freeze_prototype', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--freeze_proxy', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--test', dest='training', default=True, action='store_false')
 
