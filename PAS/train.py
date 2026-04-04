@@ -137,7 +137,7 @@ if __name__ == '__main__':
     experiment_tracker = ExperimentTracker(args, args.output_dir, distributed_rank=get_rank())
 
     train_loader, val_img_loader, val_txt_loader, num_classes = build_dataloader(args)
-    heldout_val_loss_loader = getattr(train_loader, 'actual_val_loss_loader', None)
+    eval_loss_loader = getattr(train_loader, 'eval_loss_loader', None)
     model = build_model(args, num_classes, train_loader=train_loader)
     logger.info('Total params: %2.fM', sum(p.numel() for p in model.parameters()) / 1000000.0)
     log_parameter_trainability(logger, model, args)
@@ -204,9 +204,10 @@ if __name__ == '__main__':
             scheduler,
             checkpointer,
             experiment_tracker=experiment_tracker,
-            heldout_val_loss_loader=heldout_val_loss_loader,
+            eval_loss_loader=eval_loss_loader,
         )
     finally:
         experiment_tracker.finish()
+
 
 

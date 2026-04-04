@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import unittest
 from types import SimpleNamespace
@@ -93,9 +93,10 @@ class DataloaderBuildTests(unittest.TestCase):
         self.assertIsInstance(train_loader.batch_sampler.sampler, DummyDistributedSampler)
         self.assertIsInstance(val_img_loader, torch.utils.data.DataLoader)
         self.assertIsInstance(val_txt_loader, torch.utils.data.DataLoader)
-        self.assertIsInstance(getattr(train_loader, 'actual_val_loss_loader', None), torch.utils.data.DataLoader)
+        self.assertIsInstance(getattr(train_loader, 'eval_loss_loader', None), torch.utils.data.DataLoader)
         self.assertEqual(num_classes, 2)
 
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+

@@ -3,15 +3,20 @@ import os
 import sys
 import unittest
 
-import torch
+try:
+    import torch
+except ImportError:  # pragma: no cover - environment-dependent
+    torch = None
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from utils.metric_logging import RoutingCoverageTracker, build_curve_metrics, build_heldout_val_metrics, build_train_metrics
+if torch is not None:
+    from utils.metric_logging import RoutingCoverageTracker, build_comparison_series, build_train_metrics, build_validation_metrics
 
 
+@unittest.skipUnless(torch is not None, 'Torch is required for metric logging tests.')
 class MetricLoggingTests(unittest.TestCase):
     def test_build_train_metrics_does_not_duplicate_proxy_branch_keys_for_wandb(self):
         outputs = {
@@ -44,7 +49,6 @@ class MetricLoggingTests(unittest.TestCase):
         self.assertEqual(metrics['debug/prototype_usage_entropy_window_500'], 1.75)
         self.assertNotIn('train/loss_proxy_image_branch', metrics)
         self.assertNotIn('train/loss_proxy_text_branch', metrics)
-
 
     def test_build_train_metrics_skips_duplicate_alias_debug_metrics_for_wandb(self):
         outputs = {
@@ -87,38 +91,46 @@ class MetricLoggingTests(unittest.TestCase):
         self.assertNotIn('debug/text_embed_norm', metrics)
         self.assertNotIn('debug/exact_text_embed_norm', metrics)
 
-
-    def test_build_heldout_val_metrics_uses_dedicated_namespace(self):
-        metrics = build_heldout_val_metrics(epoch=3, loss_metrics={'loss_total': 0.75, 'loss_diag': 0.2})
-        self.assertEqual(metrics['heldout_val/epoch'], 3.0)
-        self.assertEqual(metrics['heldout_val/loss_total'], 0.75)
-        self.assertEqual(metrics['heldout_val/loss_diag'], 0.2)
-
-
-    def test_build_curve_metrics_groups_train_and_eval_series_under_common_folder(self):
-        class _Meter:
-            def __init__(self, avg, count=1):
-                self.avg = avg
-                self.count = count
-
+    def test_build_validation_metrics_merges_loss_and_retrieval_under_val_namespace(self):
         evaluator = type('EvaluatorStub', (), {
             'latest_metrics': {
                 'val/pas/R1': 42.0,
                 'val/debug/eval_exact_margin_mean': 0.15,
             }
         })()
-        metrics = build_curve_metrics(
-            epoch=4,
-            train_meters={'loss_total': _Meter(1.25), 'loss_diag': _Meter(0.5)},
+        metrics = build_validation_metrics(
+            epoch=3,
             evaluator=evaluator,
-            heldout_val_loss_metrics={'loss_total': 0.9},
+            loss_metrics={'loss_total': 0.75, 'loss_diag': 0.2},
         )
-        self.assertEqual(metrics['curves/epoch'], 4.0)
-        self.assertEqual(metrics['curves/loss_total/train'], 1.25)
-        self.assertEqual(metrics['curves/loss_diag/train'], 0.5)
-        self.assertEqual(metrics['curves/R1/eval_selected'], 42.0)
-        self.assertEqual(metrics['curves/debug/eval_exact_margin_mean/eval_selected'], 0.15)
-        self.assertEqual(metrics['curves/loss_total/heldout_val'], 0.9)
+        self.assertEqual(metrics['val/epoch'], 3.0)
+        self.assertEqual(metrics['val/loss_total'], 0.75)
+        self.assertEqual(metrics['val/loss_diag'], 0.2)
+        self.assertEqual(metrics['val/pas/R1'], 42.0)
+        self.assertEqual(metrics['val/debug/eval_exact_margin_mean'], 0.15)
+
+    def test_build_comparison_series_groups_train_and_val_under_common_names(self):
+        class _Meter:
+            def __init__(self, avg, count=1):
+                self.avg = avg
+                self.count = count
+
+        validation_metrics = {
+            'val/epoch': 4.0,
+            'val/loss_total': 0.9,
+            'val/pas/R1': 42.0,
+            'val/debug/eval_exact_margin_mean': 0.15,
+        }
+        train_series, val_series = build_comparison_series(
+            train_meters={'loss_total': _Meter(1.25), 'loss_diag': _Meter(0.5)},
+            validation_metrics=validation_metrics,
+        )
+        self.assertEqual(train_series['loss_total'], 1.25)
+        self.assertEqual(train_series['loss_diag'], 0.5)
+        self.assertEqual(val_series['loss_total'], 0.9)
+        self.assertEqual(val_series['R1'], 42.0)
+        self.assertEqual(val_series['debug/eval_exact_margin_mean'], 0.15)
+        self.assertNotIn('epoch', val_series)
 
     def test_routing_coverage_tracker_window_metrics_capture_rotation(self):
         tracker = RoutingCoverageTracker(window_sizes=(3,), activity_epsilons=(1e-3, 1e-2))
@@ -165,3 +177,4 @@ class MetricLoggingTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+

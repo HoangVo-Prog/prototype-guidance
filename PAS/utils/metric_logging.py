@@ -485,41 +485,38 @@ def build_train_metrics(epoch: int, step: Optional[int], outputs: Dict[str, obje
     return metrics
 
 
-def build_validation_metrics(epoch: int, evaluator=None, val_loss: Optional[float] = None) -> Dict[str, float]:
+def build_validation_metrics(
+    epoch: int,
+    evaluator=None,
+    loss_metrics: Optional[Dict[str, float]] = None,
+    val_loss: Optional[float] = None,
+) -> Dict[str, float]:
     metrics = {
         'val/epoch': float(epoch),
     }
-    if val_loss is not None:
-        metrics['val/loss_total'] = float(val_loss)
+    merged_loss_metrics = dict(loss_metrics or {})
+    if val_loss is not None and 'loss_total' not in merged_loss_metrics:
+        merged_loss_metrics['loss_total'] = float(val_loss)
+    for key, value in merged_loss_metrics.items():
+        metrics[f'val/{key}'] = float(value)
     if evaluator is not None and getattr(evaluator, 'latest_metrics', None):
         metrics.update(evaluator.latest_metrics)
     return metrics
 
 
-def build_heldout_val_metrics(epoch: int, loss_metrics: Optional[Dict[str, float]] = None) -> Dict[str, float]:
-    metrics = {
-        'heldout_val/epoch': float(epoch),
-    }
-    if not loss_metrics:
-        return metrics
-    for key, value in loss_metrics.items():
-        metrics[f'heldout_val/{key}'] = float(value)
-    return metrics
 
-
-
-def build_curve_metrics(epoch: int, train_meters=None, evaluator=None, heldout_val_loss_metrics: Optional[Dict[str, float]] = None) -> Dict[str, float]:
-    metrics = {
-        'curves/epoch': float(epoch),
-    }
+def build_comparison_series(train_meters=None, validation_metrics: Optional[Dict[str, float]] = None) -> Tuple[Dict[str, float], Dict[str, float]]:
+    train_series = {}
     if train_meters is not None:
         for key, meter in train_meters.items():
             count = getattr(meter, 'count', 0)
             if count and count > 0:
-                metrics[f'curves/{key}/train'] = float(meter.avg)
-    if evaluator is not None and getattr(evaluator, 'latest_metrics', None):
-        for key, value in evaluator.latest_metrics.items():
-            if key == 'val/top1':
+                train_series[key] = float(meter.avg)
+
+    val_series = {}
+    if validation_metrics:
+        for key, value in validation_metrics.items():
+            if key in ('val/epoch', 'val/top1'):
                 continue
             if key.startswith('val/pas/'):
                 metric_name = key[len('val/pas/'):]
@@ -529,10 +526,8 @@ def build_curve_metrics(epoch: int, train_meters=None, evaluator=None, heldout_v
                 metric_name = key[len('val/'):]
             else:
                 continue
-            metrics[f'curves/{metric_name}/eval_selected'] = float(value)
-    if heldout_val_loss_metrics:
-        for key, value in heldout_val_loss_metrics.items():
-            metrics[f'curves/{key}/heldout_val'] = float(value)
-    return metrics
+            val_series[metric_name] = float(value)
+
+    return train_series, val_series
 
 

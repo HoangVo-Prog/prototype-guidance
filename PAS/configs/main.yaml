@@ -62,7 +62,7 @@ loss:
   lambda_diag: 0.0
   use_loss_ret_exact: true
   use_loss_ret_exact_image: true
-  use_loss_ret_exact_text: false
+  use_loss_ret_exact_text: true
   lambda_ret_exact_image: 1.0
   lambda_ret_exact_text: 1.0
   ret_exact_temperature: 0.07

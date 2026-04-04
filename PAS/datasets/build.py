@@ -1,4 +1,4 @@
-﻿import copy
+import copy
 import logging
 import os.path as op
 import torch
@@ -76,7 +76,7 @@ def collate(batch):
 def _resolve_image_path_from_anno(dataset, anno):
     relative_path = anno.get('img_path', anno.get('file_path'))
     if relative_path is None:
-        raise KeyError('Expected annotation to contain `img_path` or `file_path` for held-out validation monitoring.')
+        raise KeyError('Expected annotation to contain `img_path` or `file_path` for evaluation loss monitoring.')
     if op.isabs(relative_path):
         return relative_path
     return op.join(dataset.img_dir, relative_path)
@@ -173,28 +173,28 @@ def build_dataloader(args, tranforms=None):
                                     shuffle=False,
                                     num_workers=num_workers)
 
-        actual_val_loss_loader = None
-        val_annos = getattr(dataset, 'val_annos', None)
-        if val_annos:
+        eval_loss_loader = None
+        eval_annos = dataset.val_annos if args.val_dataset == 'val' else dataset.test_annos
+        if eval_annos:
             val_monitor_args = copy.copy(args)
             val_monitor_args.txt_aug = False
             val_monitor_args.img_aug = False
-            val_pair_records = _build_paired_records_from_annos(dataset, val_annos)
-            if val_pair_records:
-                val_loss_set = ImageTextDataset(
-                    val_pair_records,
+            eval_pair_records = _build_paired_records_from_annos(dataset, eval_annos)
+            if eval_pair_records:
+                eval_loss_set = ImageTextDataset(
+                    eval_pair_records,
                     val_monitor_args,
                     val_transforms,
                     text_length=args.text_length,
                 )
-                actual_val_loss_loader = DataLoader(
-                    val_loss_set,
+                eval_loss_loader = DataLoader(
+                    eval_loss_set,
                     batch_size=args.batch_size,
                     shuffle=False,
                     num_workers=num_workers,
                     collate_fn=collate,
                 )
-        train_loader.actual_val_loss_loader = actual_val_loss_loader
+        train_loader.eval_loss_loader = eval_loss_loader
 
         return train_loader, val_img_loader, val_txt_loader, num_classes
 
@@ -225,6 +225,7 @@ def build_dataloader(args, tranforms=None):
         test_txt_loader.test_txt_set = test_txt_set
         
         return test_img_loader, test_txt_loader, num_classes
+
 
 
 

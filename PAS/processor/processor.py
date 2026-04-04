@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
-from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_curve_metrics, build_heldout_val_metrics, build_train_metrics, build_validation_metrics, collect_loss_metrics, collect_scalar_metrics
+from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_comparison_series, build_train_metrics, build_validation_metrics, collect_loss_metrics, collect_scalar_metrics
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
 from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
@@ -18,7 +18,7 @@ METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key !
 
 
 
-def _compute_heldout_val_loss_metrics(model, val_loss_loader, args):
+def _compute_eval_loss_metrics(model, val_loss_loader, args):
     if val_loss_loader is None:
         return {}
     metrics = {}
@@ -109,7 +109,7 @@ def _collect_output_gradient_metrics(outputs, scale: float = 1.0):
     return metrics
 
 
-def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker: ExperimentTracker = None, heldout_val_loss_loader=None):
+def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker: ExperimentTracker = None, eval_loss_loader=None):
     log_period = args.log_period
     eval_period = args.eval_period
     save_interval = int(getattr(args, 'save_interval', 0) or 0)
@@ -242,30 +242,30 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
 
         if epoch % eval_period == 0 and get_rank() == 0:
             logger.info('Validation Results - Epoch: {}'.format(epoch))
-            heldout_val_loss_metrics = _compute_heldout_val_loss_metrics(
+            eval_loss_metrics = _compute_eval_loss_metrics(
                 model.module if args.distributed else model,
-                heldout_val_loss_loader,
+                eval_loss_loader,
                 args,
             )
-            heldout_val_loss_total = heldout_val_loss_metrics.get('loss_total')
-            if heldout_val_loss_total is not None:
-                logger.info('Held-out val loss (proxy-disabled): %.4f', heldout_val_loss_total)
+            eval_loss_total = eval_loss_metrics.get('loss_total')
+            if eval_loss_total is not None:
+                logger.info('Selected eval split loss (proxy-disabled): %.4f', eval_loss_total)
             if args.distributed:
                 top1 = evaluator.eval(model.module.eval())
             else:
                 top1 = evaluator.eval(model.eval())
             torch.cuda.empty_cache()
             if experiment_tracker is not None:
-                experiment_tracker.log(build_validation_metrics(epoch, evaluator=evaluator))
-                if heldout_val_loss_metrics:
-                    experiment_tracker.log(build_heldout_val_metrics(epoch, heldout_val_loss_metrics))
-                experiment_tracker.log(
-                    build_curve_metrics(
-                        epoch,
-                        train_meters=meters,
-                        evaluator=evaluator,
-                        heldout_val_loss_metrics=heldout_val_loss_metrics,
-                    )
+                validation_metrics = build_validation_metrics(epoch, evaluator=evaluator, loss_metrics=eval_loss_metrics)
+                experiment_tracker.log(validation_metrics)
+                train_series, val_series = build_comparison_series(
+                    train_meters=meters,
+                    validation_metrics=validation_metrics,
+                )
+                experiment_tracker.log_comparison_charts(
+                    epoch,
+                    train_metrics=train_series,
+                    val_metrics=val_series,
                 )
             if best_top1 < top1:
                 best_top1 = top1
@@ -288,5 +288,7 @@ def do_inference(model, test_img_loader, test_txt_loader, args):
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
+
+
 
 
