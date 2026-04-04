@@ -88,15 +88,21 @@ class PASModel(nn.Module):
             )
 
     def _validate_configuration(self):
+        model_logger = logging.getLogger('pas.model')
         if not bool(getattr(self.args, 'use_prototype_bank', True)):
-            raise ValueError('PASModel requires model.use_prototype_bank=true because the active runtime is prototype-based.')
+            model_logger.warning(
+                'model.use_prototype_bank=false is accepted for ablation bookkeeping, but the current PAS runtime '
+                'still instantiates and uses the prototype bank. This flag is non-fatal and currently advisory only.'
+            )
         if not bool(getattr(self.args, 'use_image_conditioned_pooling', True)):
-            raise ValueError('PASModel requires model.use_image_conditioned_pooling=true because the active runtime scores text under image-conditioned pooling.')
+            model_logger.warning(
+                'model.use_image_conditioned_pooling=false is accepted for ablation bookkeeping, but the current PAS '
+                'runtime still evaluates text with image-conditioned pooling. This flag is non-fatal and currently advisory only.'
+            )
         if not bool(getattr(self.args, 'normalize_projector_outputs', True)):
-            raise ValueError(
-                'PASModel requires model.normalize_projector_outputs=true in the active runtime so '
-                'proxy supervision, fidelity/alignment losses, and retrieval scoring all operate on the same '
-                'cosine-normalized embedding family.'
+            model_logger.warning(
+                'model.normalize_projector_outputs=false is accepted for ablation bookkeeping. The runtime will continue '
+                'without the previous hard constraint, so train/eval geometry may differ from the canonical PAS setup.'
             )
         if self.num_classes <= 0:
             raise ValueError('PASModel requires num_classes > 0 so the active runtime can instantiate class proxies consistently for train and eval.')

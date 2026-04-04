@@ -374,9 +374,16 @@ class PhaseEIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r'model\.prototype_precision=fp16 requires training\.amp_dtype=fp16'):
             build_model(self._build_args(prototype_precision='fp16', amp=True, amp_dtype='bf16'), num_classes=2)
 
-    def test_build_model_requires_normalized_projector_outputs(self):
-        with self.assertRaisesRegex(ValueError, r'normalize_projector_outputs=true'):
-            build_model(self._build_args(normalize_projector_outputs=False), num_classes=2)
+    def test_build_model_allows_ablation_flags_without_runtime_guard_failures(self):
+        model = build_model(
+            self._build_args(
+                normalize_projector_outputs=False,
+                use_prototype_bank=False,
+                use_image_conditioned_pooling=False,
+            ),
+            num_classes=2,
+        )
+        self.assertIsInstance(model, PASModel)
 
     def test_build_model_requires_num_classes_for_eval_construction_too(self):
         with self.assertRaisesRegex(ValueError, r'num_classes > 0'):
