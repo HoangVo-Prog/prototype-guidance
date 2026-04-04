@@ -53,13 +53,18 @@ loss:
   use_loss_proxy_image: false
   use_loss_proxy_text: false
   use_loss_proxy_text_exact: false
-  lambda_proxy: 0.0
+  lambda_proxy_image: 0.0
+  lambda_proxy_text: 0.0
+  lambda_proxy_text_exact: 0.0
   use_loss_align: false
   lambda_align: 0.0
   use_loss_diag: false
   lambda_diag: 0.0
   use_loss_ret_exact: true
-  lambda_ret_exact: 1.0
+  use_loss_ret_exact_image: true
+  use_loss_ret_exact_text: false
+  lambda_ret_exact_image: 1.0
+  lambda_ret_exact_text: 1.0
   ret_exact_temperature: 0.07
   use_loss_support: false
   lambda_support: 0.0
@@ -94,6 +99,7 @@ training:
   training: true
   freeze_image_backbone: true
   freeze_text_backbone: true
+  freeze_proxy: false
   grad_clip: 1.0
   amp: false
   amp_dtype: fp16

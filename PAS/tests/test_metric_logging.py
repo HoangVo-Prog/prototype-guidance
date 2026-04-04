@@ -45,6 +45,48 @@ class MetricLoggingTests(unittest.TestCase):
         self.assertNotIn('train/loss_proxy_image_branch', metrics)
         self.assertNotIn('train/loss_proxy_text_branch', metrics)
 
+
+    def test_build_train_metrics_skips_duplicate_alias_debug_metrics_for_wandb(self):
+        outputs = {
+            'loss_total': 1.0,
+            'loss_proxy': 0.0,
+            'loss_proxy_image': 0.0,
+            'loss_proxy_text': 0.0,
+            'loss_proxy_text_exact': 0.0,
+            'loss_ret_exact': 0.0,
+            'loss_align': 0.0,
+            'loss_diag': 0.0,
+            'loss_support': 0.0,
+            'loss_diversity': 0.0,
+            'loss_balance': 0.0,
+            'loss_proxy_weighted': 0.0,
+            'loss_ret_exact_weighted': 0.0,
+            'loss_align_weighted': 0.0,
+            'loss_diag_weighted': 0.0,
+            'loss_support_weighted': 0.0,
+            'loss_diversity_weighted': 0.0,
+            'loss_balance_weighted': 0.0,
+            'debug': {
+                't_pool_norm': 2.0,
+                'surrogate_t_pool_norm': 2.0,
+                'image_embed_norm': 3.0,
+                'image_embed_norm_raw': 3.0,
+                'text_embed_norm': 4.0,
+                'surrogate_text_embed_norm_raw': 4.0,
+                'exact_text_embed_norm': 5.0,
+                'exact_text_embed_norm_raw': 5.0,
+            },
+        }
+        metrics = build_train_metrics(epoch=1, step=5, outputs=outputs, lr=1e-3, include_debug_metrics=True)
+        self.assertIn('debug/surrogate_t_pool_norm', metrics)
+        self.assertIn('debug/image_embed_norm_raw', metrics)
+        self.assertIn('debug/surrogate_text_embed_norm_raw', metrics)
+        self.assertIn('debug/exact_text_embed_norm_raw', metrics)
+        self.assertNotIn('debug/t_pool_norm', metrics)
+        self.assertNotIn('debug/image_embed_norm', metrics)
+        self.assertNotIn('debug/text_embed_norm', metrics)
+        self.assertNotIn('debug/exact_text_embed_norm', metrics)
+
     def test_routing_coverage_tracker_window_metrics_capture_rotation(self):
         tracker = RoutingCoverageTracker(window_sizes=(3,), activity_epsilons=(1e-3, 1e-2))
         for alpha in (

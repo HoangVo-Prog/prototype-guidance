@@ -46,6 +46,9 @@ def build_parser():
     parser.add_argument('--temperature', type=float, default=0.07)
     parser.add_argument('--proxy_temperature', type=float, default=0.07)
     parser.add_argument('--lambda_proxy', type=float, default=1.0)
+    parser.add_argument('--lambda_proxy_image', type=float, default=None)
+    parser.add_argument('--lambda_proxy_text', type=float, default=None)
+    parser.add_argument('--lambda_proxy_text_exact', type=float, default=None)
     parser.add_argument('--use_loss_proxy_image', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_loss_proxy_text', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_loss_proxy_text_exact', type=_str2bool, nargs='?', const=True, default=True)
@@ -54,7 +57,11 @@ def build_parser():
     parser.add_argument('--use_loss_diag', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_diag', type=float, default=1.0)
     parser.add_argument('--use_loss_ret_exact', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--use_loss_ret_exact_image', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--use_loss_ret_exact_text', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--lambda_ret_exact', type=float, default=1.0)
+    parser.add_argument('--lambda_ret_exact_image', type=float, default=None)
+    parser.add_argument('--lambda_ret_exact_text', type=float, default=None)
     parser.add_argument('--ret_exact_temperature', type=float, default=None)
     parser.add_argument('--use_loss_support', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_support', type=float, default=0.0)
@@ -114,6 +121,7 @@ def build_parser():
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--freeze_image_backbone', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--freeze_text_backbone', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--freeze_proxy', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--test', dest='training', default=True, action='store_false')
 
     parser.add_argument('--optimizer_type', '--optimizer', dest='optimizer', type=str, default='AdamW', help='[SGD, Adam, AdamW]')
@@ -203,6 +211,20 @@ def _finalize_args(args):
     args.prototype_contextualization_enabled = authoritative_contextualization
     args.use_prototype_contextualization = authoritative_contextualization
     args.freeze_backbones = bool(args.freeze_image_backbone and args.freeze_text_backbone)
+    args.lambda_proxy_image = args.lambda_proxy if args.lambda_proxy_image is None else float(args.lambda_proxy_image)
+    args.lambda_proxy_text = args.lambda_proxy if args.lambda_proxy_text is None else float(args.lambda_proxy_text)
+    args.lambda_proxy_text_exact = args.lambda_proxy if args.lambda_proxy_text_exact is None else float(args.lambda_proxy_text_exact)
+    if args.use_loss_ret_exact_image is None:
+        args.use_loss_ret_exact_image = bool(args.use_loss_ret_exact)
+    else:
+        args.use_loss_ret_exact_image = bool(args.use_loss_ret_exact_image)
+    if args.use_loss_ret_exact_text is None:
+        args.use_loss_ret_exact_text = False
+    else:
+        args.use_loss_ret_exact_text = bool(args.use_loss_ret_exact_text)
+    args.lambda_ret_exact_image = args.lambda_ret_exact if args.lambda_ret_exact_image is None else float(args.lambda_ret_exact_image)
+    args.lambda_ret_exact_text = args.lambda_ret_exact if args.lambda_ret_exact_text is None else float(args.lambda_ret_exact_text)
+    args.use_loss_ret_exact = bool(args.use_loss_ret_exact_image or args.use_loss_ret_exact_text)
     args.image_backbone = args.image_backbone or args.pretrain_choice
     args.text_backbone = args.text_backbone or 'clip_text_transformer'
     return args

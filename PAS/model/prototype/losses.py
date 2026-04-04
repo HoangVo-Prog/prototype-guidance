@@ -15,6 +15,9 @@ class PrototypeLosses(nn.Module):
         embedding_dim: int = 0,
         proxy_temperature: float = 0.07,
         lambda_proxy: float = 1.0,
+        lambda_proxy_image: Optional[float] = None,
+        lambda_proxy_text: Optional[float] = None,
+        lambda_proxy_text_exact: Optional[float] = None,
         use_loss_proxy_image: bool = True,
         use_loss_proxy_text: bool = True,
         use_loss_proxy_text_exact: bool = True,
@@ -23,7 +26,11 @@ class PrototypeLosses(nn.Module):
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
         use_loss_ret_exact: bool = False,
+        use_loss_ret_exact_image: Optional[bool] = None,
+        use_loss_ret_exact_text: Optional[bool] = None,
         lambda_ret_exact: float = 1.0,
+        lambda_ret_exact_image: Optional[float] = None,
+        lambda_ret_exact_text: Optional[float] = None,
         ret_exact_temperature: Optional[float] = None,
         use_loss_support: bool = False,
         support_loss_weight: float = 0.0,
@@ -56,6 +63,9 @@ class PrototypeLosses(nn.Module):
         self.use_balance_loss = bool(use_balance_loss)
         self.lambda_bal = float(balance_loss_weight)
         self.lambda_proxy = float(lambda_proxy)
+        self.lambda_proxy_image = self.lambda_proxy if lambda_proxy_image is None else float(lambda_proxy_image)
+        self.lambda_proxy_text = self.lambda_proxy if lambda_proxy_text is None else float(lambda_proxy_text)
+        self.lambda_proxy_text_exact = self.lambda_proxy if lambda_proxy_text_exact is None else float(lambda_proxy_text_exact)
         self.use_loss_proxy_image = bool(use_loss_proxy_image)
         self.use_loss_proxy_text = bool(use_loss_proxy_text)
         self.use_loss_proxy_text_exact = bool(use_loss_proxy_text_exact)
@@ -64,7 +74,12 @@ class PrototypeLosses(nn.Module):
         self.use_loss_diag = bool(use_loss_diag)
         self.lambda_diag = float(lambda_diag)
         self.use_loss_ret_exact = bool(use_loss_ret_exact)
+        self.use_loss_ret_exact_image = self.use_loss_ret_exact if use_loss_ret_exact_image is None else bool(use_loss_ret_exact_image)
+        self.use_loss_ret_exact_text = False if use_loss_ret_exact_text is None else bool(use_loss_ret_exact_text)
+        self.use_loss_ret_exact = bool(self.use_loss_ret_exact_image or self.use_loss_ret_exact_text)
         self.lambda_ret_exact = float(lambda_ret_exact)
+        self.lambda_ret_exact_image = self.lambda_ret_exact if lambda_ret_exact_image is None else float(lambda_ret_exact_image)
+        self.lambda_ret_exact_text = self.lambda_ret_exact if lambda_ret_exact_text is None else float(lambda_ret_exact_text)
         self.ret_exact_temperature = None if ret_exact_temperature is None else float(ret_exact_temperature)
         self.use_loss_support = bool(use_loss_support)
         self.lambda_support = float(support_loss_weight)
@@ -90,7 +105,8 @@ class PrototypeLosses(nn.Module):
             self.use_loss_proxy_text_exact,
             self.use_loss_align,
             self.use_loss_diag,
-            self.use_loss_ret_exact,
+            self.use_loss_ret_exact_image,
+            self.use_loss_ret_exact_text,
         )):
             raise ValueError('At least one task-supervised loss must remain enabled so the training objective does not collapse to prototype-only regularization.')
 
@@ -341,8 +357,10 @@ class PrototypeLosses(nn.Module):
         ret_logit_scale = torch.reciprocal(self.get_ret_exact_temperature()).to(device=exact_pairwise_logits.device, dtype=exact_pairwise_logits.dtype)
         return pairwise_cosine * ret_logit_scale
 
-    def exact_retrieval_loss(self, exact_pairwise_logits: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def exact_retrieval_loss(self, exact_pairwise_logits: torch.Tensor, transpose: bool = False) -> Dict[str, torch.Tensor]:
         loss_logits = self.scale_pairwise_retrieval_logits(exact_pairwise_logits)
+        if transpose:
+            loss_logits = loss_logits.t().contiguous()
         targets = torch.arange(loss_logits.size(0), device=loss_logits.device)
         return {
             'loss': F.cross_entropy(loss_logits, targets),
@@ -379,31 +397,46 @@ class PrototypeLosses(nn.Module):
         loss_proxy_image_info = self.proxy_loss(image_embeddings, pids)
         loss_proxy_text_info = self.proxy_loss(surrogate_text_embeddings, pids)
         loss_proxy_text_exact_info = self.proxy_loss(exact_text_embeddings, pids)
-        loss_ret_exact_info = self.exact_retrieval_loss(exact_pairwise_logits) if self.use_loss_ret_exact else None
+        loss_ret_exact_image_info = self.exact_retrieval_loss(exact_pairwise_logits, transpose=False) if self.use_loss_ret_exact_image else None
+        loss_ret_exact_text_info = self.exact_retrieval_loss(exact_pairwise_logits, transpose=True) if self.use_loss_ret_exact_text else None
         zero = image_embeddings.new_zeros(())
         loss_proxy_image = loss_proxy_image_info['loss'] if self.use_loss_proxy_image else zero
         loss_proxy_text = loss_proxy_text_info['loss'] if self.use_loss_proxy_text else zero
         loss_proxy_text_exact = loss_proxy_text_exact_info['loss'] if self.use_loss_proxy_text_exact else zero
         loss_proxy = loss_proxy_image + loss_proxy_text + loss_proxy_text_exact
+        loss_proxy_image_weighted = self.lambda_proxy_image * loss_proxy_image
+        loss_proxy_text_weighted = self.lambda_proxy_text * loss_proxy_text
+        loss_proxy_text_exact_weighted = self.lambda_proxy_text_exact * loss_proxy_text_exact
+        loss_proxy_weighted = loss_proxy_image_weighted + loss_proxy_text_weighted + loss_proxy_text_exact_weighted
         loss_align = self.cosine_alignment_loss(image_embeddings, surrogate_text_embeddings) if self.use_loss_align else zero
         loss_diag = self.diagonal_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings) if self.use_loss_diag else zero
-        loss_ret_exact = loss_ret_exact_info['loss'] if self.use_loss_ret_exact else zero
+        loss_ret_exact_image = loss_ret_exact_image_info['loss'] if self.use_loss_ret_exact_image else zero
+        loss_ret_exact_text = loss_ret_exact_text_info['loss'] if self.use_loss_ret_exact_text else zero
+        loss_ret_exact = loss_ret_exact_image + loss_ret_exact_text
+        loss_ret_exact_image_weighted = self.lambda_ret_exact_image * loss_ret_exact_image
+        loss_ret_exact_text_weighted = self.lambda_ret_exact_text * loss_ret_exact_text
+        loss_ret_exact_weighted = loss_ret_exact_image_weighted + loss_ret_exact_text_weighted
         loss_support = self.support_loss(routing_weights)
         loss_diversity = self.diversity_loss(prototypes)
         loss_balance = self.balance_loss(routing_weights)
         loss_total = (
-            (self.lambda_proxy * loss_proxy)
+            loss_proxy_weighted
             + (self.lambda_align * loss_align)
             + (self.lambda_diag * loss_diag)
-            + (self.lambda_ret_exact * loss_ret_exact)
+            + loss_ret_exact_weighted
             + (self.lambda_support * loss_support)
             + (self.lambda_div * loss_diversity)
             + (self.lambda_bal * loss_balance)
         )
 
+        debug_pairwise_logits = None
+        if loss_ret_exact_image_info is not None:
+            debug_pairwise_logits = loss_ret_exact_image_info['logits']
+        elif loss_ret_exact_text_info is not None:
+            debug_pairwise_logits = loss_ret_exact_text_info['logits'].t().contiguous()
         exact_debug_metrics = (
-            self._pairwise_retrieval_debug_metrics(exact_pairwise_logits, loss_ret_exact_info['logits'])
-            if self.use_loss_ret_exact and loss_ret_exact_info is not None
+            self._pairwise_retrieval_debug_metrics(exact_pairwise_logits, debug_pairwise_logits)
+            if self.use_loss_ret_exact and debug_pairwise_logits is not None
             else self._cross_modal_debug_metrics('image_exact', image_embeddings, exact_text_embeddings, pids)
         )
         outputs = {
@@ -413,24 +446,38 @@ class PrototypeLosses(nn.Module):
             'loss_proxy_text': loss_proxy_text,
             'loss_proxy_text_exact': loss_proxy_text_exact,
             'loss_ret_exact': loss_ret_exact,
+            'loss_ret_exact_image': loss_ret_exact_image,
+            'loss_ret_exact_text': loss_ret_exact_text,
             'loss_align': loss_align,
             'loss_diag': loss_diag,
             'loss_support': loss_support,
             'loss_diversity': loss_diversity,
             'loss_balance': loss_balance,
-            'loss_proxy_weighted': self.lambda_proxy * loss_proxy,
-            'loss_ret_exact_weighted': self.lambda_ret_exact * loss_ret_exact,
+            'loss_proxy_image_weighted': loss_proxy_image_weighted,
+            'loss_proxy_text_weighted': loss_proxy_text_weighted,
+            'loss_proxy_text_exact_weighted': loss_proxy_text_exact_weighted,
+            'loss_proxy_weighted': loss_proxy_weighted,
+            'loss_ret_exact_image_weighted': loss_ret_exact_image_weighted,
+            'loss_ret_exact_text_weighted': loss_ret_exact_text_weighted,
+            'loss_ret_exact_weighted': loss_ret_exact_weighted,
             'loss_align_weighted': self.lambda_align * loss_align,
             'loss_diag_weighted': self.lambda_diag * loss_diag,
             'loss_support_weighted': self.lambda_support * loss_support,
             'loss_diversity_weighted': self.lambda_div * loss_diversity,
             'loss_balance_weighted': self.lambda_bal * loss_balance,
             'lambda_proxy': torch.tensor(self.lambda_proxy, device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_proxy_image': torch.tensor(self.lambda_proxy_image, device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_proxy_text': torch.tensor(self.lambda_proxy_text, device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_proxy_text_exact': torch.tensor(self.lambda_proxy_text_exact, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_proxy_image': torch.tensor(float(self.use_loss_proxy_image), device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_proxy_text': torch.tensor(float(self.use_loss_proxy_text), device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_proxy_text_exact': torch.tensor(float(self.use_loss_proxy_text_exact), device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_ret_exact': torch.tensor(float(self.use_loss_ret_exact), device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_ret_exact_image': torch.tensor(float(self.use_loss_ret_exact_image), device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_ret_exact_text': torch.tensor(float(self.use_loss_ret_exact_text), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_ret_exact': torch.tensor(self.lambda_ret_exact, device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_ret_exact_image': torch.tensor(self.lambda_ret_exact_image, device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_ret_exact_text': torch.tensor(self.lambda_ret_exact_text, device=loss_total.device, dtype=loss_total.dtype),
             'ret_exact_temperature': self.get_ret_exact_temperature().to(device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_align': torch.tensor(float(self.use_loss_align), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_align': torch.tensor(self.lambda_align, device=loss_total.device, dtype=loss_total.dtype),
@@ -457,7 +504,9 @@ class PrototypeLosses(nn.Module):
             outputs['image_proxy_logits'] = loss_proxy_image_info['logits']
             outputs['text_proxy_logits'] = loss_proxy_text_info['logits']
             outputs['text_exact_proxy_logits'] = loss_proxy_text_exact_info['logits']
-            if loss_ret_exact_info is not None:
-                outputs['ret_exact_logits'] = loss_ret_exact_info['logits']
+            if loss_ret_exact_image_info is not None:
+                outputs['ret_exact_logits'] = loss_ret_exact_image_info['logits']
+            elif loss_ret_exact_text_info is not None:
+                outputs['ret_exact_logits'] = loss_ret_exact_text_info['logits']
             outputs['class_proxies'] = self.class_proxies.detach()
         return outputs

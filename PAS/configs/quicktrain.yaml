@@ -49,13 +49,11 @@ loss:
   use_loss_proxy_image: true
   use_loss_proxy_text: false
   use_loss_proxy_text_exact: true
-  lambda_proxy: 1.0
   use_loss_align: true
   lambda_align: 0.25
   use_loss_diag: true
   lambda_diag: 0.25
   use_loss_ret_exact: false
-  lambda_ret_exact: 1.0
   ret_exact_temperature: null
   use_loss_support: false
   lambda_support: 0.0

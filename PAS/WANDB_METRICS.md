@@ -56,6 +56,7 @@ The logging path is implemented in:
 - `train/loss_proxy_image`: proxy loss on the image embedding branch.
 - `train/loss_proxy_text`: proxy loss on the surrogate text branch.
 - `train/loss_proxy_text_exact`: proxy loss on the exact pooled text branch.
+- `train/loss_ret_exact`: in-batch exact image-to-text retrieval cross-entropy in deployed scorer space.
 - `train/loss_align`: cosine-alignment loss between image and surrogate text embeddings.
 - `train/loss_diag`: diagonal fidelity loss between surrogate and exact text embeddings.
 - `train/loss_support`: low-support routing penalty based on inverse participation ratio.
@@ -64,6 +65,7 @@ The logging path is implemented in:
 
 ### Weighted objective terms
 - `train/loss_proxy_weighted`: `lambda_proxy * loss_proxy`.
+- `train/loss_ret_exact_weighted`: `lambda_ret_exact * loss_ret_exact`.
 - `train/loss_align_weighted`: `lambda_align * loss_align`.
 - `train/loss_diag_weighted`: `lambda_diag * loss_diag`.
 - `train/loss_support_weighted`: `lambda_support * loss_support`.
@@ -78,37 +80,22 @@ These are logged only when `logging.log_debug_metrics=true`.
 - `debug/logit_scale`: multiplicative retrieval scale used for exact similarity scoring.
 - `debug/proxy_temperature`: temperature used for proxy-classification logits.
 - `debug/retrieval_temperature`: reciprocal of `logit_scale`, shown as the effective retrieval temperature.
+- `debug/ret_exact_temperature`: temperature used by the exact retrieval CE; equals `debug/retrieval_temperature` when unset in config.
 
 ### Embedding and pooled-feature norms
 - `debug/q_norm`: norm of the prototype summary vector `Q` used for token scoring.
-- `debug/t_pool_norm`: norm of the surrogate pooled text feature.
-- `debug/surrogate_t_pool_norm`: same surrogate pooled-text norm, logged under a more explicit name.
+- `debug/surrogate_t_pool_norm`: norm of the surrogate pooled text feature.
 - `debug/exact_t_pool_norm`: norm of the exact pooled text feature.
 - `debug/image_feature_norm`: norm of the image feature entering the image projector.
-- `debug/image_embed_norm`: mean norm of raw projected image embeddings before optional output normalization.
-- `debug/image_embed_norm_raw`: same quantity as `debug/image_embed_norm`.
+- `debug/image_embed_norm_raw`: mean norm of raw projected image embeddings before optional output normalization.
 - `debug/image_embed_unit_norm`: mean norm of the final image embeddings after projector normalization.
 - `debug/image_embed_norm_std`: standard deviation of raw image embedding norms.
 - `debug/image_embed_norm_min`: minimum raw image embedding norm in the logged batch.
 - `debug/image_embed_norm_max`: maximum raw image embedding norm in the logged batch.
-- `debug/text_embed_norm`: mean norm of surrogate text embeddings before optional output normalization.
-- `debug/text_embed_norm_raw`: same quantity as `debug/text_embed_norm`.
-- `debug/text_embed_unit_norm`: mean norm of final surrogate text embeddings after projector normalization.
-- `debug/text_embed_norm_std`: standard deviation of surrogate text embedding norms.
-- `debug/text_embed_norm_min`: minimum surrogate text embedding norm.
-- `debug/text_embed_norm_max`: maximum surrogate text embedding norm.
-- `debug/surrogate_text_embed_norm`: mean norm of surrogate text projector outputs before normalization.
-- `debug/surrogate_text_embed_norm_raw`: same quantity as `debug/surrogate_text_embed_norm`.
+- `debug/surrogate_text_embed_norm_raw`: mean norm of surrogate text projector outputs before normalization.
 - `debug/surrogate_text_embed_unit_norm`: mean norm of final surrogate text embeddings after normalization.
-- `debug/surrogate_text_embed_norm_std`: standard deviation of surrogate text embedding norms.
-- `debug/surrogate_text_embed_norm_min`: minimum surrogate text embedding norm.
-- `debug/surrogate_text_embed_norm_max`: maximum surrogate text embedding norm.
-- `debug/exact_text_embed_norm`: mean norm of exact text embeddings before normalization.
-- `debug/exact_text_embed_norm_raw`: same quantity as `debug/exact_text_embed_norm`.
+- `debug/exact_text_embed_norm_raw`: mean norm of exact text embeddings before normalization.
 - `debug/exact_text_embed_unit_norm`: mean norm of final exact text embeddings after normalization.
-- `debug/exact_text_embed_norm_std`: standard deviation of exact text embedding norms.
-- `debug/exact_text_embed_norm_min`: minimum exact text embedding norm.
-- `debug/exact_text_embed_norm_max`: maximum exact text embedding norm.
 
 ### Routing and prototype-usage behavior
 - `debug/prototype_usage_entropy`: entropy of average prototype usage over the batch. Higher means usage is more evenly spread.
@@ -208,6 +195,19 @@ These are logged only when `logging.log_debug_metrics=true`.
 - `debug/text_exact_proxy_margin_mean`: mean positive-minus-hardest-negative margin for exact text embeddings.
 - `debug/text_exact_proxy_margin_min`: minimum positive-minus-hardest-negative margin for exact text embeddings.
 
+### Exact Retrieval Diagnostics
+- `debug/image_surrogate_positive_cosine_mean`: mean positive image-vs-surrogate cosine on the current batch.
+- `debug/image_surrogate_hardest_negative_cosine_mean`: mean hardest-negative image-vs-surrogate cosine on the current batch.
+- `debug/image_surrogate_margin_mean`: mean positive-minus-hardest-negative surrogate margin.
+- `debug/image_exact_positive_cosine_mean`: mean positive exact image-to-text cosine from the in-batch deployed scorer.
+- `debug/image_exact_hardest_negative_cosine_mean`: mean hardest-negative exact cosine from the in-batch deployed scorer.
+- `debug/image_exact_margin_mean`: mean positive-minus-hardest-negative exact margin.
+- `debug/image_exact_positive_logit_mean`: mean scaled positive exact score on the training batch.
+- `debug/image_exact_hardest_negative_logit_mean`: mean scaled hardest-negative exact score on the training batch.
+- `debug/exact_pairwise_logit_mean`: mean of the in-batch exact pairwise logits used by `L_ret_exact`.
+- `debug/exact_pairwise_logit_std`: standard deviation of the in-batch exact pairwise logits.
+- `debug/exact_pairwise_logit_scale_or_norm`: effective logit scale used for `L_ret_exact`.
+
 ### Class-proxy parameter norms
 - `debug/class_proxy_norm_mean`: mean L2 norm of raw class-proxy parameters.
 - `debug/class_proxy_norm_std`: standard deviation of raw class-proxy norms.
@@ -228,6 +228,7 @@ These are logged only when `logging.log_debug_metrics=true`.
 - `debug/grad_norm_image_projected_output`: gradient norm observed at the image projected output tensor.
 - `debug/grad_norm_surrogate_text_projected_output`: gradient norm observed at the surrogate text projected output tensor.
 - `debug/grad_norm_exact_text_projected_output`: gradient norm observed at the exact text projected output tensor.
+- `debug/exact_branch_grad_norm`: gradient norm observed at the exact pairwise retrieval logits used by `L_ret_exact`.
 - `debug/grad_norm_total`: total gradient norm across all parameters.
 
 ## Epoch Coverage Metrics

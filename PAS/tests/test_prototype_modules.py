@@ -688,7 +688,7 @@ class PrototypeModuleTests(unittest.TestCase):
             use_loss_proxy_text_exact=False,
             use_loss_align=False,
             use_loss_diag=False,
-            use_loss_ret_exact=True,
+            use_loss_ret_exact_image=True,
             use_diversity_loss=False,
             use_balance_loss=False,
             balance_loss_weight=0.0,
@@ -710,6 +710,7 @@ class PrototypeModuleTests(unittest.TestCase):
             dtype=torch.float32,
         )
         self.assertLess(losses.exact_retrieval_loss(strong)['loss'].item(), losses.exact_retrieval_loss(weak)['loss'].item())
+        self.assertLess(losses.exact_retrieval_loss(strong, transpose=True)['loss'].item(), losses.exact_retrieval_loss(weak, transpose=True)['loss'].item())
 
     def test_head_exact_retrieval_loss_exposes_pairwise_logits(self):
         head = self._build_head(use_loss_ret_exact=True)
@@ -760,6 +761,47 @@ class PrototypeModuleTests(unittest.TestCase):
             if name.startswith('text_projector') and parameter.grad is not None
         )
         self.assertGreater(text_projector_grad, 0.0)
+
+    def test_exact_retrieval_loss_supports_independent_image_and_text_weights(self):
+        losses = PrototypeLosses(
+            temperature_init=0.07,
+            normalize_embeddings=True,
+            num_classes=self.num_classes,
+            embedding_dim=4,
+            proxy_temperature=0.2,
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=False,
+            use_loss_ret_exact_image=True,
+            use_loss_ret_exact_text=True,
+            lambda_ret_exact_image=2.0,
+            lambda_ret_exact_text=0.5,
+            use_diversity_loss=False,
+            use_balance_loss=False,
+            balance_loss_weight=0.0,
+        )
+        logits = torch.tensor(
+            [
+                [3.0, 0.2, 0.1],
+                [0.3, 2.5, 0.4],
+                [0.1, 0.4, 2.8],
+            ],
+            dtype=torch.float32,
+        )
+        image_embeddings = torch.randn(self.batch_size, 4)
+        surrogate_embeddings = torch.randn(self.batch_size, 4)
+        exact_embeddings = torch.randn(self.batch_size, 4)
+        outputs = losses(
+            image_embeddings,
+            surrogate_embeddings,
+            exact_embeddings,
+            pids=torch.tensor([0, 1, 2]),
+            exact_pairwise_logits=logits,
+        )
+        expected = (2.0 * outputs['loss_ret_exact_image']) + (0.5 * outputs['loss_ret_exact_text'])
+        self.assertAlmostEqual(outputs['loss_ret_exact_weighted'].item(), expected.item(), places=6)
 
     def test_loss_module_proxy_parameters_exist(self):
         losses = PrototypeLosses(

@@ -311,6 +311,15 @@ class PhaseEIntegrationTests(unittest.TestCase):
         self.assertEqual(groups['text_backbone']['lr'], args.lr_text_backbone)
         self.assertNotIn('logit_scale', groups)
 
+
+    def test_freeze_proxy_removes_class_proxies_from_trainable_optimizer_groups(self):
+        args = self._build_args(freeze_proxy=True)
+        model = PASModel(args, num_classes=2)
+        self.assertFalse(model.prototype_head.losses.class_proxies.requires_grad)
+        optimizer = build_optimizer(args, model)
+        groups = {group['name']: group for group in optimizer.param_groups}
+        self.assertNotIn('class_proxies', groups)
+
     def test_build_model_respects_prototype_precision_setting(self):
         model_fp32 = build_model(self._build_args(prototype_precision='fp32'), num_classes=2)
         prototype_dtypes_fp32 = {parameter.dtype for parameter in model_fp32.prototype_head.parameters()}

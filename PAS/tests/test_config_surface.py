@@ -221,23 +221,46 @@ class ConfigSurfaceTests(unittest.TestCase):
             {
                 'loss': {
                     'use_loss_ret_exact': True,
+                    'use_loss_ret_exact_text': True,
                     'lambda_ret_exact': 1.75,
+                    'lambda_ret_exact_text': 0.6,
                     'ret_exact_temperature': 0.11,
+                },
+                'training': {
+                    'freeze_proxy': True,
                 },
             }
         )
         args = get_args(['--config_file', path])
         self.assertTrue(args.use_loss_ret_exact)
+        self.assertTrue(args.use_loss_ret_exact_image)
+        self.assertTrue(args.use_loss_ret_exact_text)
         self.assertEqual(args.lambda_ret_exact, 1.75)
+        self.assertEqual(args.lambda_ret_exact_image, 1.75)
+        self.assertEqual(args.lambda_ret_exact_text, 0.6)
         self.assertEqual(args.ret_exact_temperature, 0.11)
+        self.assertTrue(args.freeze_proxy)
 
         cli_args = get_args([
-            '--use_loss_ret_exact', 'true',
-            '--lambda_ret_exact', '2.5',
+            '--use_loss_ret_exact_image', 'true',
+            '--use_loss_ret_exact_text', 'true',
+            '--lambda_ret_exact_image', '2.5',
+            '--lambda_ret_exact_text', '0.4',
+            '--lambda_proxy_image', '1.1',
+            '--lambda_proxy_text', '0.7',
+            '--lambda_proxy_text_exact', '0.2',
+            '--freeze_proxy', 'true',
             '--ret_exact_temperature', '0.09',
         ])
         self.assertTrue(cli_args.use_loss_ret_exact)
-        self.assertEqual(cli_args.lambda_ret_exact, 2.5)
+        self.assertTrue(cli_args.use_loss_ret_exact_image)
+        self.assertTrue(cli_args.use_loss_ret_exact_text)
+        self.assertEqual(cli_args.lambda_ret_exact_image, 2.5)
+        self.assertEqual(cli_args.lambda_ret_exact_text, 0.4)
+        self.assertEqual(cli_args.lambda_proxy_image, 1.1)
+        self.assertEqual(cli_args.lambda_proxy_text, 0.7)
+        self.assertEqual(cli_args.lambda_proxy_text_exact, 0.2)
+        self.assertTrue(cli_args.freeze_proxy)
         self.assertEqual(cli_args.ret_exact_temperature, 0.09)
 
     def test_new_align_and_diag_disable_flags_parse_from_cli(self):

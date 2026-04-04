@@ -187,8 +187,10 @@ prototype:
   dead_prototype_threshold: 0.005
 
 loss:
-  # Main surrogate proxy-loss weight.
-  lambda_proxy: 1.0
+  # Proxy weights for each branch.
+  lambda_proxy_image: 1.0
+  lambda_proxy_text: 1.0
+  lambda_proxy_text_exact: 1.0
 
   # Whether to include each proxy branch inside the surrogate objective.
   use_loss_proxy_image: true
@@ -207,12 +209,16 @@ loss:
   # Diagonal surrogate-vs-exact fidelity weight.
   lambda_diag: 1.0
 
-  # Enables in-batch exact image-to-text retrieval supervision in the deployed exact scorer space.
-  # When true, training builds [B, B] exact pairwise logits using the same image-conditioned scorer used at eval.
+  # Legacy retrieval toggle. When set alone, it maps to use_loss_ret_exact_image.
   use_loss_ret_exact: false
 
-  # Weight on the exact retrieval cross-entropy term.
-  lambda_ret_exact: 1.0
+  # Explicit exact retrieval toggles for the image->text and text->image directions.
+  use_loss_ret_exact_image: false
+  use_loss_ret_exact_text: false
+
+  # Exact retrieval weights for each direction.
+  lambda_ret_exact_image: 1.0
+  lambda_ret_exact_text: 1.0
 
   # Optional override temperature for the exact retrieval CE.
   # null reuses model.temperature / the fixed eval retrieval temperature.
@@ -227,6 +233,9 @@ loss:
 
   # Minimum inverse-participation-ratio support before the penalty activates.
   support_min: 2.0
+
+  # If true, freeze the class-proxy matrix so proxy losses update only the encoders/projectors.
+  freeze_proxy: false
 
   # Enables the optional prototype balancing loss.
   use_balancing_loss: false

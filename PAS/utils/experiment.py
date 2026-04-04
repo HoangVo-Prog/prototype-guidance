@@ -37,6 +37,10 @@ class ExperimentTracker:
             dir=output_dir,
             config=build_runtime_config(args),
             reinit=True,
+            # PAS logs canonical metrics directly through wandb.log(...);
+            # disabling TB sync avoids a second mirrored namespace such as
+            # train_metrics/* when TensorBoard event files are present.
+            sync_tensorboard=False,
         )
         self._define_default_metrics()
         if getattr(args, 'wandb_log_code', False):

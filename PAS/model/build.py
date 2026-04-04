@@ -138,6 +138,7 @@ class PASModel(nn.Module):
     def _apply_freeze_policy(self):
         self.freeze_image_backbone = bool(getattr(self.args, 'freeze_image_backbone', True))
         self.freeze_text_backbone = bool(getattr(self.args, 'freeze_text_backbone', True))
+        self.freeze_proxy = bool(getattr(self.args, 'freeze_proxy', False))
 
         if self.freeze_image_backbone:
             self._freeze_module(self.base_model.visual)
@@ -148,6 +149,8 @@ class PASModel(nn.Module):
             self.base_model.ln_final.weight.requires_grad = False
             self.base_model.ln_final.bias.requires_grad = False
             self.base_model.text_projection.requires_grad = False
+        if self.freeze_proxy:
+            self.prototype_head.losses.class_proxies.requires_grad = False
 
 
     def _collect_train_image_records(self, train_loader) -> list:
@@ -616,12 +619,19 @@ class PASModel(nn.Module):
             'loss_proxy_text': losses['loss_proxy_text'],
             'loss_proxy_text_exact': losses['loss_proxy_text_exact'],
             'loss_ret_exact': losses['loss_ret_exact'],
+            'loss_ret_exact_image': losses['loss_ret_exact_image'],
+            'loss_ret_exact_text': losses['loss_ret_exact_text'],
             'loss_align': losses['loss_align'],
             'loss_diag': losses['loss_diag'],
             'loss_support': losses['loss_support'],
             'loss_diversity': losses['loss_diversity'],
             'loss_balance': losses['loss_balance'],
+            'loss_proxy_image_weighted': losses['loss_proxy_image_weighted'],
+            'loss_proxy_text_weighted': losses['loss_proxy_text_weighted'],
+            'loss_proxy_text_exact_weighted': losses['loss_proxy_text_exact_weighted'],
             'loss_proxy_weighted': losses['loss_proxy_weighted'],
+            'loss_ret_exact_image_weighted': losses['loss_ret_exact_image_weighted'],
+            'loss_ret_exact_text_weighted': losses['loss_ret_exact_text_weighted'],
             'loss_ret_exact_weighted': losses['loss_ret_exact_weighted'],
             'loss_align_weighted': losses['loss_align_weighted'],
             'loss_diag_weighted': losses['loss_diag_weighted'],
@@ -629,9 +639,16 @@ class PASModel(nn.Module):
             'loss_diversity_weighted': losses['loss_diversity_weighted'],
             'loss_balance_weighted': losses['loss_balance_weighted'],
             'lambda_proxy': losses['lambda_proxy'],
+            'lambda_proxy_image': losses['lambda_proxy_image'],
+            'lambda_proxy_text': losses['lambda_proxy_text'],
+            'lambda_proxy_text_exact': losses['lambda_proxy_text_exact'],
             'use_loss_proxy_text_exact': losses['use_loss_proxy_text_exact'],
             'use_loss_ret_exact': losses['use_loss_ret_exact'],
+            'use_loss_ret_exact_image': losses['use_loss_ret_exact_image'],
+            'use_loss_ret_exact_text': losses['use_loss_ret_exact_text'],
             'lambda_ret_exact': losses['lambda_ret_exact'],
+            'lambda_ret_exact_image': losses['lambda_ret_exact_image'],
+            'lambda_ret_exact_text': losses['lambda_ret_exact_text'],
             'ret_exact_temperature': losses['ret_exact_temperature'].detach(),
             'lambda_align': losses['lambda_align'],
             'lambda_diag': losses['lambda_diag'],
