@@ -15,31 +15,27 @@ The logging path is implemented in:
 ### Metric namespaces
 - `train/*`: training metrics.
 - `debug/*`: per-batch diagnostic metrics.
-- `train_epoch/*`: epoch-end diagnostic summaries.
 - `val/*`: validation and retrieval metrics.
 
 ### X-axes in W&B
 - `train/*` uses `train/step` as the step axis.
 - `debug/*` uses `train/step` as the step axis.
-- `train_epoch/*` uses `train_epoch/epoch` as the step axis.
 - `val/*` uses `val/epoch` as the step axis.
 
 ### When metrics are logged
 - Training metrics are logged every `wandb_log_interval` steps.
 - Training metrics are also logged once at the end of each epoch.
-- Cross-batch `train_epoch/*` coverage summaries are logged once at the end of each epoch when `logging.log_debug_metrics=true`.
 - Validation metrics are logged every evaluation epoch.
 
 ### Important runtime toggles
 - `logging.use_wandb=true`: enables W&B.
-- `logging.log_debug_metrics=true`: enables the `debug/*` metrics below and the routing coverage summaries under `train_epoch/*`.
+- `logging.log_debug_metrics=true`: enables the `debug/*` metrics below.
 - `evaluation.retrieval_metrics`: controls which retrieval metrics appear under `val/pas/*`.
 
 ### Notes on interpretation
 - `train/*` metrics are computed from the current batch at log time.
 - Most `debug/*` metrics are computed from the current batch at log time.
 - Rolling-window `debug/*` coverage metrics summarize recent training batches rather than only the current batch.
-- `train_epoch/*` metrics are cumulative summaries over the completed training epoch.
 - Some losses can be intentionally zero if their corresponding loss branch is disabled.
 - Prototype-bank initialization diagnostics are logged to the Python logger, not to W&B.
 
@@ -235,16 +231,6 @@ These are logged only when `logging.log_debug_metrics=true`.
 
 These are logged once per epoch when `logging.log_debug_metrics=true`. They summarize cumulative routing coverage across the completed training epoch.
 
-- `train_epoch/epoch`: epoch index used as the x-axis for the epoch summary series.
-- `train_epoch/routing_top1_active_count`: number of prototypes that were selected as top-1 at least once during the epoch.
-- `train_epoch/routing_top1_dead_count`: number of prototypes that were never selected as top-1 during the epoch.
-- `train_epoch/routing_top1_usage_entropy`: entropy of the normalized cumulative top-1 winner histogram over the epoch.
-- `train_epoch/routing_top1_usage_max`: largest normalized top-1 winner fraction over the epoch.
-- `train_epoch/prototype_usage_entropy`: entropy of the normalized epoch-averaged prototype usage distribution.
-- `train_epoch/prototype_usage_max`: maximum entry of the normalized epoch-averaged prototype usage distribution.
-- `train_epoch/prototype_active_count_eps_1e-3`: number of prototypes whose epoch-averaged usage exceeds `1e-3`.
-- `train_epoch/prototype_active_count_eps_1e-2`: number of prototypes whose epoch-averaged usage exceeds `1e-2`.
-- `train_epoch/routing_top3_active_count`: number of distinct prototypes that appeared in any sample's top-3 routing winners during the epoch.
 
 ## Validation Metrics
 
@@ -274,7 +260,7 @@ If you want a compact subset to watch first, start with:
 - optimization: `train/loss_total`, `train/lr`
 - retrieval quality: `val/top1`, `val/pas/mAP`, `val/pas/rSum`
 - routing health: `debug/prototype_usage_entropy`, `debug/prototype_dead_count`, `debug/routing_effective_support`
-- cross-batch coverage: `debug/routing_top1_active_count_window_500`, `debug/prototype_usage_entropy_window_500`, `train_epoch/routing_top1_active_count`
+- cross-batch coverage: `debug/routing_top1_active_count_window_500`, `debug/prototype_usage_entropy_window_500`
 - geometry health: `debug/prototype_pairwise_cosine_max`, `debug/contextualized_prototype_pairwise_cosine_max`
 - token pooling: `debug/token_pool_entropy`, `debug/token_special_mass`
 - optimization stability: `debug/grad_norm_total`, `debug/logit_scale`

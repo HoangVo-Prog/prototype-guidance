@@ -181,7 +181,6 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
             if meter.count > 0:
                 tb_writer.add_scalar(key, meter.avg, epoch)
 
-        epoch_coverage_metrics = coverage_tracker.flush_epoch_metrics(epoch) if coverage_tracker is not None else None
         if experiment_tracker is not None and get_rank() == 0:
             experiment_tracker.log(
                 build_train_metrics(
@@ -192,8 +191,6 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                     include_debug_metrics=log_debug_metrics,
                 )
             )
-            if epoch_coverage_metrics is not None:
-                experiment_tracker.log(epoch_coverage_metrics)
         if coverage_tracker is not None:
             coverage_tracker.reset_epoch()
 

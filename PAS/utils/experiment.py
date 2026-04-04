@@ -57,8 +57,6 @@ class ExperimentTracker:
             wandb.define_metric('train/step')
             wandb.define_metric('train/*', step_metric='train/step')
             wandb.define_metric('debug/*', step_metric='train/step')
-            wandb.define_metric('train_epoch/epoch')
-            wandb.define_metric('train_epoch/*', step_metric='train_epoch/epoch')
             wandb.define_metric('val/epoch')
             wandb.define_metric('val/*', step_metric='val/epoch')
         except Exception as exc:  # pragma: no cover
