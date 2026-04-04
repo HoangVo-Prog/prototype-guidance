@@ -22,6 +22,7 @@ if torch is not None:
 
 class DummyDatasetFactory:
     def __init__(self, root=''):
+        self.img_dir = 'unused_imgs'
         self.train = [
             (0, 0, 'dummy_a.jpg', 'caption a'),
             (0, 1, 'dummy_b.jpg', 'caption b'),
@@ -37,6 +38,10 @@ class DummyDatasetFactory:
         }
         self.val = split
         self.test = split
+        self.val_annos = [
+            {'id': 10, 'file_path': 'img_a.jpg', 'captions': ['caption a']},
+            {'id': 11, 'file_path': 'img_b.jpg', 'captions': ['caption b']},
+        ]
 
 
 if Sampler is not None:
@@ -88,6 +93,7 @@ class DataloaderBuildTests(unittest.TestCase):
         self.assertIsInstance(train_loader.batch_sampler.sampler, DummyDistributedSampler)
         self.assertIsInstance(val_img_loader, torch.utils.data.DataLoader)
         self.assertIsInstance(val_txt_loader, torch.utils.data.DataLoader)
+        self.assertIsInstance(getattr(train_loader, 'actual_val_loss_loader', None), torch.utils.data.DataLoader)
         self.assertEqual(num_classes, 2)
 
 

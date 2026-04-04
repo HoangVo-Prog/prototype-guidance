@@ -9,7 +9,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-from utils.metric_logging import RoutingCoverageTracker, build_train_metrics
+from utils.metric_logging import RoutingCoverageTracker, build_curve_metrics, build_heldout_val_metrics, build_train_metrics
 
 
 class MetricLoggingTests(unittest.TestCase):
@@ -86,6 +86,39 @@ class MetricLoggingTests(unittest.TestCase):
         self.assertNotIn('debug/image_embed_norm', metrics)
         self.assertNotIn('debug/text_embed_norm', metrics)
         self.assertNotIn('debug/exact_text_embed_norm', metrics)
+
+
+    def test_build_heldout_val_metrics_uses_dedicated_namespace(self):
+        metrics = build_heldout_val_metrics(epoch=3, loss_metrics={'loss_total': 0.75, 'loss_diag': 0.2})
+        self.assertEqual(metrics['heldout_val/epoch'], 3.0)
+        self.assertEqual(metrics['heldout_val/loss_total'], 0.75)
+        self.assertEqual(metrics['heldout_val/loss_diag'], 0.2)
+
+
+    def test_build_curve_metrics_groups_train_and_eval_series_under_common_folder(self):
+        class _Meter:
+            def __init__(self, avg, count=1):
+                self.avg = avg
+                self.count = count
+
+        evaluator = type('EvaluatorStub', (), {
+            'latest_metrics': {
+                'val/pas/R1': 42.0,
+                'val/debug/eval_exact_margin_mean': 0.15,
+            }
+        })()
+        metrics = build_curve_metrics(
+            epoch=4,
+            train_meters={'loss_total': _Meter(1.25), 'loss_diag': _Meter(0.5)},
+            evaluator=evaluator,
+            heldout_val_loss_metrics={'loss_total': 0.9},
+        )
+        self.assertEqual(metrics['curves/epoch'], 4.0)
+        self.assertEqual(metrics['curves/loss_total/train'], 1.25)
+        self.assertEqual(metrics['curves/loss_diag/train'], 0.5)
+        self.assertEqual(metrics['curves/R1/eval_selected'], 42.0)
+        self.assertEqual(metrics['curves/debug/eval_exact_margin_mean/eval_selected'], 0.15)
+        self.assertEqual(metrics['curves/loss_total/heldout_val'], 0.9)
 
     def test_routing_coverage_tracker_window_metrics_capture_rotation(self):
         tracker = RoutingCoverageTracker(window_sizes=(3,), activity_epsilons=(1e-3, 1e-2))

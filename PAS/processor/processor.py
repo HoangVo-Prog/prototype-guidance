@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
-from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_train_metrics, build_validation_metrics, collect_scalar_metrics
+from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_curve_metrics, build_heldout_val_metrics, build_train_metrics, build_validation_metrics, collect_loss_metrics, collect_scalar_metrics
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
 from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
@@ -15,6 +15,36 @@ from utils.precision import build_autocast_context, build_grad_scaler, canonical
 METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key != 'loss_total')
 
 
+
+
+
+def _compute_heldout_val_loss_metrics(model, val_loss_loader, args):
+    if val_loss_loader is None:
+        return {}
+    metrics = {}
+    counts = {}
+    device = next(model.parameters()).device
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            for batch in val_loss_loader:
+                batch = {key: value.to(device) for key, value in batch.items()}
+                with build_autocast_context(args, device):
+                    outputs = model(batch, return_debug=False, disable_proxy_losses=True)
+                batch_size = int(batch['images'].shape[0])
+                for key, value in collect_loss_metrics(outputs).items():
+                    metrics[key] = metrics.get(key, 0.0) + (float(value) * batch_size)
+                    counts[key] = counts.get(key, 0) + batch_size
+    finally:
+        if was_training:
+            model.train()
+    averaged = {}
+    for key, total in metrics.items():
+        count = counts.get(key, 0)
+        if count > 0:
+            averaged[key] = total / float(count)
+    return averaged
 
 def _make_meters():
     return {key: AverageMeter() for key in METER_KEYS}
@@ -79,7 +109,7 @@ def _collect_output_gradient_metrics(outputs, scale: float = 1.0):
     return metrics
 
 
-def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker: ExperimentTracker = None):
+def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker: ExperimentTracker = None, heldout_val_loss_loader=None):
     log_period = args.log_period
     eval_period = args.eval_period
     save_interval = int(getattr(args, 'save_interval', 0) or 0)
@@ -212,6 +242,14 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
 
         if epoch % eval_period == 0 and get_rank() == 0:
             logger.info('Validation Results - Epoch: {}'.format(epoch))
+            heldout_val_loss_metrics = _compute_heldout_val_loss_metrics(
+                model.module if args.distributed else model,
+                heldout_val_loss_loader,
+                args,
+            )
+            heldout_val_loss_total = heldout_val_loss_metrics.get('loss_total')
+            if heldout_val_loss_total is not None:
+                logger.info('Held-out val loss (proxy-disabled): %.4f', heldout_val_loss_total)
             if args.distributed:
                 top1 = evaluator.eval(model.module.eval())
             else:
@@ -219,6 +257,16 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
             torch.cuda.empty_cache()
             if experiment_tracker is not None:
                 experiment_tracker.log(build_validation_metrics(epoch, evaluator=evaluator))
+                if heldout_val_loss_metrics:
+                    experiment_tracker.log(build_heldout_val_metrics(epoch, heldout_val_loss_metrics))
+                experiment_tracker.log(
+                    build_curve_metrics(
+                        epoch,
+                        train_meters=meters,
+                        evaluator=evaluator,
+                        heldout_val_loss_metrics=heldout_val_loss_metrics,
+                    )
+                )
             if best_top1 < top1:
                 best_top1 = top1
                 best_epoch = epoch

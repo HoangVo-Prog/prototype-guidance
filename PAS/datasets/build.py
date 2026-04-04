@@ -1,4 +1,6 @@
-﻿import logging
+﻿import copy
+import logging
+import os.path as op
 import torch
 import torchvision.transforms as T
 from torch.utils.data import DataLoader
@@ -68,6 +70,27 @@ def collate(batch):
 
     return batch_tensor_dict
 
+
+
+
+def _resolve_image_path_from_anno(dataset, anno):
+    relative_path = anno.get('img_path', anno.get('file_path'))
+    if relative_path is None:
+        raise KeyError('Expected annotation to contain `img_path` or `file_path` for held-out validation monitoring.')
+    if op.isabs(relative_path):
+        return relative_path
+    return op.join(dataset.img_dir, relative_path)
+
+
+
+def _build_paired_records_from_annos(dataset, annos):
+    records = []
+    for image_id, anno in enumerate(annos):
+        pid = int(anno['id'])
+        img_path = _resolve_image_path_from_anno(dataset, anno)
+        for caption in anno.get('captions', []):
+            records.append((pid, image_id, img_path, caption))
+    return records
 
 def build_dataloader(args, tranforms=None):
     logger = logging.getLogger("pas.dataset")
@@ -149,6 +172,29 @@ def build_dataloader(args, tranforms=None):
                                     batch_size=args.batch_size,
                                     shuffle=False,
                                     num_workers=num_workers)
+
+        actual_val_loss_loader = None
+        val_annos = getattr(dataset, 'val_annos', None)
+        if val_annos:
+            val_monitor_args = copy.copy(args)
+            val_monitor_args.txt_aug = False
+            val_monitor_args.img_aug = False
+            val_pair_records = _build_paired_records_from_annos(dataset, val_annos)
+            if val_pair_records:
+                val_loss_set = ImageTextDataset(
+                    val_pair_records,
+                    val_monitor_args,
+                    val_transforms,
+                    text_length=args.text_length,
+                )
+                actual_val_loss_loader = DataLoader(
+                    val_loss_set,
+                    batch_size=args.batch_size,
+                    shuffle=False,
+                    num_workers=num_workers,
+                    collate_fn=collate,
+                )
+        train_loader.actual_val_loss_loader = actual_val_loss_loader
 
         return train_loader, val_img_loader, val_txt_loader, num_classes
 

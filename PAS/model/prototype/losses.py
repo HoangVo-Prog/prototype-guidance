@@ -377,6 +377,7 @@ class PrototypeLosses(nn.Module):
         routing_weights: Optional[torch.Tensor] = None,
         exact_pairwise_logits: Optional[torch.Tensor] = None,
         return_debug: bool = False,
+        disable_proxy_losses: bool = False,
     ) -> Dict[str, torch.Tensor]:
         if image_embeddings.ndim != 2 or surrogate_text_embeddings.ndim != 2 or exact_text_embeddings.ndim != 2:
             raise ValueError('All amortized objective embeddings must have shape [B, D].')
@@ -393,10 +394,24 @@ class PrototypeLosses(nn.Module):
                     f'got {tuple(exact_pairwise_logits.shape)} for batch size {batch_size}.'
                 )
 
-        pids = self._validate_class_labels(pids, batch_size, image_embeddings.device)
-        loss_proxy_image_info = self.proxy_loss(image_embeddings, pids)
-        loss_proxy_text_info = self.proxy_loss(surrogate_text_embeddings, pids)
-        loss_proxy_text_exact_info = self.proxy_loss(exact_text_embeddings, pids)
+        proxy_losses_active = bool((self.use_loss_proxy_image or self.use_loss_proxy_text or self.use_loss_proxy_text_exact) and not disable_proxy_losses)
+        pids_for_metrics = pids
+        if pids_for_metrics is None:
+            pids_for_metrics = torch.arange(batch_size, device=image_embeddings.device, dtype=torch.long)
+        else:
+            pids_for_metrics = pids_for_metrics.to(device=image_embeddings.device, dtype=torch.long)
+            if pids_for_metrics.ndim != 1 or pids_for_metrics.numel() != batch_size:
+                raise ValueError(f'pids must have shape [B], received {tuple(pids_for_metrics.shape)} for batch size {batch_size}.')
+        if proxy_losses_active:
+            proxy_pids = self._validate_class_labels(pids_for_metrics, batch_size, image_embeddings.device)
+            loss_proxy_image_info = self.proxy_loss(image_embeddings, proxy_pids)
+            loss_proxy_text_info = self.proxy_loss(surrogate_text_embeddings, proxy_pids)
+            loss_proxy_text_exact_info = self.proxy_loss(exact_text_embeddings, proxy_pids)
+        else:
+            proxy_pids = None
+            loss_proxy_image_info = {'loss': image_embeddings.new_zeros(()), 'logits': None}
+            loss_proxy_text_info = {'loss': image_embeddings.new_zeros(()), 'logits': None}
+            loss_proxy_text_exact_info = {'loss': image_embeddings.new_zeros(()), 'logits': None}
         loss_ret_exact_image_info = self.exact_retrieval_loss(exact_pairwise_logits, transpose=False) if self.use_loss_ret_exact_image else None
         loss_ret_exact_text_info = self.exact_retrieval_loss(exact_pairwise_logits, transpose=True) if self.use_loss_ret_exact_text else None
         zero = image_embeddings.new_zeros(())
@@ -437,7 +452,7 @@ class PrototypeLosses(nn.Module):
         exact_debug_metrics = (
             self._pairwise_retrieval_debug_metrics(exact_pairwise_logits, debug_pairwise_logits)
             if self.use_loss_ret_exact and debug_pairwise_logits is not None
-            else self._cross_modal_debug_metrics('image_exact', image_embeddings, exact_text_embeddings, pids)
+            else self._cross_modal_debug_metrics('image_exact', image_embeddings, exact_text_embeddings, pids_for_metrics)
         )
         outputs = {
             'loss_total': loss_total,
@@ -491,10 +506,10 @@ class PrototypeLosses(nn.Module):
             'retrieval_temperature': self.get_retrieval_temperature().to(device=loss_total.device, dtype=loss_total.dtype),
             'logit_scale': self.get_logit_scale().to(device=loss_total.device, dtype=loss_total.dtype),
             'debug_metrics': {
-                **self._proxy_debug_metrics('image', loss_proxy_image_info['logits'], pids),
-                **self._proxy_debug_metrics('text', loss_proxy_text_info['logits'], pids),
-                **self._proxy_debug_metrics('text_exact', loss_proxy_text_exact_info['logits'], pids),
-                **self._cross_modal_debug_metrics('image_surrogate', image_embeddings, surrogate_text_embeddings, pids),
+                **self._proxy_debug_metrics('image', loss_proxy_image_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
+                **self._proxy_debug_metrics('text', loss_proxy_text_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
+                **self._proxy_debug_metrics('text_exact', loss_proxy_text_exact_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
+                **self._cross_modal_debug_metrics('image_surrogate', image_embeddings, surrogate_text_embeddings, pids_for_metrics),
                 **exact_debug_metrics,
                 **self._norm_stats('class_proxy_norm', self.class_proxies.detach()),
                 **self._normalized_norm_stats('class_proxy_norm_normalized', self.class_proxies.detach()),

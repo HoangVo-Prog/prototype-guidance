@@ -43,12 +43,35 @@ class ExperimentTracker:
             sync_tensorboard=False,
         )
         self._define_default_metrics()
+        self._upload_run_configs(args, run_name)
         if getattr(args, 'wandb_log_code', False):
             try:
                 wandb.run.log_code(root=os.path.dirname(output_dir))
             except Exception as exc:  # pragma: no cover
                 self.logger.warning('Unable to log code to W&B: %s', exc)
         self.enabled = True
+
+
+    def _upload_run_configs(self, args, run_name: str):
+        if self._run is None:
+            return
+        config_paths = []
+        for filename in ('configs.yaml', 'resolved_config.yaml'):
+            local_path = os.path.join(self.output_dir, filename)
+            if os.path.isfile(local_path):
+                config_paths.append((local_path, filename))
+        source_config = getattr(args, 'config_file', None)
+        if source_config and os.path.isfile(source_config):
+            config_paths.append((source_config, 'source_config.yaml'))
+        if not config_paths:
+            return
+        try:
+            artifact = wandb.Artifact(name=f'{run_name}-configs', type='run_config')
+            for local_path, artifact_name in config_paths:
+                artifact.add_file(local_path=local_path, name=artifact_name)
+            self._run.log_artifact(artifact)
+        except Exception as exc:  # pragma: no cover
+            self.logger.warning('Unable to upload run config files to W&B: %s', exc)
 
     def _define_default_metrics(self):
         if self._run is None:
@@ -59,6 +82,10 @@ class ExperimentTracker:
             wandb.define_metric('debug/*', step_metric='train/step')
             wandb.define_metric('val/epoch')
             wandb.define_metric('val/*', step_metric='val/epoch')
+            wandb.define_metric('heldout_val/epoch')
+            wandb.define_metric('heldout_val/*', step_metric='heldout_val/epoch')
+            wandb.define_metric('curves/epoch')
+            wandb.define_metric('curves/*', step_metric='curves/epoch')
         except Exception as exc:  # pragma: no cover
             self.logger.warning('Unable to define W&B metric axes: %s', exc)
 

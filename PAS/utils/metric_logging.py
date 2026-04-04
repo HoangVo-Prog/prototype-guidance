@@ -496,3 +496,43 @@ def build_validation_metrics(epoch: int, evaluator=None, val_loss: Optional[floa
     return metrics
 
 
+def build_heldout_val_metrics(epoch: int, loss_metrics: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+    metrics = {
+        'heldout_val/epoch': float(epoch),
+    }
+    if not loss_metrics:
+        return metrics
+    for key, value in loss_metrics.items():
+        metrics[f'heldout_val/{key}'] = float(value)
+    return metrics
+
+
+
+def build_curve_metrics(epoch: int, train_meters=None, evaluator=None, heldout_val_loss_metrics: Optional[Dict[str, float]] = None) -> Dict[str, float]:
+    metrics = {
+        'curves/epoch': float(epoch),
+    }
+    if train_meters is not None:
+        for key, meter in train_meters.items():
+            count = getattr(meter, 'count', 0)
+            if count and count > 0:
+                metrics[f'curves/{key}/train'] = float(meter.avg)
+    if evaluator is not None and getattr(evaluator, 'latest_metrics', None):
+        for key, value in evaluator.latest_metrics.items():
+            if key == 'val/top1':
+                continue
+            if key.startswith('val/pas/'):
+                metric_name = key[len('val/pas/'):]
+            elif key.startswith('val/debug/'):
+                metric_name = 'debug/' + key[len('val/debug/'):]
+            elif key.startswith('val/'):
+                metric_name = key[len('val/'):]
+            else:
+                continue
+            metrics[f'curves/{metric_name}/eval_selected'] = float(value)
+    if heldout_val_loss_metrics:
+        for key, value in heldout_val_loss_metrics.items():
+            metrics[f'curves/{key}/heldout_val'] = float(value)
+    return metrics
+
+

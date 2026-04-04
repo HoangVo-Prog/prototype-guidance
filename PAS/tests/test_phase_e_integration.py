@@ -247,6 +247,18 @@ class PhaseEIntegrationTests(unittest.TestCase):
         self.assertEqual(tuple(outputs['exact_pairwise_logits'].shape), (4, 4))
         self.assertGreaterEqual(outputs['loss_ret_exact'].item(), 0.0)
 
+
+    def test_forward_can_disable_proxy_losses_for_heldout_validation_batches(self):
+        model = PASModel(self._build_args(use_loss_ret_exact=True), num_classes=2)
+        heldout_batch = dict(self.batch)
+        heldout_batch['pids'] = torch.tensor([10, 11, 10, 11], dtype=torch.long)
+        heldout_batch['image_pids'] = heldout_batch['pids']
+        heldout_batch['caption_pids'] = heldout_batch['pids']
+        outputs = model(heldout_batch, return_debug=False, disable_proxy_losses=True)
+        self.assertEqual(outputs['loss_proxy'].item(), 0.0)
+        self.assertTrue(torch.isfinite(outputs['loss_total']))
+        self.assertGreaterEqual(outputs['loss_ret_exact'].item(), 0.0)
+
     def test_forward_with_full_debug_exposes_surrogate_and_exact_tensors(self):
         model = PASModel(self._build_args(), num_classes=2)
         outputs = model(self.batch, return_debug=True)

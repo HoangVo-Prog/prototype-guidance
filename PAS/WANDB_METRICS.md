@@ -15,22 +15,32 @@ The logging path is implemented in:
 ### Metric namespaces
 - `train/*`: training metrics.
 - `debug/*`: per-batch diagnostic metrics.
-- `val/*`: validation and retrieval metrics.
+- `val/*`: retrieval metrics for the evaluation split selected by `dataset.val_dataset`.
+- `heldout_val/*`: loss-only monitoring on the dataset's real validation split.
+- `curves/*`: epoch-aligned train/eval comparison series for easier dashboard overlays.
 
 ### X-axes in W&B
 - `train/*` uses `train/step` as the step axis.
 - `debug/*` uses `train/step` as the step axis.
 - `val/*` uses `val/epoch` as the step axis.
+- `heldout_val/*` uses `heldout_val/epoch` as the step axis.
+- `curves/*` uses `curves/epoch` as the step axis.
 
 ### When metrics are logged
 - Training metrics are logged every `wandb_log_interval` steps.
 - Training metrics are also logged once at the end of each epoch.
 - Validation metrics are logged every evaluation epoch.
+- `curves/*` comparison metrics are logged once per evaluation epoch.
 
 ### Important runtime toggles
 - `logging.use_wandb=true`: enables W&B.
 - `logging.log_debug_metrics=true`: enables the `debug/*` metrics below.
+- `heldout_val/*` loss monitoring disables proxy-classification terms because the real validation identities may be unseen train classes.
 - `evaluation.retrieval_metrics`: controls which retrieval metrics appear under `val/pas/*`.
+
+### Run files on W&B
+- Each run uploads `configs.yaml` and `resolved_config.yaml` to W&B as a `run_config` artifact.
+- If you launched with `--config_file`, that source config is also uploaded as `source_config.yaml`.
 
 ### Notes on interpretation
 - `train/*` metrics are computed from the current batch at log time.
@@ -67,6 +77,12 @@ The logging path is implemented in:
 - `train/loss_support_weighted`: `lambda_support * loss_support`.
 - `train/loss_diversity_weighted`: `lambda_div * loss_diversity`.
 - `train/loss_balance_weighted`: `lambda_bal * loss_balance`.
+
+- `heldout_val/epoch`: epoch index for the real validation split loss monitor.
+- `heldout_val/loss_total`: held-out validation objective with proxy losses disabled.
+- `heldout_val/loss_ret_exact`: exact retrieval loss on the real validation split.
+- `heldout_val/loss_align`: image/surrogate alignment loss on the real validation split.
+- `heldout_val/loss_diag`: surrogate/exact fidelity loss on the real validation split.
 
 ## Debug Metrics
 

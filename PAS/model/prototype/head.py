@@ -440,6 +440,7 @@ class PrototypeConditionedTextHead(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         return_debug: bool = False,
+        disable_proxy_losses: bool = False,
         prepared_text: Optional[Dict[str, object]] = None,
     ) -> Dict[str, object]:
         del pids
@@ -692,6 +693,7 @@ class PrototypeConditionedTextHead(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         return_debug: bool = False,
+        disable_proxy_losses: bool = False,
     ) -> Dict[str, object]:
         context = self.get_prototype_context(return_debug=return_debug)
         image_outputs = self.encode_image_branch(
@@ -775,6 +777,7 @@ class PrototypeConditionedTextHead(nn.Module):
             routing_weights=image_outputs['routing_weights'],
             exact_pairwise_logits=exact_pairwise_logits,
             return_debug=return_debug,
+            disable_proxy_losses=disable_proxy_losses,
         )
         scalar_metrics.update(loss_outputs.get('debug_metrics', {}))
 

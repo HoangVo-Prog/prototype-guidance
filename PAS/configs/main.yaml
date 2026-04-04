@@ -30,7 +30,7 @@ model:
 prototype:
   num_prototypes: 32
   prototype_dim: 512
-  prototype_init: normalized_random
+  prototype_init: kmeans_centroids
   prototype_init_path: null
   prototype_init_hybrid_ratio: 0.5
   prototype_init_max_iters: 50
@@ -50,15 +50,22 @@ loss:
   diversity_loss_weight: 0.0
   use_balancing_loss: false
   balance_loss_weight: 0.0
-  use_loss_proxy_image: true
-  use_loss_proxy_text: true
+  use_loss_proxy_image: false
+  use_loss_proxy_text: false
   use_loss_proxy_text_exact: false
-  use_loss_align: true
-  lambda_align: 1.0
-  use_loss_diag: true
-  lambda_diag: 1.0
-  use_loss_ret_exact: false
-  ret_exact_temperature: null
+  lambda_proxy_image: 0.0
+  lambda_proxy_text: 0.0
+  lambda_proxy_text_exact: 0.0
+  use_loss_align: false
+  lambda_align: 0.0
+  use_loss_diag: false
+  lambda_diag: 0.0
+  use_loss_ret_exact: true
+  use_loss_ret_exact_image: true
+  use_loss_ret_exact_text: false
+  lambda_ret_exact_image: 1.0
+  lambda_ret_exact_text: 1.0
+  ret_exact_temperature: 0.07
   use_loss_support: false
   lambda_support: 0.0
   support_min: 2.0
@@ -75,9 +82,9 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 4
+  batch_size: 128
   epochs: 10
-  log_period: 50
+  log_period: 20
   eval_frequency: 1
   save_interval: 1
   resume: false
@@ -86,12 +93,14 @@ training:
   pretrain: ''
   img_aug: false
   txt_aug: false
-  sampler: identity
+  sampler: random
   num_instance: 2
   num_workers: 4
   training: true
   freeze_image_backbone: true
   freeze_text_backbone: true
+  freeze_prototype: false
+  freeze_proxy: false
   grad_clip: 1.0
   amp: false
   amp_dtype: fp16
@@ -131,14 +140,14 @@ dataset:
 
 logging:
   use_wandb: true
-  project: PAS
+  project: stage1
   entity: null
   run_name: null
-  group: kaggle_quicktrain
+  group: quicktrain
   mode: online
-  tags: [pas, kaggle, quicktrain]
-  notes: Lightweight PAS training config for Kaggle P100 or T4x2 sanity training with canonical v1 method defaults.
-  log_interval: 50
+  tags: [pas, stage1, quicktrain]
+  notes: stage 1
+  log_interval: 20
   log_code: false
   log_debug_metrics: true
 
@@ -148,7 +157,7 @@ evaluation:
   cross_domain_generalization: false
   target_domain: RSTPReid
   retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
-  batch_size: 64
+  batch_size: 512
   prototype_image_chunk_size: 8
   prototype_text_chunk_size: 16
   retrieval_scorer: exact

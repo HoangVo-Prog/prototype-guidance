@@ -582,7 +582,7 @@ class PASModel(nn.Module):
                 groups['other'].append((name, parameter))
         return groups
 
-    def forward(self, batch, epoch=None, current_step=None, return_debug: Optional[bool] = None):
+    def forward(self, batch, epoch=None, current_step=None, return_debug: Optional[bool] = None, disable_proxy_losses: bool = False):
         del epoch, current_step
         images = batch['images']
         caption_ids = batch['caption_ids']
@@ -609,6 +609,7 @@ class PASModel(nn.Module):
             attention_mask=text_output.token_mask,
             special_token_positions=text_output.special_token_positions,
             return_debug=should_return_debug,
+            disable_proxy_losses=disable_proxy_losses,
         )
 
         losses = prototype_outputs['losses']

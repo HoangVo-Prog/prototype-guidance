@@ -47,5 +47,45 @@ class ExperimentTrackerTests(unittest.TestCase):
         self.assertFalse(kwargs['sync_tensorboard'])
 
 
+    def test_wandb_uploads_run_config_files_and_defines_curve_namespace(self):
+        args = types.SimpleNamespace(
+            use_wandb=True,
+            wandb_project='PAS',
+            wandb_entity=None,
+            wandb_run_name='unit-test-run',
+            wandb_group=None,
+            wandb_mode='offline',
+            wandb_tags=None,
+            wandb_notes=None,
+            wandb_log_code=False,
+            config_file=None,
+        )
+
+        fake_run = mock.Mock()
+        fake_wandb = mock.Mock()
+        fake_wandb.init.return_value = fake_run
+        fake_artifact = mock.Mock()
+        fake_wandb.Artifact.return_value = fake_artifact
+
+        tmpdir = os.path.join(REPO_ROOT, 'tests_tmp_experiment_tracker')
+        os.makedirs(tmpdir, exist_ok=True)
+        try:
+            for filename in ('configs.yaml', 'resolved_config.yaml'):
+                with open(os.path.join(tmpdir, filename), 'w', encoding='utf-8') as handle:
+                    handle.write('test: true\n')
+            with mock.patch('utils.experiment.wandb', fake_wandb):
+                tracker = ExperimentTracker(args, tmpdir, distributed_rank=0)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        self.assertTrue(tracker.enabled)
+        defined_metric_names = [call.args[0] for call in fake_wandb.define_metric.call_args_list]
+        self.assertIn('curves/epoch', defined_metric_names)
+        self.assertIn('curves/*', defined_metric_names)
+        fake_wandb.Artifact.assert_called_once()
+        self.assertEqual(fake_artifact.add_file.call_count, 2)
+        fake_run.log_artifact.assert_called_once_with(fake_artifact)
+
+
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
