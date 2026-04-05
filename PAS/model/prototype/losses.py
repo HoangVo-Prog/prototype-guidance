@@ -77,28 +77,7 @@ class PrototypeLosses(nn.Module):
 
         if self.support_min <= 0.0:
             raise ValueError('support_min must be positive.')
-        if not self.use_loss_support and self.lambda_support != 0.0:
-            raise ValueError('lambda_support must be 0.0 when use_loss_support is disabled.')
-        if self.use_loss_support and self.lambda_support <= 0.0:
-            raise ValueError('use_loss_support requires lambda_support to be positive.')
-        if not self.use_balance_loss and self.lambda_bal != 0.0:
-            raise ValueError('lambda_bal must be 0.0 when use_balance_loss is disabled.')
-        if self.use_balance_loss and self.lambda_bal <= 0.0:
-            raise ValueError('use_balance_loss requires lambda_bal to be positive.')
-        if not self.use_loss_ret and self.lambda_ret != 0.0:
-            raise ValueError('lambda_ret must be 0.0 when use_loss_ret is disabled.')
-        if self.use_loss_ret and self.lambda_ret <= 0.0:
-            raise ValueError('use_loss_ret requires lambda_ret to be positive.')
 
-        if not any((
-            self.use_loss_proxy_image,
-            self.use_loss_proxy_text,
-            self.use_loss_proxy_text_exact,
-            self.use_loss_align,
-            self.use_loss_diag,
-            self.use_loss_ret,
-        )):
-            raise ValueError('At least one task-supervised loss must remain enabled so the training objective does not collapse to prototype-only regularization.')
 
         initial_logit_scale = torch.log(torch.tensor(1.0 / temperature_init, dtype=torch.float32))
         self.register_buffer('logit_scale', initial_logit_scale.clone())
@@ -468,3 +447,4 @@ class PrototypeLosses(nn.Module):
                 outputs['surrogate_retrieval_logits'] = loss_ret_info['logits']
             outputs['class_proxies'] = self.class_proxies.detach()
         return outputs
+

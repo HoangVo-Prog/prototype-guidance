@@ -105,6 +105,28 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertFalse(config['model']['use_image_conditioned_pooling'])
         self.assertEqual(config['evaluation']['retrieval_scorer'], 'approximate')
 
+    def test_stage1_allows_loss_ablation_flags(self):
+        path = self._write_config(
+            {
+                'loss': {
+                    'use_loss_ret': False,
+                    'lambda_ret': 1.0,
+                    'use_loss_diag': False,
+                    'lambda_diag': 1.0,
+                    'use_loss_align': False,
+                    'lambda_align': 0.0,
+                },
+                'training': {
+                    'stage': 'stage1',
+                    'freeze_image_backbone': True,
+                    'freeze_text_backbone': True,
+                    'freeze_prototype_side': False,
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertFalse(args.use_loss_ret)
+        self.assertFalse(args.use_loss_diag)
     def test_valid_stage1_surface_loads(self):
         path = self._write_config(
             {
@@ -162,6 +184,7 @@ class ConfigSurfaceTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+
 
 
 

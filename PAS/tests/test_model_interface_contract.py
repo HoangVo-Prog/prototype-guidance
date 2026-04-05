@@ -225,6 +225,13 @@ class ModelInterfaceContractTests(unittest.TestCase):
         torch.testing.assert_close(outputs.projected_pooled, outputs.projected_tokens[batch_indices, self.expected_eos])
         torch.testing.assert_close(outputs.pre_projection_pooled, outputs.pre_projection_tokens[batch_indices, self.expected_eos])
 
+    def test_extract_text_features_contract_text_only(self):
+        model = self._build_model(use_image_conditioned_pooling=False)
+        outputs = model.extract_text_features(self.caption_ids)
+        self.assertIsInstance(outputs, EncoderOutput)
+        self.assertEqual(outputs.pooling_mode, 'text_only')
+        self.assertEqual(tuple(outputs.token_mask.shape), (self.batch_size, self.seq_len))
+        self.assertIn('eos', outputs.special_token_positions)
     def test_retrieval_encoder_contracts(self):
         model = self._build_model()
         image_features = model.encode_image_for_retrieval(self.images)
@@ -371,6 +378,16 @@ class ModelInterfaceContractTests(unittest.TestCase):
         self.assertEqual(approx_evaluator.retrieval_scorer, 'exact')
         self.assertIsNotNone(approx_model)
 
+    def test_no_prototype_bank_and_text_only_pooling_runs(self):
+        model = self._build_model(use_prototype_bank=False, use_image_conditioned_pooling=False, retrieval_scorer='exact').eval()
+        outputs = model(
+            {'images': self.images, 'caption_ids': self.caption_ids, 'pids': self.pids},
+            return_debug=True,
+        )
+        self.assertTrue(torch.isfinite(outputs['loss_total']))
+        self.assertEqual(tuple(outputs['alpha'].shape), (self.batch_size, 0))
+        self.assertIn('direct_non_image_conditioned_pooling', outputs['debug'])
+        self.assertEqual(float(outputs['debug']['direct_non_image_conditioned_pooling']), 1.0)
     def test_named_optimizer_groups_contract_exposes_required_group_names(self):
         model = self._build_model(freeze_image_backbone=False, freeze_text_backbone=False)
         groups = model.named_optimizer_groups()
@@ -396,6 +413,7 @@ class ModelInterfaceContractTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+
 
 
 

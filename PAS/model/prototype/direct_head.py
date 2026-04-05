@@ -28,6 +28,7 @@ class DirectImageConditionedTextHead(nn.Module):
         error_on_empty_kept_tokens: bool = True,
         normalize_for_token_scoring: bool = True,
         normalize_projector_outputs: bool = True,
+        use_image_conditioned_pooling: bool = True,
         num_classes: int = 0,
         proxy_temperature: float = 0.07,
         lambda_proxy: float = 1.0,
@@ -50,6 +51,7 @@ class DirectImageConditionedTextHead(nn.Module):
         self.prototype_dim = int(prototype_dim)
         self.projector_hidden_dim = int(projector_hidden_dim or prototype_dim)
         self.projector_output_dim = int(projector_output_dim)
+        self.use_image_conditioned_pooling = bool(use_image_conditioned_pooling)
         self.uses_prototype_bank = False
 
         self.image_adapter = image_adapter if image_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
@@ -65,6 +67,7 @@ class DirectImageConditionedTextHead(nn.Module):
             error_on_empty_kept_tokens=error_on_empty_kept_tokens,
         )
         self.token_pooler = MaskedTokenPooler()
+        self.text_pool_query = nn.Parameter(torch.randn(self.prototype_dim, dtype=torch.float32))
         self.image_projector = MLPProjector(
             input_dim=prototype_dim,
             hidden_dim=self.projector_hidden_dim,
@@ -116,6 +119,25 @@ class DirectImageConditionedTextHead(nn.Module):
             'contextualized_prototypes': reference.new_empty((0, self.prototype_dim)),
         }
 
+    def _pooling_mode_metrics(self, reference: torch.Tensor) -> Dict[str, torch.Tensor]:
+        return {
+            'direct_image_conditioned_pooling': reference.new_tensor(float(self.use_image_conditioned_pooling)),
+            'direct_non_image_conditioned_pooling': reference.new_tensor(float(not self.use_image_conditioned_pooling)),
+        }
+
+    def _build_text_pool_queries(
+        self,
+        batch_size: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        summary: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if self.use_image_conditioned_pooling:
+            if summary is None:
+                raise ValueError('summary must be provided when use_image_conditioned_pooling=true.')
+            return summary
+        return self.text_pool_query.to(device=device, dtype=dtype).unsqueeze(0).expand(batch_size, -1)
+
     def _compute_special_mass(self, token_weights: torch.Tensor, special_token_positions: Dict[str, torch.Tensor]) -> torch.Tensor:
         batch_index = torch.arange(token_weights.size(0), device=token_weights.device)
         total_mass = torch.zeros((), device=token_weights.device, dtype=token_weights.dtype)
@@ -158,7 +180,7 @@ class DirectImageConditionedTextHead(nn.Module):
             'contextualizer_debug': {},
         }
         if return_debug:
-            outputs['debug'] = {'direct_image_conditioned_pooling': torch.tensor(1.0)}
+            outputs['debug'] = self._pooling_mode_metrics(torch.zeros((), dtype=torch.float32))
         return outputs
 
     def encode_image_branch(
@@ -188,7 +210,7 @@ class DirectImageConditionedTextHead(nn.Module):
             'image_projector_debug': image_projector_debug,
         }
         if return_debug:
-            outputs['debug'] = {'direct_image_conditioned_pooling': torch.tensor(1.0, device=image_features.device, dtype=image_features.dtype)}
+            outputs['debug'] = self._pooling_mode_metrics(image_features)
         return outputs
 
     def pool_text_with_summary(
@@ -212,7 +234,8 @@ class DirectImageConditionedTextHead(nn.Module):
         )
         text_features = text_inputs['text_token_states']
         mask_debug = text_inputs['mask_debug']
-        token_scores, scorer_debug = self.token_scorer(summary, text_features, return_debug=True)
+        text_pool_queries = self._build_text_pool_queries(text_features.size(0), text_features.device, text_features.dtype, summary)
+        token_scores, scorer_debug = self.token_scorer(text_pool_queries, text_features, return_debug=True)
         pooled_text, token_weights, pooler_debug = self.token_pooler(
             token_scores,
             text_features,
@@ -244,6 +267,7 @@ class DirectImageConditionedTextHead(nn.Module):
                 **scorer_debug,
                 **pooler_debug,
                 **text_projector_debug,
+                **self._pooling_mode_metrics(text_features),
             }
         return outputs
 
@@ -251,14 +275,14 @@ class DirectImageConditionedTextHead(nn.Module):
         del args, kwargs
         raise RuntimeError(
             'Approximate prototype basis construction is unavailable when model.use_prototype_bank=false. '
-            'Use evaluation.retrieval_scorer=exact for direct image-conditioned pooling.'
+            'Use evaluation.retrieval_scorer=exact for direct retrieval.'
         )
 
     def compute_approximate_pairwise_similarity(self, *args, **kwargs) -> torch.Tensor:
         del args, kwargs
         raise RuntimeError(
             'Approximate prototype retrieval similarity is unavailable when model.use_prototype_bank=false. '
-            'Use evaluation.retrieval_scorer=exact for direct image-conditioned pooling.'
+            'Use evaluation.retrieval_scorer=exact for direct retrieval.'
         )
 
     def _compute_pairwise_similarity_logits(
@@ -312,15 +336,16 @@ class DirectImageConditionedTextHead(nn.Module):
                 expanded_tokens = token_chunk[None, :, :, :].expand(image_batch, text_batch, -1, -1).reshape(image_batch * text_batch, token_chunk.size(1), token_chunk.size(2))
                 expanded_mask = mask_chunk[None, :, :].expand(image_batch, text_batch, -1).reshape(image_batch * text_batch, mask_chunk.size(1))
                 expanded_image_projected = image_projected_chunk[:, None, :].expand(image_batch, text_batch, -1).reshape(image_batch * text_batch, -1)
+                text_pool_queries = self._build_text_pool_queries(image_batch * text_batch, expanded_tokens.device, expanded_tokens.dtype, expanded_summary if self.use_image_conditioned_pooling else None)
 
-                token_scores = self.token_scorer(expanded_summary, expanded_tokens)
+                token_scores = self.token_scorer(text_pool_queries, expanded_tokens)
                 pooled_text, _ = self.token_pooler(token_scores, expanded_tokens, expanded_mask)
                 projected_text = self.text_projector(pooled_text)
                 block_similarity = self.losses.compute_paired_similarity(expanded_image_projected, projected_text)
                 similarity[text_start:text_end, image_start:image_end] = block_similarity.view(image_batch, text_batch).t()
 
         if not torch.isfinite(similarity).all():
-            raise FloatingPointError('Direct image-conditioned retrieval similarity contains NaN or Inf values.')
+            raise FloatingPointError('Direct retrieval similarity contains NaN or Inf values.')
         return similarity
 
     def compute_pairwise_similarity(
@@ -358,8 +383,7 @@ class DirectImageConditionedTextHead(nn.Module):
         image_embed_unit_norms = image_projector_debug['projected_features'].norm(dim=-1)
         text_embed_norms = text_projector_debug['projected_features_raw'].norm(dim=-1)
         text_embed_unit_norms = text_projector_debug['projected_features'].norm(dim=-1)
-        return {
-            'direct_image_conditioned_pooling': torch.tensor(1.0, device=image_outputs['image_embedding'].device, dtype=image_outputs['image_embedding'].dtype),
+        metrics = {
             'q_norm': image_outputs['summary'].norm(dim=-1).mean().detach(),
             't_pool_norm': exact_outputs['pooled_text'].norm(dim=-1).mean().detach(),
             'surrogate_t_pool_norm': exact_outputs['pooled_text'].norm(dim=-1).mean().detach(),
@@ -395,6 +419,8 @@ class DirectImageConditionedTextHead(nn.Module):
             'token_pool_entropy': exact_outputs['pooler_debug']['token_pool_entropy'],
             'beta_max_prob': exact_outputs['pooler_debug']['beta_max_prob'],
         }
+        metrics.update(self._pooling_mode_metrics(image_outputs['image_embedding']))
+        return metrics
 
     def forward(
         self,

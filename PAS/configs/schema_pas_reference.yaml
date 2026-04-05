@@ -108,9 +108,9 @@ model:
 
 # | use_prototype_bank | use_image_conditioned_pooling | Meaning                                                               |
 # | ------------------ | ----------------------------- | --------------------------------------------------------------------- |
-# | False              | False                         | CLIP baseline                                                         |
+# | False              | False                         | Direct text-only pooling baseline (no prototype, non-image-conditioned) |
 # | False              | True                          | Image-conditioned pooling **direct** (no prototype)                   |
-# | True               | False                         | Non-sense                                                             |
+# | True               | False                         | Prototype-routed training with text-only exact pooling ablation         |
 # | True               | True                          | **Full method (paper)**                                               |
 
 
@@ -524,5 +524,6 @@ evaluation:
   # Retrieval scorer used by Evaluator. Supported values: exact | approximate.
   # Default exact preserves deployed pairwise pooling.
   retrieval_scorer: exact
+
 
 

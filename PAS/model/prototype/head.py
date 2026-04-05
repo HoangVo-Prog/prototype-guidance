@@ -48,6 +48,7 @@ class PrototypeConditionedTextHead(nn.Module):
         normalize_for_routing: bool = True,
         normalize_for_token_scoring: bool = True,
         normalize_projector_outputs: bool = True,
+        use_image_conditioned_pooling: bool = True,
         num_classes: int = 0,
         proxy_temperature: float = 0.07,
         lambda_proxy: float = 1.0,
@@ -80,6 +81,7 @@ class PrototypeConditionedTextHead(nn.Module):
         self.projector_hidden_dim = int(projector_hidden_dim or prototype_dim)
         self.projector_output_dim = int(projector_output_dim)
         self.dead_prototype_threshold = float(dead_prototype_threshold)
+        self.use_image_conditioned_pooling = bool(use_image_conditioned_pooling)
 
         self.image_adapter = image_adapter if image_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
         self.text_adapter = text_adapter if text_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
@@ -118,6 +120,7 @@ class PrototypeConditionedTextHead(nn.Module):
             error_on_empty_kept_tokens=error_on_empty_kept_tokens,
         )
         self.token_pooler = MaskedTokenPooler()
+        self.text_pool_query = nn.Parameter(torch.randn(self.prototype_dim, dtype=torch.float32))
         self.image_projector = MLPProjector(
             input_dim=prototype_dim,
             hidden_dim=self.projector_hidden_dim,
@@ -421,6 +424,18 @@ class PrototypeConditionedTextHead(nn.Module):
             'mask_debug': mask_debug,
         }
 
+    def _build_text_pool_queries(
+        self,
+        batch_size: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        summary: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if self.use_image_conditioned_pooling:
+            if summary is None:
+                raise ValueError('summary must be provided when use_image_conditioned_pooling=true.')
+            return summary
+        return self.text_pool_query.to(device=device, dtype=dtype).unsqueeze(0).expand(batch_size, -1)
     def pool_text_with_summary(
         self,
         summary: torch.Tensor,
@@ -442,7 +457,8 @@ class PrototypeConditionedTextHead(nn.Module):
         )
         text_features = text_inputs['text_token_states']
         mask_debug = text_inputs['mask_debug']
-        token_scores, scorer_debug = self.token_scorer(summary, text_features, return_debug=True)
+        text_pool_queries = self._build_text_pool_queries(text_features.size(0), text_features.device, text_features.dtype, summary)
+        token_scores, scorer_debug = self.token_scorer(text_pool_queries, text_features, return_debug=True)
         pooled_text, token_weights, pooler_debug = self.token_pooler(
             token_scores,
             text_features,
@@ -636,11 +652,12 @@ class PrototypeConditionedTextHead(nn.Module):
                 text_batch = token_chunk.size(0)
 
                 expanded_summary = summary_chunk[:, None, :].expand(image_batch, text_batch, -1).reshape(image_batch * text_batch, -1)
+                text_pool_queries = self._build_text_pool_queries(image_batch * text_batch, image_projected.device, text_token_states.dtype, expanded_summary if self.use_image_conditioned_pooling else None)
                 expanded_tokens = token_chunk[None, :, :, :].expand(image_batch, text_batch, -1, -1).reshape(image_batch * text_batch, token_chunk.size(1), token_chunk.size(2))
                 expanded_mask = mask_chunk[None, :, :].expand(image_batch, text_batch, -1).reshape(image_batch * text_batch, mask_chunk.size(1))
                 expanded_image_projected = image_projected_chunk[:, None, :].expand(image_batch, text_batch, -1).reshape(image_batch * text_batch, -1)
 
-                token_scores = self.token_scorer(expanded_summary, expanded_tokens)
+                token_scores = self.token_scorer(text_pool_queries, expanded_tokens)
                 pooled_text, _ = self.token_pooler(token_scores, expanded_tokens, expanded_mask)
                 projected_text = self.text_projector(pooled_text)
                 block_similarity = self.losses.compute_paired_similarity(expanded_image_projected, projected_text)
@@ -876,6 +893,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
+
 
 
 

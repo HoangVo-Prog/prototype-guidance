@@ -91,10 +91,6 @@ class PASModel(nn.Module):
 
     def _validate_configuration(self):
         model_logger = logging.getLogger('pas.model')
-        if not self.use_image_conditioned_pooling:
-            model_logger.warning(
-                'model.use_image_conditioned_pooling=false is accepted for config freedom, but the current runtime still uses image-conditioned pooling.'
-            )
         if not self.use_prototype_bank and str(getattr(self.args, 'retrieval_scorer', 'exact')).lower() == 'approximate':
             model_logger.warning(
                 'evaluation.retrieval_scorer=approximate with model.use_prototype_bank=false is accepted for config freedom, but approximate scoring is unavailable and eval may fall back to exact scoring.'
@@ -196,14 +192,6 @@ class PASModel(nn.Module):
             )
 
         if bool(getattr(self.args, 'training', True)):
-            if not bool(getattr(self.args, 'use_loss_ret', True)):
-                raise ValueError('Retrieval supervision must remain active from the beginning. Set loss.use_loss_ret=true.')
-            if float(getattr(self.args, 'lambda_ret', 1.0)) <= 0.0:
-                raise ValueError('loss.lambda_ret must be positive because row-wise surrogate retrieval is always active during training.')
-            if not bool(getattr(self.args, 'use_loss_diag', True)):
-                raise ValueError('Diagonal fidelity supervision must remain active. Set loss.use_loss_diag=true.')
-            if float(getattr(self.args, 'lambda_diag', 1.0)) <= 0.0:
-                raise ValueError('loss.lambda_diag must be positive because diagonal fidelity is always active during training.')
             if self.training_stage == 'stage2' and not str(getattr(self.args, 'finetune', '') or '').strip():
                 raise ValueError('training.stage=stage2 requires training.finetune to point to a Stage 1 checkpoint.')
         TokenMaskBuilder(
@@ -527,7 +515,7 @@ class PASModel(nn.Module):
             attention_weights=None,
             token_mask=token_mask,
             special_token_positions=special_positions,
-            pooling_mode='image_conditioned',
+            pooling_mode='image_conditioned' if self.use_image_conditioned_pooling else 'text_only',
             metadata={
                 'encoder': 'text',
                 'backbone': self.text_backbone,
@@ -770,6 +758,8 @@ def build_model(args, num_classes, train_loader=None):
     else:
         model.prototype_head.float()
     return model
+
+
 
 
 

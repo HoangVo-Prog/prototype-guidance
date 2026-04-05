@@ -19,6 +19,7 @@ def build_prototype_head(
     projector_output_dim = getattr(args, 'projector_output_dim', getattr(args, 'projection_dim', 256))
     token_scoring_type = getattr(args, 'token_similarity', getattr(args, 'token_scoring_type', 'cosine'))
     token_temperature = getattr(args, 'tau_t', getattr(args, 'token_pooling_temperature', 0.07))
+    use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', True))
 
     common_kwargs = dict(
         input_dim=input_dim,
@@ -36,6 +37,7 @@ def build_prototype_head(
         error_on_empty_kept_tokens=getattr(args, 'error_on_empty_kept_tokens', True),
         normalize_for_token_scoring=getattr(args, 'normalize_for_token_scoring', True),
         normalize_projector_outputs=getattr(args, 'normalize_projector_outputs', True),
+        use_image_conditioned_pooling=use_image_conditioned_pooling,
         num_classes=num_classes,
         proxy_temperature=getattr(args, 'proxy_temperature', 0.07),
         lambda_proxy=getattr(args, 'lambda_proxy', 1.0),
@@ -101,6 +103,7 @@ def build_prototype_head(
         normalize_for_routing=getattr(args, 'normalize_for_routing', True),
         normalize_for_token_scoring=getattr(args, 'normalize_for_token_scoring', True),
         normalize_projector_outputs=getattr(args, 'normalize_projector_outputs', True),
+        use_image_conditioned_pooling=use_image_conditioned_pooling,
         num_classes=num_classes,
         proxy_temperature=getattr(args, 'proxy_temperature', 0.07),
         lambda_proxy=getattr(args, 'lambda_proxy', 1.0),
@@ -127,4 +130,3 @@ def build_prototype_head(
         learnable_contrastive_temperature=False,
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
     )
-
