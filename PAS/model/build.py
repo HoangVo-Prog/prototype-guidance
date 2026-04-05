@@ -146,54 +146,14 @@ class PASModel(nn.Module):
                 continue
             raise ValueError(message)
 
-        expected_stage_freezes = {
-            'stage1': (True, True, False),
-            'stage2': (False, False, True),
-            'joint': (False, False, False),
-        }
+        allowed_training_stages = {'stage1', 'stage2', 'joint'}
         explicit_stage = getattr(self.args, 'training_stage', None)
-        configured_freezes = (
-            bool(getattr(self.args, 'freeze_image_backbone', True)),
-            bool(getattr(self.args, 'freeze_text_backbone', True)),
-            bool(getattr(self.args, 'freeze_prototype_side', False)),
-        )
         if explicit_stage is None:
-            inferred_stage = None
-            for candidate_stage, expected_freezes in expected_stage_freezes.items():
-                if configured_freezes == expected_freezes:
-                    inferred_stage = candidate_stage
-                    break
-            if inferred_stage is None:
-                raise ValueError(
-                    'Could not infer training stage from freeze settings. Provide training.stage explicitly or use one of '
-                    f'{expected_stage_freezes}.'
-                )
-            self.training_stage = inferred_stage
+            self.training_stage = 'joint'
         else:
             self.training_stage = str(explicit_stage).lower()
-        if self.training_stage not in expected_stage_freezes:
+        if self.training_stage not in allowed_training_stages:
             raise ValueError(f'training.stage must be one of [\'stage1\', \'stage2\', \'joint\']; got {self.training_stage!r}.')
-
-        expected_image_freeze, expected_text_freeze, expected_prototype_side_freeze = expected_stage_freezes[self.training_stage]
-        expected_freezes = (expected_image_freeze, expected_text_freeze, expected_prototype_side_freeze)
-        if configured_freezes != expected_freezes:
-            raise ValueError(
-                'training.stage={stage} requires freeze_image_backbone={img}, freeze_text_backbone={txt}, '
-                'and freeze_prototype_side={proto}. Got image={got_img}, text={got_txt}, prototype_side={got_proto}.'
-                .format(
-                    stage=self.training_stage,
-                    img=expected_image_freeze,
-                    txt=expected_text_freeze,
-                    proto=expected_prototype_side_freeze,
-                    got_img=configured_freezes[0],
-                    got_txt=configured_freezes[1],
-                    got_proto=configured_freezes[2],
-                )
-            )
-
-        if bool(getattr(self.args, 'training', True)):
-            if self.training_stage == 'stage2' and not str(getattr(self.args, 'finetune', '') or '').strip():
-                raise ValueError('training.stage=stage2 requires training.finetune to point to a Stage 1 checkpoint.')
         TokenMaskBuilder(
             token_policy=str(getattr(self.args, 'token_policy', 'content_only')).lower(),
             special_token_ids=special_token_ids,
@@ -758,6 +718,7 @@ def build_model(args, num_classes, train_loader=None):
     else:
         model.prototype_head.float()
     return model
+
 
 
 

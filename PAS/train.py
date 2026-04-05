@@ -65,13 +65,19 @@ def log_parameter_trainability(logger, model, args):
     text_parameters.extend(model.base_model.token_embedding.parameters())
     text_parameters.extend([model.base_model.positional_embedding, model.base_model.ln_final.weight, model.base_model.ln_final.bias, model.base_model.text_projection])
     text_total, text_trainable = _count_parameters(text_parameters)
-    prototype_total, prototype_trainable = _count_parameters(model.prototype_head.prototype_bank.parameters())
-    projector_params = list(model.prototype_head.image_projector.parameters())
-    projector_params.extend(model.prototype_head.text_projector.parameters())
-    projector_params.extend(model.prototype_head.image_adapter.parameters())
-    projector_params.extend(model.prototype_head.text_adapter.parameters())
+    prototype_bank_module = getattr(model.prototype_head, 'prototype_bank', None)
+    prototype_total, prototype_trainable = _count_parameters(prototype_bank_module.parameters()) if prototype_bank_module is not None else (0, 0)
+
+    projector_params = []
+    for module_name in ('image_projector', 'text_projector', 'image_adapter', 'text_adapter'):
+        module = getattr(model.prototype_head, module_name, None)
+        if module is None:
+            continue
+        projector_params.extend(list(module.parameters()))
     projector_total, projector_trainable = _count_parameters(projector_params)
-    proxy_total, proxy_trainable = _count_parameters([model.prototype_head.losses.class_proxies])
+
+    class_proxies = getattr(getattr(model.prototype_head, 'losses', None), 'class_proxies', None)
+    proxy_total, proxy_trainable = _count_parameters([class_proxies]) if class_proxies is not None else (0, 0)
     logger.info(
         'Freeze status: stage=%s image_backbone=%s text_backbone=%s prototype_side=%s projectors=%s',
         str(getattr(args, 'training_stage', 'stage1')),
@@ -208,6 +214,8 @@ if __name__ == '__main__':
         )
     finally:
         experiment_tracker.finish()
+
+
 
 
 

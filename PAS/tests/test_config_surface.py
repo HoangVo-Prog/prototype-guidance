@@ -47,7 +47,7 @@ class ConfigSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'training.stage'):
             load_yaml_config(None, path)
 
-    def test_stage2_requires_finetune_checkpoint(self):
+    def test_stage2_allows_missing_finetune_checkpoint(self):
         path = self._write_config(
             {
                 'loss': {
@@ -65,10 +65,11 @@ class ConfigSurfaceTests(unittest.TestCase):
                 },
             }
         )
-        with self.assertRaisesRegex(ValueError, 'training.stage=stage2 requires training.finetune'):
-            get_args(['--config_file', path])
+        args = get_args(['--config_file', path])
+        self.assertEqual(args.training_stage, 'stage2')
+        self.assertEqual(args.finetune, '')
 
-    def test_stage1_requires_matching_freeze_policy(self):
+    def test_stage1_allows_arbitrary_freeze_policy(self):
         path = self._write_config(
             {
                 'loss': {
@@ -85,8 +86,11 @@ class ConfigSurfaceTests(unittest.TestCase):
                 },
             }
         )
-        with self.assertRaisesRegex(ValueError, 'training.stage=stage1 requires freeze_image_backbone=True'):
-            get_args(['--config_file', path])
+        args = get_args(['--config_file', path])
+        self.assertEqual(args.training_stage, 'stage1')
+        self.assertFalse(args.freeze_image_backbone)
+        self.assertTrue(args.freeze_text_backbone)
+        self.assertFalse(args.freeze_prototype_side)
 
     def test_no_prototype_bank_allows_approximate_config_surface(self):
         path = self._write_config(
@@ -184,6 +188,7 @@ class ConfigSurfaceTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+
 
 
 
