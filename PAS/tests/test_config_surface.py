@@ -109,6 +109,18 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertFalse(config['model']['use_image_conditioned_pooling'])
         self.assertEqual(config['evaluation']['retrieval_scorer'], 'approximate')
 
+    def test_prototype_bank_requires_image_conditioned_pooling(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'use_prototype_bank': True,
+                    'use_image_conditioned_pooling': False,
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'use_prototype_bank=true'):
+            load_yaml_config(None, path)
+
     def test_stage1_allows_loss_ablation_flags(self):
         path = self._write_config(
             {

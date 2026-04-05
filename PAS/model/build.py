@@ -91,6 +91,11 @@ class PASModel(nn.Module):
 
     def _validate_configuration(self):
         model_logger = logging.getLogger('pas.model')
+        if self.use_prototype_bank and not self.use_image_conditioned_pooling:
+            raise ValueError(
+                'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
+                'Prototype-routed training with text-only pooling is no longer supported.'
+            )
         if not self.use_prototype_bank and str(getattr(self.args, 'retrieval_scorer', 'exact')).lower() == 'approximate':
             model_logger.warning(
                 'evaluation.retrieval_scorer=approximate with model.use_prototype_bank=false is accepted for config freedom, but approximate scoring is unavailable and eval may fall back to exact scoring.'

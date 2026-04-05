@@ -406,6 +406,14 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         _validate_enum_value('.'.join(path), current, allowed_values)
     if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
         _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
+    if (
+        bool(config_data.get('model', {}).get('use_prototype_bank', True))
+        and not bool(config_data.get('model', {}).get('use_image_conditioned_pooling', True))
+    ):
+        raise ValueError(
+            'model.use_prototype_bank=true requires model.use_image_conditioned_pooling=true. '
+            'Prototype-routed training with text-only pooling is no longer supported.'
+        )
 
 
 def load_yaml_config(default_path: Optional[str] = None, override_path: Optional[str] = None) -> Dict[str, Any]:
@@ -426,6 +434,11 @@ def validate_runtime_args_namespace(args) -> None:
     retrieval_metrics = getattr(args, 'retrieval_metrics', None)
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
+    if bool(getattr(args, 'use_prototype_bank', True)) and not bool(getattr(args, 'use_image_conditioned_pooling', True)):
+        raise ValueError(
+            'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
+            'Prototype-routed training with text-only pooling is no longer supported.'
+        )
 
 
 def _normalize_value(dest: str, value: Any) -> Any:

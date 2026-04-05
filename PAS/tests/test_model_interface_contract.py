@@ -226,7 +226,7 @@ class ModelInterfaceContractTests(unittest.TestCase):
         torch.testing.assert_close(outputs.pre_projection_pooled, outputs.pre_projection_tokens[batch_indices, self.expected_eos])
 
     def test_extract_text_features_contract_text_only(self):
-        model = self._build_model(use_image_conditioned_pooling=False)
+        model = self._build_model(use_prototype_bank=False, use_image_conditioned_pooling=False)
         outputs = model.extract_text_features(self.caption_ids)
         self.assertIsInstance(outputs, EncoderOutput)
         self.assertEqual(outputs.pooling_mode, 'text_only')

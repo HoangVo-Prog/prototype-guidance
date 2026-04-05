@@ -110,8 +110,11 @@ model:
 # | ------------------ | ----------------------------- | --------------------------------------------------------------------- |
 # | False              | False                         | Direct text-only pooling baseline (no prototype, non-image-conditioned) |
 # | False              | True                          | Image-conditioned pooling **direct** (no prototype)                   |
-# | True               | False                         | Prototype-routed training with text-only exact pooling ablation         |
 # | True               | True                          | **Full method (paper)**                                               |
+#
+# Invalid combination:
+# - use_prototype_bank: true with use_image_conditioned_pooling: false
+#   raises an error because prototype-routed text-only pooling is no longer supported.
 
 
   # If true, forward(...) may return larger debug tensors.
