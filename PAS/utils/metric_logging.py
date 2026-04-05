@@ -505,29 +505,5 @@ def build_validation_metrics(
 
 
 
-def build_comparison_series(train_meters=None, validation_metrics: Optional[Dict[str, float]] = None) -> Tuple[Dict[str, float], Dict[str, float]]:
-    train_series = {}
-    if train_meters is not None:
-        for key, meter in train_meters.items():
-            count = getattr(meter, 'count', 0)
-            if count and count > 0:
-                train_series[key] = float(meter.avg)
-
-    val_series = {}
-    if validation_metrics:
-        for key, value in validation_metrics.items():
-            if key in ('val/epoch', 'val/top1'):
-                continue
-            if key.startswith('val/pas/'):
-                metric_name = key[len('val/pas/'):]
-            elif key.startswith('val/debug/'):
-                metric_name = 'debug/' + key[len('val/debug/'):]
-            elif key.startswith('val/'):
-                metric_name = key[len('val/'):]
-            else:
-                continue
-            val_series[metric_name] = float(value)
-
-    return train_series, val_series
 
 

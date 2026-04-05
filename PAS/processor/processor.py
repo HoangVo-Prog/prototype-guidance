@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
-from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_comparison_series, build_train_metrics, build_validation_metrics, collect_loss_metrics, collect_scalar_metrics
+from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_train_metrics, build_validation_metrics, collect_loss_metrics, collect_scalar_metrics
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
 from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
@@ -258,15 +258,6 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
             if experiment_tracker is not None:
                 validation_metrics = build_validation_metrics(epoch, evaluator=evaluator, loss_metrics=eval_loss_metrics)
                 experiment_tracker.log(validation_metrics)
-                train_series, val_series = build_comparison_series(
-                    train_meters=meters,
-                    validation_metrics=validation_metrics,
-                )
-                experiment_tracker.log_comparison_charts(
-                    epoch,
-                    train_metrics=train_series,
-                    val_metrics=val_series,
-                )
             if best_top1 < top1:
                 best_top1 = top1
                 best_epoch = epoch
@@ -288,6 +279,7 @@ def do_inference(model, test_img_loader, test_txt_loader, args):
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
+
 
 
 

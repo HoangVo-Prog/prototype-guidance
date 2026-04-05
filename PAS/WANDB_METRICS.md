@@ -16,19 +16,16 @@ The logging path is implemented in:
 - `train/*`: training metrics.
 - `debug/*`: per-batch diagnostic metrics.
 - `val/*`: retrieval metrics and proxy-disabled loss metrics for the evaluation split selected by `dataset.val_dataset`.
-- `plots/*`: W&B custom comparison charts that overlay train and val series for the same metric inside one run.
 
 ### X-axes in W&B
 - `train/*` uses `train/step` as the step axis.
 - `debug/*` uses `train/step` as the step axis.
 - `val/*` uses `val/epoch` as the step axis.
-- `plots/*` are custom charts keyed by epoch history inside the tracker.
 
 ### When metrics are logged
 - Training metrics are logged every `wandb_log_interval` steps.
 - Training metrics are also logged once at the end of each epoch.
 - Validation metrics are logged every evaluation epoch.
-- `plots/*` comparison charts are refreshed once per evaluation epoch.
 
 ### Important runtime toggles
 - `logging.use_wandb=true`: enables W&B.
@@ -46,7 +43,6 @@ The logging path is implemented in:
 - Rolling-window `debug/*` coverage metrics summarize recent training batches rather than only the current batch.
 - Some losses can be intentionally zero if their corresponding loss branch is disabled.
 - Prototype-bank initialization diagnostics are logged to the Python logger, not to W&B.
-- `plots/*` overlay train and val in one chart, but the line style itself is controlled by the W&B UI rather than PAS runtime code.
 
 ## Always Logged Training Metrics
 

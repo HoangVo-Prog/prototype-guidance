@@ -65,7 +65,6 @@ class ExperimentTrackerTests(unittest.TestCase):
         fake_wandb.init.return_value = fake_run
         fake_artifact = mock.Mock()
         fake_wandb.Artifact.return_value = fake_artifact
-        fake_wandb.plot = mock.Mock()
 
         tmpdir = os.path.join(REPO_ROOT, 'tests_tmp_experiment_tracker')
         os.makedirs(tmpdir, exist_ok=True)
@@ -92,51 +91,6 @@ class ExperimentTrackerTests(unittest.TestCase):
         fake_wandb.Artifact.assert_called_once()
         self.assertEqual(fake_artifact.add_file.call_count, 2)
         fake_run.log_artifact.assert_called_once_with(fake_artifact)
-
-    def test_log_comparison_charts_emits_combined_train_and_val_plots(self):
-        args = types.SimpleNamespace(
-            use_wandb=True,
-            wandb_project='PAS',
-            wandb_entity=None,
-            wandb_run_name='unit-test-run',
-            wandb_group=None,
-            wandb_mode='offline',
-            wandb_tags=None,
-            wandb_notes=None,
-            wandb_log_code=False,
-            config_file=None,
-        )
-
-        fake_run = mock.Mock()
-        fake_wandb = mock.Mock()
-        fake_wandb.init.return_value = fake_run
-        fake_wandb.plot = mock.Mock()
-        fake_wandb.plot.line_series.side_effect = lambda **kwargs: kwargs
-
-        tmpdir = os.path.join(REPO_ROOT, 'tests_tmp_experiment_tracker')
-        os.makedirs(tmpdir, exist_ok=True)
-        try:
-            with mock.patch('utils.experiment.wandb', fake_wandb):
-                tracker = ExperimentTracker(args, tmpdir, distributed_rank=0)
-                tracker.log_comparison_charts(
-                    3,
-                    train_metrics={'loss_total': 1.2, 'loss_diag': 0.4},
-                    val_metrics={'loss_total': 0.9, 'R1': 44.0},
-                )
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
-
-        logged_payload = fake_wandb.log.call_args_list[-1].args[0]
-        self.assertIn('plots/loss_total', logged_payload)
-        self.assertIn('plots/loss_diag', logged_payload)
-        self.assertIn('plots/R1', logged_payload)
-        loss_total_chart = logged_payload['plots/loss_total']
-        self.assertEqual(loss_total_chart['keys'], ['train', 'val'])
-        self.assertEqual(loss_total_chart['xs'], [3.0])
-        self.assertEqual(loss_total_chart['ys'], [[1.2], [0.9]])
-        r1_chart = logged_payload['plots/R1']
-        self.assertEqual(r1_chart['keys'], ['val'])
-        self.assertEqual(r1_chart['ys'], [[44.0]])
 
 
 if __name__ == '__main__':  # pragma: no cover
