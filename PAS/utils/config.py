@@ -406,13 +406,6 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         _validate_enum_value('.'.join(path), current, allowed_values)
     if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
         _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
-    use_prototype_bank = bool(config_data.get('model', {}).get('use_prototype_bank', True))
-    use_image_conditioned_pooling = bool(config_data.get('model', {}).get('use_image_conditioned_pooling', True))
-    retrieval_scorer = str(config_data.get('evaluation', {}).get('retrieval_scorer', 'exact')).lower()
-    if not use_image_conditioned_pooling:
-        raise ValueError('model.use_image_conditioned_pooling must be true in the active PAS runtime.')
-    if not use_prototype_bank and retrieval_scorer == 'approximate':
-        raise ValueError('evaluation.retrieval_scorer=approximate requires model.use_prototype_bank=true. Use exact retrieval for direct image-conditioned pooling.')
 
 
 def load_yaml_config(default_path: Optional[str] = None, override_path: Optional[str] = None) -> Dict[str, Any]:
@@ -433,13 +426,6 @@ def validate_runtime_args_namespace(args) -> None:
     retrieval_metrics = getattr(args, 'retrieval_metrics', None)
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
-    use_prototype_bank = bool(getattr(args, 'use_prototype_bank', True))
-    use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', True))
-    retrieval_scorer = str(getattr(args, 'retrieval_scorer', 'exact')).lower()
-    if not use_image_conditioned_pooling:
-        raise ValueError('use_image_conditioned_pooling must be true in the active PAS runtime.')
-    if not use_prototype_bank and retrieval_scorer == 'approximate':
-        raise ValueError('retrieval_scorer=approximate requires use_prototype_bank=true. Use exact retrieval for direct image-conditioned pooling.')
 
 
 def _normalize_value(dest: str, value: Any) -> Any:
@@ -542,4 +528,5 @@ def dump_yaml_config(path: str, config_data: Dict[str, Any]) -> None:
         os.makedirs(directory, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as handle:
         yaml.safe_dump(config_data, handle, default_flow_style=False, sort_keys=False)
+
 
