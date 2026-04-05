@@ -8,25 +8,32 @@
 # - Comments list supported values where the code validates them.
 # - Some fields accept arbitrary strings/paths because they are only used for naming or file locations.
 # - Phase E runtime constraints are called out inline when a key exists but only a subset is currently supported.
+# - CLI annotations use the format: `# CLI: --flag_name (type)`.
 
 experiment:
   # Any experiment/run name string. Used in output directory naming and logs.
+  # CLI: --name (str)
   name: example_pas_run
 
   # Any writable output root. train.py creates <output_dir>/<dataset>/<timestamp>_<name>.
+  # CLI: --output_dir (str/path)
   output_dir: runs
 
   # Any integer random seed.
+  # CLI: --seed (int)
   seed: 1
 
   # Integer local GPU rank. Usually set by torch.distributed launcher; keep 0 for single-GPU runs.
+  # CLI: --local_rank (int)
   local_rank: 0
 
 model:
   # Active model family name. Practical active value: PAS.
+  # CLI: --model_name (str)
   name: PAS
 
   # Free-form variant tag used for naming/logging.
+  # CLI: --model_variant (str)
   variant: pas_v1
 
   # CLIP checkpoint name passed into build_CLIP_from_openai_pretrained(...).
@@ -34,39 +41,48 @@ model:
   # - ViT-B/16
   # - ViT-B/32
   # - ViT-L/14
+  # CLI: --pretrain_choice (str)
   pretrain_choice: ViT-B/16
 
   # Logical image-backbone name for logging/metadata.
   # Active implementation value: clip_visual.
+  # CLI: --image_backbone (str)
   image_backbone: clip_visual
 
   # Logical text-backbone name for logging/metadata.
   # Active implementation value: clip_text_transformer.
+  # CLI: --text_backbone (str)
   text_backbone: clip_text_transformer
 
   # Backbone feature dimension before PAS projectors.
   # For the shipped ViT-B/16 setup this is typically 512.
+  # CLI: --embedding_dim (int)
   embedding_dim: 512
 
   # Output dimension of image/text projectors.
   # Any positive integer is accepted.
+  # CLI: --projector_output_dim or --projection_dim (int)
   projection_dim: 256
 
   # Authoritative projector/output similarity family switch.
   # If true, projector outputs are L2-normalized for both training contrastive scores and inference retrieval scores.
   # If false, both paths use raw projector outputs.
+  # CLI: --normalize_projector_outputs (bool)
   normalize_projector_outputs: true
 
   # Hidden dimension inside the projector MLPs.
   # Any positive integer is accepted.
+  # CLI: --projector_hidden_dim (int)
   projector_hidden_dim: 512
 
   # Projector dropout probability. Typical range: 0.0 to 0.5.
+  # CLI: --projector_dropout (float)
   projector_dropout: 0.0
 
   # Supported projector variants:
   # - mlp2
   # - linear
+  # CLI: --projector_type (str)
   projector_type: mlp2
 
   # Precision used when storing CLIP backbone parameters.
@@ -74,6 +90,7 @@ model:
   # - fp16
   # - fp32
   # If you unfreeze an fp16 backbone for training, enable training.amp=true.
+  # CLI: --backbone_precision (str)
   backbone_precision: fp32
 
   # Precision used when storing prototype-bank, routing, pooling, projector, and loss-module parameters.
@@ -81,29 +98,37 @@ model:
   # - fp16
   # - fp32
   # If you train with prototype_precision=fp16, enable training.amp=true.
+  # CLI: --prototype_precision (str)
   prototype_precision: fp32
 
   # Fixed temperature used by the exact retrieval scorers. Must be positive.
+  # CLI: --temperature (float)
   temperature: 0.07
 
   # Fixed temperature used by exact and approximate retrieval scoring helpers.
 
   # Input image size as [height, width]. Any positive integer pair is accepted.
+  # CLI: --img_size HEIGHT WIDTH (2 ints)
   img_size: [384, 128]
 
   # Vision patch stride. Positive integer.
+  # CLI: --stride_size (int)
   stride_size: 16
 
   # Maximum token sequence length for text inputs.
+  # CLI: --text_length (int)
   text_length: 77
 
   # Tokenizer vocabulary size. Keep aligned with the tokenizer/BPE file.
+  # CLI: --vocab_size (int)
   vocab_size: 49408
 
   # Enables PAS prototype routing branch.
+  # CLI: --use_prototype_bank (bool)
   use_prototype_bank: true
 
   # Enables image-conditioned text pooling.
+  # CLI: --use_image_conditioned_pooling (bool)
   use_image_conditioned_pooling: true
 
 # | use_prototype_bank | use_image_conditioned_pooling | Meaning                                                               |
@@ -119,14 +144,17 @@ model:
 
   # If true, forward(...) may return larger debug tensors.
   # true/false.
+  # CLI: --return_debug_outputs (bool)
   return_debug_outputs: false
 
 prototype:
   # Number of learnable prototypes. Positive integer.
+  # CLI: --prototype_num_prototypes (int)
   num_prototypes: 32
 
   # Prototype feature dimension.
   # Any positive integer is accepted; adapters bridge backbone and prototype dimensions when needed.
+  # CLI: --prototype_dim (int)
   prototype_dim: 512
 
   # Supported init values:
@@ -136,24 +164,30 @@ prototype:
   # - orthogonal_normalized_random -> QR-based semi-orthogonal rows then row-normalized
   # - spherical_kmeans_centroids   -> spherical k-means over normalized features from prototype_init_path
   # - hybrid_spherical_kmeans_random -> spherical centers plus orthogonal random rows
+  # CLI: --prototype_init (str)
   prototype_init: normalized_random
 
   # null or path to a .pt/.pth tensor/checkpoint used by sampled_image_embeddings, kmeans_centroids,
   # spherical_kmeans_centroids, or hybrid_spherical_kmeans_random.
+  # CLI: --prototype_init_path (str/path)
   prototype_init_path: null
 
   # Ratio used only by hybrid_spherical_kmeans_random.
   # K_data = round(num_prototypes * prototype_init_hybrid_ratio), K_rand = K - K_data.
+  # CLI: --prototype_init_hybrid_ratio (float)
   prototype_init_hybrid_ratio: 0.5
 
   # Maximum spherical k-means iterations used only by spherical/hybrid init modes.
+  # CLI: --prototype_init_max_iters (int)
   prototype_init_max_iters: 50
 
   # Spherical k-means convergence tolerance used only by spherical/hybrid init modes.
+  # CLI: --prototype_init_tol (float)
   prototype_init_tol: 1.0e-4
 
   # Optional deterministic seed for new prototype init modes.
   # null falls back to experiment.seed.
+  # CLI: --prototype_init_seed (int)
   prototype_init_seed: null
 
   # Supported routing values:
@@ -162,15 +196,18 @@ prototype:
   # Accepted aliases:
   # - normalized_dot -> cosine
   # - softmax        -> cosine
+  # CLI: --routing_similarity or --prototype_routing_type (str)
   routing_type: cosine
 
   # Routing temperature. Must be positive.
+  # CLI: --tau_p or --prototype_temperature (float)
   routing_temperature: 0.07
 
   # Authoritative prototype contextualization enable/disable flag.
   # true/false.
   # Legacy alias model.use_prototype_contextualization is still accepted for backward compatibility
   # when this key is omitted, but this key takes precedence.
+  # CLI: --prototype_contextualization_enabled (bool); legacy alias --use_prototype_contextualization
   contextualization_enabled: true
 
   # Supported contextualization values:
@@ -182,82 +219,110 @@ prototype:
   # - similarity            -> self_attention
   # - similarity_residual   -> self_attention
   # - transformer           -> self_attention
+  # CLI: --prototype_contextualization_type (str)
   contextualization_type: self_attention
 
   # Residual update applied after either contextualization mode.
   # For dense_self_attention: A^p = softmax((W_q Theta)(W_k Theta)^T / sqrt(D)), Theta_tilde = Theta + A^p (W_v Theta).
+  # CLI: --prototype_contextualization_residual (bool)
   contextualization_residual: true
 
   # If true, normalize prototypes before prototype self-interaction. This affects both legacy self_attention
   # similarity logits and dense_self_attention Q/K/V inputs.
+  # CLI: --normalize_for_self_interaction (bool)
   normalize_for_self_interaction: true
 
   # If true, normalize image/prototype features before routing similarity.
+  # CLI: --normalize_for_routing (bool)
   normalize_for_routing: true
 
   # Threshold used by debug metrics for counting low-usage prototypes.
+  # CLI: --prototype_dead_threshold (float)
   dead_prototype_threshold: 0.005
 
 loss:
   # Proxy weights for each branch.
+  # CLI: --lambda_proxy_image (float); falls back to --lambda_proxy when omitted
   lambda_proxy_image: 1.0
+  # CLI: --lambda_proxy_text (float); falls back to --lambda_proxy when omitted
   lambda_proxy_text: 1.0
+  # CLI: --lambda_proxy_text_exact (float); falls back to --lambda_proxy when omitted
   lambda_proxy_text_exact: 1.0
 
   # Whether to include each proxy branch inside the surrogate objective.
+  # CLI: --use_loss_proxy_image (bool)
   use_loss_proxy_image: true
+  # CLI: --use_loss_proxy_text (bool)
   use_loss_proxy_text: true
+  # CLI: --use_loss_proxy_text_exact (bool)
   use_loss_proxy_text_exact: true
 
   # Explicit toggle for the image-vs-surrogate alignment term.
+  # CLI: --use_loss_align (bool)
   use_loss_align: true
 
   # Image / surrogate-text cosine alignment weight.
+  # CLI: --lambda_align (float)
   lambda_align: 1.0
 
   # Explicit toggle for the surrogate-vs-exact diagonal fidelity term.
+  # CLI: --use_loss_diag (bool)
   use_loss_diag: true
 
   # Diagonal surrogate-vs-exact fidelity weight.
+  # CLI: --lambda_diag (float)
   lambda_diag: 1.0
 
   # Row-wise surrogate image-to-text retrieval is always the active retrieval loss.
+  # CLI: --use_loss_ret (bool)
   use_loss_ret: true
 
   # Retrieval weight for the surrogate score matrix cross-entropy.
+  # CLI: --lambda_ret (float)
   lambda_ret: 1.0
 
   # Enables the optional low-support routing penalty.
+  # CLI: --use_loss_support (bool)
   use_loss_support: false
 
   # Support loss coefficient. Non-negative float.
   # Must be positive when use_loss_support=true and 0.0 otherwise.
+  # CLI: --lambda_support (float)
   lambda_support: 0.0
 
   # Minimum inverse-participation-ratio support before the penalty activates.
+  # CLI: --support_min (float)
   support_min: 2.0
 
   # Stage definition: stage1 trains prototype-side modules, stage2 trains backbone-side modules, joint trains both.
+  # CLI: --stage or --training_stage (str); runtime key is training.stage
   stage: stage1
 
   # Stage-controlled backbone freeze knobs.
+  # CLI: --freeze_image_backbone (bool); runtime key is training.freeze_image_backbone
   freeze_image_backbone: true
+  # CLI: --freeze_text_backbone (bool); runtime key is training.freeze_text_backbone
   freeze_text_backbone: true
 
   # Stage-controlled prototype-side freeze knob.
+  # CLI: --freeze_prototype_side (bool); runtime key is training.freeze_prototype_side
   freeze_prototype_side: false
 
   # Enables the optional prototype balancing loss.
+  # CLI: --use_balancing_loss (bool)
   use_balancing_loss: false
 
   # Balance loss coefficient. Non-negative float.
   # Must be positive when use_balancing_loss=true and 0.0 otherwise.
+  # CLI: --lambda_bal or --prototype_balance_loss_weight (float)
   balance_loss_weight: 0.0
 
   # Enables prototype diversity regularization.
+  # CLI: --use_diversity_loss (bool)
   use_diversity_loss: true
 
   # Diversity loss coefficient. Non-negative float.
+  # CLI: --lambda_div or --diversity_loss_weight (float)
   diversity_loss_weight: 0.01
 
 text_pooling:
@@ -268,6 +333,7 @@ text_pooling:
   # Accepted aliases:
   # - content, non_special -> content_only
   # - all                  -> content_plus_special
+  # CLI: --token_policy (str)
   token_policy: content_only
 
   # Supported token scoring values:
@@ -276,91 +342,120 @@ text_pooling:
   # Accepted aliases:
   # - normalized_dot       -> cosine
   # - prototype_summary_dot -> dot
+  # CLI: --token_similarity or --token_scoring_type (str)
   scoring_type: cosine
 
   # If true, normalize summary/token features before token scoring.
+  # CLI: --normalize_for_token_scoring (bool)
   normalize_for_token_scoring: true
 
   # Token-scoring temperature. Must be positive.
+  # CLI: --tau_t or --token_pooling_temperature (float)
   token_temperature: 0.07
 
   # Explicit token ids used to build valid-token masks and special-token masks.
   # Provide the ids that match the active tokenizer / preprocessing contract.
+  # CLI: no direct CLI flag; config-only mapping (dict[str, int])
   special_token_ids:
+    # CLI: no direct CLI flag; config-only integer token id
     bos_token_id: 49406
+    # CLI: no direct CLI flag; config-only integer token id
     eos_token_id: 49407
+    # CLI: no direct CLI flag; config-only integer token id
     pad_token_id: 0
 
   # If true, raise when the token policy removes every candidate token in a sample.
+  # CLI: --error_on_empty_kept_tokens (bool)
   error_on_empty_kept_tokens: true
 
 training:
   # Train batch size per process. Positive integer.
+  # CLI: --batch_size (int)
   batch_size: 32
 
   # Proxy-classifier temperature used by the amortized surrogate objective. Must be positive.
+  # CLI: --proxy_temperature (float)
   proxy_temperature: 0.07
 
   # Total number of epochs. Positive integer.
+  # CLI: --epochs or --num_epoch (int)
   epochs: 60
 
   # Console/TensorBoard logging period in training iterations. Positive integer.
+  # CLI: --log_period (int)
   log_period: 20
 
   # Validation frequency in epochs. Positive integer.
+  # CLI: --eval_frequency or --eval_period (int)
   eval_frequency: 1
 
   # Checkpoint save frequency in epochs. 0 disables periodic epoch_* checkpoints.
+  # CLI: --save_interval (int)
   save_interval: 1
 
   # Resume flag. true/false.
+  # CLI: --resume (bool)
   resume: false
 
   # Path to checkpoint used when resume=true.
+  # CLI: --resume_ckpt_file (str/path)
   resume_ckpt_file: ''
 
   # Optional finetune checkpoint path loaded into model weights before optimizer creation.
+  # CLI: --finetune (str/path)
   finetune: ''
 
   # Optional pretrain checkpoint path hook retained in schema.
+  # CLI: --pretrain (str/path)
   pretrain: ''
 
   # Image augmentation flag for training transforms.
+  # CLI: --img_aug (bool)
   img_aug: true
 
   # Text augmentation flag retained in schema.
+  # CLI: --txt_aug (bool)
   txt_aug: true
 
   # Supported sampler values:
   # - identity
   # - random
+  # CLI: --sampler (str)
   sampler: identity
 
   # Instances per identity for identity sampler. Positive integer.
+  # CLI: --num_instance (int)
   num_instance: 2
 
   # DataLoader worker count. Non-negative integer.
+  # CLI: --num_workers (int)
   num_workers: 4
 
   # true for training mode, false for evaluation-mode config usage.
+  # CLI: --test flips this to false; there is no direct --training flag (bool)
   training: true
 
   # Freeze CLIP visual backbone parameters. true/false.
+  # CLI: --freeze_image_backbone (bool)
   freeze_image_backbone: true
 
   # Freeze CLIP text backbone parameters. true/false.
+  # CLI: --freeze_text_backbone (bool)
   freeze_text_backbone: true
 
   # Gradient clipping norm. 0.0 disables clipping.
+  # CLI: --grad_clip (float)
   grad_clip: 1.0
 
   # Enable AMP autocast plus gradient scaling during training/evaluation on CUDA.
+  # CLI: --amp (bool)
   amp: false
 
   # Supported AMP compute dtypes:
   # - fp16
   # - bf16
   # fp16 backbones may only be trained with amp_dtype=fp16.
+  # CLI: --amp_dtype (str)
   amp_dtype: fp16
 
 optimizer:
@@ -368,64 +463,85 @@ optimizer:
   # - SGD
   # - Adam
   # - AdamW
+  # CLI: --optimizer_type or --optimizer (str)
   type: AdamW
 
   # Base/default learning rate for any params not overridden by group-specific lr values.
+  # CLI: --lr (float)
   lr: 0.001
 
   # Learning rate for prototype bank params.
+  # CLI: --lr_prototype_bank (float)
   lr_prototype_bank: 0.001
 
   # Learning rate for image/text projector params.
+  # CLI: --lr_projectors (float)
   lr_projectors: 0.001
 
   # Optional class-proxy learning rate override. null falls back to optimizer.lr.
+  # CLI: --lr_class_proxies (float)
   lr_class_proxies: null
 
   # Learning rate for image backbone params.
   # 0.0 is common when freeze_image_backbone=true.
+  # CLI: --lr_image_backbone (float)
   lr_image_backbone: 0.0
 
   # Learning rate for text backbone params.
   # 0.0 is common when freeze_text_backbone=true.
+  # CLI: --lr_text_backbone (float)
   lr_text_backbone: 0.0
 
   # Default weight decay for params without group-specific override.
+  # CLI: --weight_decay (float)
   weight_decay: 0.01
 
   # Weight decay overrides per parameter group.
+  # CLI: --weight_decay_prototype_bank (float)
   weight_decay_prototype_bank: 0.01
+  # CLI: --weight_decay_projectors (float)
   weight_decay_projectors: 0.05
 
   # Optional class-proxy weight decay override. null falls back to optimizer.weight_decay.
+  # CLI: --weight_decay_class_proxies (float)
   weight_decay_class_proxies: null
+  # CLI: --weight_decay_image_backbone (float)
   weight_decay_image_backbone: 0.0
+  # CLI: --weight_decay_text_backbone (float)
   weight_decay_text_backbone: 0.0
 
   # SGD momentum when optimizer=SGD.
+  # CLI: --momentum (float)
   momentum: 0.9
 
   # First Adam/AdamW beta term.
+  # CLI: --alpha (float)
   alpha: 0.9
 
   # Second Adam/AdamW beta term.
+  # CLI: --beta (float)
   beta: 0.999
 
   # Epoch milestones for step scheduler. Sorted integer list.
+  # CLI: --milestones N [N ...] (list[int])
   milestones: [40, 50]
 
   # Scheduler decay factor used by step/exp modes.
+  # CLI: --gamma (float)
   gamma: 0.1
 
   # Warmup multiplier start factor.
+  # CLI: --warmup_factor (float)
   warmup_factor: 0.1
 
   # Number of warmup epochs. Non-negative integer.
+  # CLI: --warmup_epochs (int)
   warmup_epochs: 5
 
   # Supported warmup methods:
   # - linear
   # - constant
+  # CLI: --warmup_method (str)
   warmup_method: linear
 
   # Supported scheduler modes:
@@ -434,12 +550,15 @@ optimizer:
   # - poly
   # - cosine
   # - linear
+  # CLI: --lr_scheduler or --lrscheduler (str)
   scheduler: cosine
 
   # Target learning rate used by cosine/poly/linear-style schedules.
+  # CLI: --target_lr (float)
   target_lr: 0.0
 
   # Power/exponent used by exp/poly schedules.
+  # CLI: --power (float)
   power: 0.9
 
 dataset:
@@ -447,85 +566,109 @@ dataset:
   # - CUHK-PEDES
   # - ICFG-PEDES
   # - RSTPReid
+  # CLI: --dataset_name (str)
   dataset_name: RSTPReid
 
   # Dataset root directory. The loader expects dataset subfolders under this path.
+  # CLI: --root_dir (str/path)
   root_dir: data
 
   # Validation split selection during training.
   # Supported values in current dataloader:
   # - val
   # - test
+  # CLI: --val_dataset (str)
   val_dataset: test
 
   # Dataset worker count copied into args.num_workers by config mapping.
   # Keep aligned with training.num_workers unless you have a reason to separate them.
+  # CLI: --num_workers (int)
   num_workers: 4
 
 logging:
   # Enable Weights & Biases logging. true/false.
+  # CLI: --use_wandb (bool)
   use_wandb: false
 
   # wandb project name string.
+  # CLI: --wandb_project (str)
   project: PAS
 
   # wandb entity/team name or null.
+  # CLI: --wandb_entity (str)
   entity: null
 
   # Explicit wandb run name or null to let train.py/use output dir naming handle it.
+  # CLI: --wandb_run_name (str)
   run_name: null
 
   # Optional wandb group label or null.
+  # CLI: --wandb_group (str)
   group: null
 
   # wandb mode passed through to wandb.init(...).
   # Common values: online, offline, disabled.
+  # CLI: --wandb_mode (str)
   mode: online
 
   # List of wandb tags.
+  # CLI: --wandb_tags [TAG ...] (list[str])
   tags: []
 
   # Optional notes string or null.
+  # CLI: --wandb_notes (str)
   notes: null
 
   # Train-side wandb logging interval in iterations.
+  # CLI: --wandb_log_interval (int)
   log_interval: 50
 
   # If true, try to upload source code snapshot to wandb.
+  # CLI: --wandb_log_code (bool)
   log_code: false
 
   # If true, include PAS debug scalars in logging payloads.
+  # CLI: --log_debug_metrics (bool)
   log_debug_metrics: true
 
 evaluation:
   # Optional checkpoint path for standalone test.py evaluation.
+  # CLI: --checkpoint_path or --checkpoint (str/path)
   checkpoint_path: ''
 
   # Torch device string. Examples: cuda, cpu.
+  # CLI: --device (str)
   device: cuda
 
   # If true, test.py switches dataset_name to target_domain during cross-domain evaluation.
+  # CLI: --cross_domain_generalization (bool)
   cross_domain_generalization: false
 
   # Cross-domain target dataset name.
   # In practice use one of: CUHK-PEDES, ICFG-PEDES, RSTPReid.
+  # CLI: --target_domain (str)
   target_domain: RSTPReid
 
   # Retrieval metric names to keep/report.
   # Current evaluator computes/logs: R1, R5, R10, mAP, mINP, rSum.
+  # CLI: --retrieval_metrics METRIC [METRIC ...] (list[str])
   retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
 
   # Evaluation batch size for image/text retrieval loaders. Positive integer.
+  # CLI: --test_batch_size (int)
   batch_size: 512
 
   # Chunk size used by PAS blockwise image-side retrieval similarity computation.
+  # CLI: --prototype_eval_image_chunk_size (int)
   prototype_image_chunk_size: 32
 
   # Chunk size used by PAS blockwise text-side retrieval similarity computation.
+  # CLI: --prototype_eval_text_chunk_size (int)
   prototype_text_chunk_size: 128
 
   # Retrieval scorer used by Evaluator. Supported values: exact | approximate.
   # Default exact preserves deployed pairwise pooling.
+  # CLI: --retrieval_scorer (str)
   retrieval_scorer: exact
 
 
