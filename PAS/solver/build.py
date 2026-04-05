@@ -22,20 +22,37 @@ GROUP_TO_WD_ATTR = {
 }
 
 
+def _coerce_optional_float(value, attr_name: str):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == '' or stripped.lower() in {'none', 'null'}:
+            return None
+        try:
+            return float(stripped)
+        except ValueError as exc:
+            raise TypeError(f'Optimizer setting `{attr_name}` must be numeric or null; got {value!r}.') from exc
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise TypeError(f'Optimizer setting `{attr_name}` must be numeric or null; got {value!r}.') from exc
+
+
 def _group_lr(args, group_name: str) -> float:
     attr = GROUP_TO_LR_ATTR[group_name]
-    value = getattr(args, attr, None)
+    value = _coerce_optional_float(getattr(args, attr, None), attr)
     if value is None or value < 0:
         return float(args.lr)
-    return float(value)
+    return value
 
 
 def _group_weight_decay(args, group_name: str) -> float:
     attr = GROUP_TO_WD_ATTR[group_name]
-    value = getattr(args, attr, None)
+    value = _coerce_optional_float(getattr(args, attr, None), attr)
     if value is None:
         return float(args.weight_decay)
-    return float(value)
+    return value
 
 
 def build_optimizer(args, model):
