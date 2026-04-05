@@ -176,9 +176,11 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
             if coverage_tracker is not None:
                 if not isinstance(outputs.get('debug'), dict):
                     outputs['debug'] = {}
-                # Cross-batch coverage uses the existing routing weights and never feeds back into training.
-                coverage_tracker.update(outputs['alpha'])
-                outputs['debug'].update(coverage_tracker.get_debug_metrics())
+                alpha = outputs.get('alpha')
+                if isinstance(alpha, torch.Tensor) and alpha.ndim == 2 and alpha.size(1) > 0:
+                    # Cross-batch coverage uses the existing routing weights and never feeds back into training.
+                    coverage_tracker.update(alpha)
+                    outputs['debug'].update(coverage_tracker.get_debug_metrics())
 
             scalar_metrics = collect_scalar_metrics(outputs, include_debug_metrics=log_debug_metrics)
             batch_size = batch['images'].shape[0]
@@ -279,6 +281,9 @@ def do_inference(model, test_img_loader, test_txt_loader, args):
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
+
+
+
 
 
 

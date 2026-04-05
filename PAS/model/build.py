@@ -47,6 +47,8 @@ class PASModel(nn.Module):
         self.return_debug_outputs = bool(getattr(args, 'return_debug_outputs', False))
         self.prototype_eval_image_chunk_size = int(getattr(args, 'prototype_eval_image_chunk_size', 32) or 32)
         self.prototype_eval_text_chunk_size = int(getattr(args, 'prototype_eval_text_chunk_size', 128) or 128)
+        self.use_prototype_bank = bool(getattr(args, 'use_prototype_bank', True))
+        self.use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', True))
 
         self._validate_configuration()
         image_adapter = nn.Identity() if self.embed_dim == self.prototype_dim else nn.Linear(self.embed_dim, self.prototype_dim)
@@ -89,16 +91,10 @@ class PASModel(nn.Module):
 
     def _validate_configuration(self):
         model_logger = logging.getLogger('pas.model')
-        if not bool(getattr(self.args, 'use_prototype_bank', True)):
-            model_logger.warning(
-                'model.use_prototype_bank=false is accepted for ablation bookkeeping, but the current PAS runtime '
-                'still instantiates and uses the prototype bank. This flag is non-fatal and currently advisory only.'
-            )
-        if not bool(getattr(self.args, 'use_image_conditioned_pooling', True)):
-            model_logger.warning(
-                'model.use_image_conditioned_pooling=false is accepted for ablation bookkeeping, but the current PAS '
-                'runtime still evaluates text with image-conditioned pooling. This flag is non-fatal and currently advisory only.'
-            )
+        if not self.use_image_conditioned_pooling:
+            raise ValueError('PAS requires model.use_image_conditioned_pooling=true. Non-image-conditioned text pooling is not implemented in the active runtime.')
+        if not self.use_prototype_bank and str(getattr(self.args, 'retrieval_scorer', 'exact')).lower() == 'approximate':
+            raise ValueError('evaluation.retrieval_scorer=approximate requires model.use_prototype_bank=true. Use exact retrieval for direct image-conditioned pooling.')
         if not bool(getattr(self.args, 'normalize_projector_outputs', True)):
             model_logger.warning(
                 'model.normalize_projector_outputs=false is accepted for ablation bookkeeping. The runtime will continue '
@@ -424,6 +420,9 @@ class PASModel(nn.Module):
 
     def _maybe_build_prototype_init_features(self, train_loader, image_adapter: nn.Module) -> Optional[torch.Tensor]:
         logger = logging.getLogger('pas.prototype_init')
+        if not self.use_prototype_bank:
+            logger.info('Skipping prototype initialization because model.use_prototype_bank=false.')
+            return None
         init_mode = getattr(self.args, 'prototype_init', 'normalized_random')
         init_path = getattr(self.args, 'prototype_init_path', None)
         requires_data = init_mode_requires_data(init_mode)
@@ -552,6 +551,8 @@ class PASModel(nn.Module):
         }
 
     def encode_text_basis_for_retrieval(self, text: torch.Tensor) -> Dict[str, torch.Tensor]:
+        if not self.use_prototype_bank:
+            raise RuntimeError('encode_text_basis_for_retrieval is unavailable when model.use_prototype_bank=false. Use evaluation.retrieval_scorer=exact for direct image-conditioned pooling.')
         text_output = self.extract_text_features(text)
         context = self.prototype_head.get_prototype_context(return_debug=False)
         basis_outputs = self.prototype_head.build_text_basis_bank(
@@ -582,6 +583,8 @@ class PASModel(nn.Module):
         return similarity.float()
 
     def compute_approximate_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_basis_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        if not self.use_prototype_bank:
+            raise RuntimeError('compute_approximate_retrieval_similarity is unavailable when model.use_prototype_bank=false. Use evaluation.retrieval_scorer=exact for direct image-conditioned pooling.')
         similarity = self.prototype_head.compute_approximate_pairwise_similarity(
             image_projected=self._cast_to_prototype_dtype(image_features['image_projected']),
             routing_weights=self._cast_to_prototype_dtype(image_features['routing_weights']),
@@ -763,6 +766,8 @@ def build_model(args, num_classes, train_loader=None):
     else:
         model.prototype_head.float()
     return model
+
+
 
 
 

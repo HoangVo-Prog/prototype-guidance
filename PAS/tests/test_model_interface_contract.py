@@ -337,6 +337,37 @@ class ModelInterfaceContractTests(unittest.TestCase):
         if 'basis_token_weights' in debug:
             self.assertEqual(tuple(debug['basis_token_weights'].shape), (self.batch_size, self.num_prototypes, self.seq_len))
 
+    def test_no_prototype_bank_uses_direct_image_conditioned_pooling(self):
+        model = self._build_model(use_prototype_bank=False, retrieval_scorer='exact').eval()
+        self.assertFalse(hasattr(model.prototype_head, 'prototype_bank'))
+
+        image_features = model.encode_image_for_retrieval(self.images)
+        self.assertEqual(set(image_features.keys()), {'image_projected', 'summary', 'routing_weights'})
+        self.assertEqual(tuple(image_features['routing_weights'].shape), (self.batch_size, 0))
+        self.assertEqual(tuple(image_features['summary'].shape), (self.batch_size, self.prototype_dim))
+
+        outputs = model(
+            {'images': self.images, 'caption_ids': self.caption_ids, 'pids': self.pids},
+            return_debug=True,
+        )
+        self.assertEqual(tuple(outputs['alpha'].shape), (self.batch_size, 0))
+        self.assertEqual(tuple(outputs['debug']['Theta_v'].shape), (0, self.prototype_dim))
+        self.assertEqual(tuple(outputs['debug']['Theta_tilde'].shape), (0, self.prototype_dim))
+        self.assertEqual(tuple(outputs['debug']['basis_bank'].shape), (self.batch_size, 0, self.prototype_dim))
+        self.assertIn('direct_image_conditioned_pooling', outputs['debug'])
+        self.assertTrue(torch.isfinite(outputs['loss_total']))
+
+        text_features = model.encode_text_for_retrieval(self.caption_ids)
+        similarity = model.compute_retrieval_similarity(image_features, text_features)
+        self.assertEqual(tuple(similarity.shape), (self.batch_size, self.batch_size))
+        self.assertTrue(torch.isfinite(similarity).all())
+
+    def test_no_prototype_bank_rejects_approximate_retrieval(self):
+        model = self._build_model(use_prototype_bank=False, retrieval_scorer='exact').eval()
+        with self.assertRaisesRegex(RuntimeError, 'use_prototype_bank=false'):
+            model.encode_text_basis_for_retrieval(self.caption_ids)
+        with self.assertRaisesRegex(ValueError, 'retrieval_scorer=approximate'):
+            self._build_model(use_prototype_bank=False, retrieval_scorer='approximate')
     def test_named_optimizer_groups_contract_exposes_required_group_names(self):
         model = self._build_model(freeze_image_backbone=False, freeze_text_backbone=False)
         groups = model.named_optimizer_groups()
@@ -362,3 +393,4 @@ class ModelInterfaceContractTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+

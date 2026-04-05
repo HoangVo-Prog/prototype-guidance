@@ -101,12 +101,18 @@ model:
   vocab_size: 49408
 
   # Enables PAS prototype routing branch.
-  # Phase E active runtime requires: true.
   use_prototype_bank: true
 
   # Enables image-conditioned text pooling.
-  # Phase E active runtime requires: true.
   use_image_conditioned_pooling: true
+
+# | use_prototype_bank | use_image_conditioned_pooling | Meaning                                                               |
+# | ------------------ | ----------------------------- | --------------------------------------------------------------------- |
+# | False              | False                         | CLIP baseline                                                         |
+# | False              | True                          | Image-conditioned pooling **direct** (no prototype)                   |
+# | True               | False                         | Non-sense                                                             |
+# | True               | True                          | **Full method (paper)**                                               |
+
 
   # If true, forward(...) may return larger debug tensors.
   # true/false.

@@ -88,6 +88,20 @@ class ConfigSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'training.stage=stage1 requires freeze_image_backbone=True'):
             get_args(['--config_file', path])
 
+    def test_no_prototype_bank_requires_exact_retrieval(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'use_prototype_bank': False,
+                    'use_image_conditioned_pooling': True,
+                },
+                'evaluation': {
+                    'retrieval_scorer': 'approximate',
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'direct image-conditioned pooling'):
+            load_yaml_config(None, path)
     def test_valid_stage1_surface_loads(self):
         path = self._write_config(
             {
@@ -145,3 +159,4 @@ class ConfigSurfaceTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+

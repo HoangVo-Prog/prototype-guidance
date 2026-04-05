@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from .direct_head import DirectImageConditionedTextHead
 from .head import PrototypeConditionedTextHead
 
 
@@ -13,13 +14,56 @@ def build_prototype_head(
     image_adapter: Optional[nn.Module] = None,
     text_adapter: Optional[nn.Module] = None,
     prototype_init_features: Optional[torch.Tensor] = None,
-) -> PrototypeConditionedTextHead:
+):
     contextualization_enabled = bool(getattr(args, 'prototype_contextualization_enabled', True))
     projector_output_dim = getattr(args, 'projector_output_dim', getattr(args, 'projection_dim', 256))
-    routing_type = getattr(args, 'routing_similarity', getattr(args, 'prototype_routing_type', 'cosine'))
-    routing_temperature = getattr(args, 'tau_p', getattr(args, 'prototype_temperature', 0.07))
     token_scoring_type = getattr(args, 'token_similarity', getattr(args, 'token_scoring_type', 'cosine'))
     token_temperature = getattr(args, 'tau_t', getattr(args, 'token_pooling_temperature', 0.07))
+
+    common_kwargs = dict(
+        input_dim=input_dim,
+        prototype_dim=getattr(args, 'prototype_dim', input_dim),
+        projector_output_dim=projector_output_dim,
+        projector_hidden_dim=getattr(args, 'projector_hidden_dim', getattr(args, 'prototype_dim', input_dim)),
+        projector_dropout=getattr(args, 'projector_dropout', 0.0),
+        projector_type=getattr(args, 'projector_type', 'mlp2'),
+        image_adapter=image_adapter,
+        text_adapter=text_adapter,
+        token_scoring_type=token_scoring_type,
+        token_temperature=token_temperature,
+        token_policy=getattr(args, 'token_policy', 'content_only'),
+        special_token_ids=getattr(args, 'special_token_ids', None),
+        error_on_empty_kept_tokens=getattr(args, 'error_on_empty_kept_tokens', True),
+        normalize_for_token_scoring=getattr(args, 'normalize_for_token_scoring', True),
+        normalize_projector_outputs=getattr(args, 'normalize_projector_outputs', True),
+        num_classes=num_classes,
+        proxy_temperature=getattr(args, 'proxy_temperature', 0.07),
+        lambda_proxy=getattr(args, 'lambda_proxy', 1.0),
+        lambda_proxy_image=getattr(args, 'lambda_proxy_image', getattr(args, 'lambda_proxy', 1.0)),
+        lambda_proxy_text=getattr(args, 'lambda_proxy_text', getattr(args, 'lambda_proxy', 1.0)),
+        lambda_proxy_text_exact=getattr(args, 'lambda_proxy_text_exact', getattr(args, 'lambda_proxy', 1.0)),
+        use_loss_proxy_image=getattr(args, 'use_loss_proxy_image', True),
+        use_loss_proxy_text=getattr(args, 'use_loss_proxy_text', True),
+        use_loss_proxy_text_exact=getattr(args, 'use_loss_proxy_text_exact', True),
+        use_loss_align=getattr(args, 'use_loss_align', True),
+        lambda_align=getattr(args, 'lambda_align', 1.0),
+        use_loss_diag=getattr(args, 'use_loss_diag', True),
+        lambda_diag=getattr(args, 'lambda_diag', 1.0),
+        use_loss_ret=getattr(args, 'use_loss_ret', True),
+        lambda_ret=getattr(args, 'lambda_ret', 1.0),
+        contrastive_temperature_init=getattr(args, 'temperature', 0.07),
+    )
+
+    if not bool(getattr(args, 'use_prototype_bank', True)):
+        if not bool(getattr(args, 'use_image_conditioned_pooling', True)):
+            raise ValueError(
+                'model.use_prototype_bank=false requires model.use_image_conditioned_pooling=true so the runtime can '
+                'fall back to direct image-conditioned pooling.'
+            )
+        return DirectImageConditionedTextHead(**common_kwargs)
+
+    routing_type = getattr(args, 'routing_similarity', getattr(args, 'prototype_routing_type', 'cosine'))
+    routing_temperature = getattr(args, 'tau_p', getattr(args, 'prototype_temperature', 0.07))
     support_loss_weight = getattr(args, 'lambda_support', 0.0)
     diversity_loss_weight = getattr(args, 'lambda_div', getattr(args, 'diversity_loss_weight', 0.01))
     balance_loss_weight = getattr(args, 'lambda_bal', getattr(args, 'prototype_balance_loss_weight', 0.0))
@@ -88,4 +132,3 @@ def build_prototype_head(
         learnable_contrastive_temperature=False,
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
     )
-
