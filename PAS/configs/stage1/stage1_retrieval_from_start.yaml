@@ -46,8 +46,8 @@ prototype:
   dead_prototype_threshold: 0.005
 
 loss:
-  use_diversity_loss: true
-  diversity_loss_weight: 0.01
+  use_diversity_loss: false
+  diversity_loss_weight: 0.0
   use_balancing_loss: false
   balance_loss_weight: 0.0
   use_loss_proxy_image: false
@@ -58,8 +58,8 @@ loss:
   lambda_proxy_text_exact: 0.0
   use_loss_align: false
   lambda_align: 0.0
-  use_loss_diag: true
-  lambda_diag: 1.0
+  use_loss_diag: false
+  lambda_diag: 0.0
   use_loss_ret: true
   lambda_ret: 1.0
   use_loss_support: false
