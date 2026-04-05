@@ -29,10 +29,14 @@ class PrototypeContextualizer(nn.Module):
     ):
         super().__init__()
         self.enabled = bool(enabled)
-        self.contextualization_type = CONTEXTUALIZATION_ALIASES.get(str(contextualization_type).lower())
-        if self.contextualization_type is None:
-            raise ValueError(f'Unsupported contextualization type: {contextualization_type}')
-        self.residual = bool(residual)
+        if not self.enabled:
+            self.contextualization_type = 'none'
+            self.residual = False
+        else:
+            self.contextualization_type = CONTEXTUALIZATION_ALIASES.get(str(contextualization_type).lower())
+            if self.contextualization_type is None:
+                raise ValueError(f'Unsupported contextualization type: {contextualization_type}')
+            self.residual = bool(residual)
         self.normalize = bool(normalize)
         self.temperature = None if temperature is None else float(temperature)
 
@@ -70,8 +74,10 @@ class PrototypeContextualizer(nn.Module):
                 'contextualized_prototypes': prototypes,
                 'prototype_similarity': identity,
                 'contextualization_weights': identity,
-                'contextualization_residual': int(self.residual),
-                'contextualization_num_layers': 1,
+                'contextualization_enabled': 0,
+                'contextualization_type': 'none',
+                'contextualization_residual': 0,
+                'contextualization_num_layers': 0,
             }
 
         debug: Dict[str, torch.Tensor] = {}
@@ -102,6 +108,8 @@ class PrototypeContextualizer(nn.Module):
             'contextualized_prototypes': contextualized,
             'prototype_similarity': logits,
             'contextualization_weights': weights,
+            'contextualization_enabled': 1,
+            'contextualization_type': self.contextualization_type,
             'contextualization_residual': int(self.residual),
             'contextualization_num_layers': 1,
             'prototype_contextualization_entropy': (-(weights * weights.clamp_min(1e-12).log()).sum(dim=-1).mean()).detach(),

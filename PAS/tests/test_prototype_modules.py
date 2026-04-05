@@ -153,6 +153,33 @@ class PrototypeModuleTests(unittest.TestCase):
         self.assertTrue(torch.allclose(contextualized, expected_contextualized))
         self.assertTrue(torch.allclose(debug['contextualization_weights'].sum(dim=-1), torch.ones(prototypes.size(0))))
 
+    def test_disabled_contextualization_ignores_type_and_residual(self):
+        prototypes = torch.tensor(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+        contextualizer = PrototypeContextualizer(
+            enabled=False,
+            contextualization_type='not_a_real_mode',
+            residual=True,
+            normalize=True,
+        )
+
+        contextualized, debug = contextualizer(prototypes, return_debug=True)
+
+        self.assertTrue(torch.allclose(contextualized, prototypes))
+        self.assertEqual(contextualizer.contextualization_type, 'none')
+        self.assertFalse(contextualizer.residual)
+        self.assertEqual(int(debug['contextualization_enabled']), 0)
+        self.assertEqual(debug['contextualization_type'], 'none')
+        self.assertEqual(int(debug['contextualization_residual']), 0)
+        self.assertEqual(int(debug['contextualization_num_layers']), 0)
+        self.assertTrue(torch.allclose(debug['contextualization_weights'], torch.eye(prototypes.size(0))))
+
     def test_surrogate_retrieval_loss_prefers_stronger_diagonal_logits(self):
         losses = PrototypeLosses(
             temperature_init=0.07,

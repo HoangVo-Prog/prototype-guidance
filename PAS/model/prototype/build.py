@@ -16,6 +16,8 @@ def build_prototype_head(
     prototype_init_features: Optional[torch.Tensor] = None,
 ):
     contextualization_enabled = bool(getattr(args, 'prototype_contextualization_enabled', True))
+    contextualization_type = getattr(args, 'prototype_contextualization_type', 'none') if contextualization_enabled else 'none'
+    contextualization_residual = getattr(args, 'prototype_contextualization_residual', True) if contextualization_enabled else False
     projector_output_dim = getattr(args, 'projector_output_dim', getattr(args, 'projection_dim', 256))
     token_scoring_type = getattr(args, 'token_similarity', getattr(args, 'token_scoring_type', 'cosine'))
     token_temperature = getattr(args, 'tau_t', getattr(args, 'token_pooling_temperature', 0.07))
@@ -97,8 +99,8 @@ def build_prototype_head(
         special_token_ids=getattr(args, 'special_token_ids', None),
         error_on_empty_kept_tokens=getattr(args, 'error_on_empty_kept_tokens', True),
         contextualization_enabled=contextualization_enabled,
-        contextualization_type=getattr(args, 'prototype_contextualization_type', 'none'),
-        contextualization_residual=getattr(args, 'prototype_contextualization_residual', True),
+        contextualization_type=contextualization_type,
+        contextualization_residual=contextualization_residual,
         normalize_for_self_interaction=getattr(args, 'normalize_for_self_interaction', True),
         normalize_for_routing=getattr(args, 'normalize_for_routing', True),
         normalize_for_token_scoring=getattr(args, 'normalize_for_token_scoring', True),

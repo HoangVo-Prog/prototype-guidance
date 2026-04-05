@@ -207,6 +207,7 @@ prototype:
   # true/false.
   # Legacy alias model.use_prototype_contextualization is still accepted for backward compatibility
   # when this key is omitted, but this key takes precedence.
+  # When false, contextualization_type and contextualization_residual are ignored and the prototype bank is used as-is.
   # CLI: --prototype_contextualization_enabled (bool); legacy alias --use_prototype_contextualization
   contextualization_enabled: true
 
@@ -219,11 +220,13 @@ prototype:
   # - similarity            -> self_attention
   # - similarity_residual   -> self_attention
   # - transformer           -> self_attention
+  # Ignored when contextualization_enabled=false.
   # CLI: --prototype_contextualization_type (str)
   contextualization_type: self_attention
 
   # Residual update applied after either contextualization mode.
   # For dense_self_attention: A^p = softmax((W_q Theta)(W_k Theta)^T / sqrt(D)), Theta_tilde = Theta + A^p (W_v Theta).
+  # Ignored when contextualization_enabled=false.
   # CLI: --prototype_contextualization_residual (bool)
   contextualization_residual: true
 
