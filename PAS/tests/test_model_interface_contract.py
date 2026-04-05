@@ -362,12 +362,15 @@ class ModelInterfaceContractTests(unittest.TestCase):
         self.assertEqual(tuple(similarity.shape), (self.batch_size, self.batch_size))
         self.assertTrue(torch.isfinite(similarity).all())
 
-    def test_no_prototype_bank_rejects_approximate_retrieval(self):
+    def test_no_prototype_bank_disables_basis_api_but_allows_approximate_config(self):
         model = self._build_model(use_prototype_bank=False, retrieval_scorer='exact').eval()
         with self.assertRaisesRegex(RuntimeError, 'use_prototype_bank=false'):
             model.encode_text_basis_for_retrieval(self.caption_ids)
-        with self.assertRaisesRegex(ValueError, 'retrieval_scorer=approximate'):
-            self._build_model(use_prototype_bank=False, retrieval_scorer='approximate')
+        approx_model = self._build_model(use_prototype_bank=False, retrieval_scorer='approximate').eval()
+        approx_evaluator = Evaluator(self.image_loader, self.text_loader, self._build_args(use_prototype_bank=False, retrieval_scorer='approximate'))
+        self.assertEqual(approx_evaluator.retrieval_scorer, 'exact')
+        self.assertIsNotNone(approx_model)
+
     def test_named_optimizer_groups_contract_exposes_required_group_names(self):
         model = self._build_model(freeze_image_backbone=False, freeze_text_backbone=False)
         groups = model.named_optimizer_groups()
@@ -393,4 +396,8 @@ class ModelInterfaceContractTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
+
+
+
+
 

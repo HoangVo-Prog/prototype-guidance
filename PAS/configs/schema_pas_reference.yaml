@@ -171,7 +171,8 @@ prototype:
   contextualization_enabled: true
 
   # Supported contextualization values:
-  # - self_attention
+  # - self_attention       -> legacy similarity weights with raw prototype values
+  # - dense_self_attention -> parameter-free dense self-attention
   # - none
   # Accepted aliases:
   # - off                   -> none
@@ -180,10 +181,12 @@ prototype:
   # - transformer           -> self_attention
   contextualization_type: self_attention
 
-  # If true, use residual contextualization: Theta_tilde = Theta + softmax(sim) @ Theta.
+  # Residual update applied after either contextualization mode.
+  # For dense_self_attention: A^p = softmax((W_q Theta)(W_k Theta)^T / sqrt(D)), Theta_tilde = Theta + A^p (W_v Theta).
   contextualization_residual: true
 
-  # If true, normalize prototypes before prototype self-interaction.
+  # If true, normalize prototypes before prototype self-interaction. This affects both legacy self_attention
+  # similarity logits and dense_self_attention Q/K/V inputs.
   normalize_for_self_interaction: true
 
   # If true, normalize image/prototype features before routing similarity.
@@ -521,8 +524,5 @@ evaluation:
   # Retrieval scorer used by Evaluator. Supported values: exact | approximate.
   # Default exact preserves deployed pairwise pooling.
   retrieval_scorer: exact
-
-
-
 
 

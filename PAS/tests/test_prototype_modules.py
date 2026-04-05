@@ -1,12 +1,14 @@
+import math
 import os
 import sys
 import unittest
-from types import SimpleNamespace
 
 try:
     import torch
+    import torch.nn.functional as F
 except ImportError:  # pragma: no cover - environment-dependent
     torch = None
+    F = None
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,7 +16,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 if torch is not None:
-    from model.prototype import PrototypeConditionedTextHead, PrototypeLosses
+    from model.prototype import PrototypeConditionedTextHead, PrototypeContextualizer, PrototypeLosses
 
 
 @unittest.skipUnless(torch is not None, 'PyTorch is required for prototype module tests.')
@@ -92,6 +94,64 @@ class PrototypeModuleTests(unittest.TestCase):
         )
         base.update(overrides)
         return PrototypeConditionedTextHead(**base)
+
+    def test_legacy_self_attention_keeps_raw_value_branch(self):
+        prototypes = torch.tensor(
+            [
+                [3.0, 0.0, 0.0, 0.0],
+                [0.0, 4.0, 0.0, 0.0],
+                [0.0, 0.0, 5.0, 0.0],
+            ],
+            dtype=torch.float32,
+        )
+        contextualizer = PrototypeContextualizer(
+            enabled=True,
+            contextualization_type='self_attention',
+            residual=False,
+            normalize=True,
+        )
+
+        contextualized, debug = contextualizer(prototypes, return_debug=True)
+
+        features = F.normalize(prototypes, dim=-1)
+        expected_logits = features @ features.t() / math.sqrt(prototypes.size(-1))
+        expected_weights = torch.softmax(expected_logits, dim=-1)
+        expected_contextualized = expected_weights @ prototypes
+
+        self.assertTrue(torch.allclose(debug['prototype_similarity'], expected_logits))
+        self.assertTrue(torch.allclose(debug['contextualization_weights'], expected_weights))
+        self.assertTrue(torch.allclose(contextualized, expected_contextualized))
+        self.assertNotIn('prototype_queries', debug)
+
+    def test_dense_self_attention_matches_parameter_free_formula(self):
+        prototypes = torch.tensor(
+            [
+                [1.0, 2.0, 0.0, -1.0],
+                [0.5, -0.5, 1.5, 0.0],
+                [2.0, 1.0, -1.0, 0.5],
+            ],
+            dtype=torch.float32,
+        )
+        contextualizer = PrototypeContextualizer(
+            enabled=True,
+            contextualization_type='dense_self_attention',
+            residual=False,
+            normalize=False,
+        )
+
+        contextualized, debug = contextualizer(prototypes, return_debug=True)
+
+        expected_logits = prototypes @ prototypes.t() / math.sqrt(prototypes.size(-1))
+        expected_weights = torch.softmax(expected_logits, dim=-1)
+        expected_contextualized = expected_weights @ prototypes
+
+        self.assertTrue(torch.allclose(debug['prototype_queries'], prototypes))
+        self.assertTrue(torch.allclose(debug['prototype_keys'], prototypes))
+        self.assertTrue(torch.allclose(debug['prototype_values'], prototypes))
+        self.assertTrue(torch.allclose(debug['prototype_similarity'], expected_logits))
+        self.assertTrue(torch.allclose(debug['contextualization_weights'], expected_weights))
+        self.assertTrue(torch.allclose(contextualized, expected_contextualized))
+        self.assertTrue(torch.allclose(debug['contextualization_weights'].sum(dim=-1), torch.ones(prototypes.size(0))))
 
     def test_surrogate_retrieval_loss_prefers_stronger_diagonal_logits(self):
         losses = PrototypeLosses(

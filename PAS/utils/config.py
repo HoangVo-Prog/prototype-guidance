@@ -268,7 +268,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
         'hybrid_spherical_kmeans_random',
     ),
     ('prototype', 'routing_type'): ('cosine', 'dot'),
-    ('prototype', 'contextualization_type'): ('self_attention', 'none'),
+    ('prototype', 'contextualization_type'): ('self_attention', 'dense_self_attention', 'none'),
     ('text_pooling', 'token_policy'): ('content_only', 'content_plus_special', 'eos_only'),
     ('text_pooling', 'scoring_type'): ('cosine', 'dot'),
     ('training', 'stage'): ('stage1', 'stage2', 'joint'),
@@ -295,7 +295,7 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
         'hybrid_spherical_kmeans_random',
     ),
     'prototype_routing_type': ('cosine', 'dot'),
-    'prototype_contextualization_type': ('self_attention', 'none'),
+    'prototype_contextualization_type': ('self_attention', 'dense_self_attention', 'none'),
     'token_policy': ('content_only', 'content_plus_special', 'eos_only'),
     'token_scoring_type': ('cosine', 'dot'),
     'training_stage': ('stage1', 'stage2', 'joint'),
@@ -542,13 +542,4 @@ def dump_yaml_config(path: str, config_data: Dict[str, Any]) -> None:
         os.makedirs(directory, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as handle:
         yaml.safe_dump(config_data, handle, default_flow_style=False, sort_keys=False)
-
-
-
-
-
-
-
-
-
 

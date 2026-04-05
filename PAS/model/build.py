@@ -92,9 +92,13 @@ class PASModel(nn.Module):
     def _validate_configuration(self):
         model_logger = logging.getLogger('pas.model')
         if not self.use_image_conditioned_pooling:
-            raise ValueError('PAS requires model.use_image_conditioned_pooling=true. Non-image-conditioned text pooling is not implemented in the active runtime.')
+            model_logger.warning(
+                'model.use_image_conditioned_pooling=false is accepted for config freedom, but the current runtime still uses image-conditioned pooling.'
+            )
         if not self.use_prototype_bank and str(getattr(self.args, 'retrieval_scorer', 'exact')).lower() == 'approximate':
-            raise ValueError('evaluation.retrieval_scorer=approximate requires model.use_prototype_bank=true. Use exact retrieval for direct image-conditioned pooling.')
+            model_logger.warning(
+                'evaluation.retrieval_scorer=approximate with model.use_prototype_bank=false is accepted for config freedom, but approximate scoring is unavailable and eval may fall back to exact scoring.'
+            )
         if not bool(getattr(self.args, 'normalize_projector_outputs', True)):
             model_logger.warning(
                 'model.normalize_projector_outputs=false is accepted for ablation bookkeeping. The runtime will continue '
@@ -766,6 +770,9 @@ def build_model(args, num_classes, train_loader=None):
     else:
         model.prototype_head.float()
     return model
+
+
+
 
 
 

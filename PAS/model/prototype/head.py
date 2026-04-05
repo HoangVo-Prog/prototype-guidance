@@ -650,6 +650,32 @@ class PrototypeConditionedTextHead(nn.Module):
             raise FloatingPointError('Prototype retrieval similarity contains NaN or Inf values.')
         return similarity
 
+
+    def compute_surrogate_pairwise_logits(
+        self,
+        image_projected: torch.Tensor,
+        routing_weights: torch.Tensor,
+        basis_bank: torch.Tensor,
+        image_chunk_size: int = 32,
+        text_chunk_size: int = 128,
+    ) -> torch.Tensor:
+        similarity = self.compute_approximate_pairwise_similarity(
+            image_projected=image_projected,
+            routing_weights=routing_weights,
+            basis_bank=basis_bank,
+            image_chunk_size=image_chunk_size,
+            text_chunk_size=text_chunk_size,
+        )
+        surrogate_pairwise_logits = similarity.t().contiguous()
+        if surrogate_pairwise_logits.ndim != 2 or surrogate_pairwise_logits.shape != (image_projected.size(0), basis_bank.size(0)):
+            raise ValueError(
+                'compute_surrogate_pairwise_logits must return shape [B_image, B_text]; '
+                f'got {tuple(surrogate_pairwise_logits.shape)}.'
+            )
+        if not torch.isfinite(surrogate_pairwise_logits).all():
+            raise FloatingPointError('Surrogate pairwise logits contain NaN or Inf values.')
+        return surrogate_pairwise_logits
+
     def compute_pairwise_similarity(
         self,
         image_projected: torch.Tensor,
@@ -850,6 +876,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
+
 
 
 

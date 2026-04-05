@@ -85,10 +85,10 @@ class Evaluator:
                 f'Allowed values: {list(SUPPORTED_RETRIEVAL_SCORERS)}'
             )
         if not bool(getattr(args, 'use_prototype_bank', True)) and self.retrieval_scorer == 'approximate':
-            raise ValueError(
-                'evaluation.retrieval_scorer=approximate requires model.use_prototype_bank=true. '
-                'Use exact retrieval for direct image-conditioned pooling.'
+            self.logger.warning(
+                'evaluation.retrieval_scorer=approximate with model.use_prototype_bank=false is accepted for config freedom; falling back to exact retrieval scoring.'
             )
+            self.retrieval_scorer = 'exact'
 
     def _concat_feature_batches(self, batches):
         first = batches[0]
@@ -284,6 +284,7 @@ class Evaluator:
                 )
         self.logger.info('\nbest R1 = ' + str(metrics['R1']))
         return metrics['R1']
+
 
 
 

@@ -55,11 +55,6 @@ def build_prototype_head(
     )
 
     if not bool(getattr(args, 'use_prototype_bank', True)):
-        if not bool(getattr(args, 'use_image_conditioned_pooling', True)):
-            raise ValueError(
-                'model.use_prototype_bank=false requires model.use_image_conditioned_pooling=true so the runtime can '
-                'fall back to direct image-conditioned pooling.'
-            )
         return DirectImageConditionedTextHead(**common_kwargs)
 
     routing_type = getattr(args, 'routing_similarity', getattr(args, 'prototype_routing_type', 'cosine'))
@@ -132,3 +127,4 @@ def build_prototype_head(
         learnable_contrastive_temperature=False,
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
     )
+
