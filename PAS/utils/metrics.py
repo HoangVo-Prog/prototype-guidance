@@ -282,7 +282,7 @@ class Evaluator:
                     hardest_negative,
                     margin,
                 )
-        self.logger.info('\nbest R1 = ' + str(metrics['R1']))
+        self.logger.info('\ncurrent R1 = ' + str(metrics['R1']))
         return metrics['R1']
 
 
