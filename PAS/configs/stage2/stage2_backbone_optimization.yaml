@@ -1,12 +1,12 @@
 experiment:
-  name: kaggle_pas_quicktrain
+  name: pas_stage2_backbone_optimization
   output_dir: runs
   seed: 11
   local_rank: 0
 
 model:
   name: PAS
-  variant: pas_quicktrain_freeze
+  variant: pas_stage2
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
   text_backbone: clip_text_transformer
@@ -30,11 +30,15 @@ model:
 prototype:
   num_prototypes: 32
   prototype_dim: 512
-  prototype_init: normalized_random
+  prototype_init: kmeans_centroids
   prototype_init_path: null
+  prototype_init_hybrid_ratio: 0.5
+  prototype_init_max_iters: 50
+  prototype_init_tol: 1.0e-4
+  prototype_init_seed: null
   routing_type: cosine
-  routing_temperature: 0.03
-  contextualization_enabled: false
+  routing_temperature: 0.07
+  contextualization_enabled: true
   contextualization_type: self_attention
   contextualization_residual: true
   normalize_for_self_interaction: true
@@ -44,15 +48,18 @@ prototype:
 loss:
   use_diversity_loss: true
   diversity_loss_weight: 0.01
-  use_balancing_loss: true
-  balance_loss_weight: 0.001
-  use_loss_proxy_image: true
+  use_balancing_loss: false
+  balance_loss_weight: 0.0
+  use_loss_proxy_image: false
   use_loss_proxy_text: false
-  use_loss_proxy_text_exact: true
-  use_loss_align: true
-  lambda_align: 0.25
+  use_loss_proxy_text_exact: false
+  lambda_proxy_image: 0.0
+  lambda_proxy_text: 0.0
+  lambda_proxy_text_exact: 0.0
+  use_loss_align: false
+  lambda_align: 0.0
   use_loss_diag: true
-  lambda_diag: 0.25
+  lambda_diag: 1.0
   use_loss_ret: true
   lambda_ret: 1.0
   use_loss_support: false
@@ -71,42 +78,42 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 8
-  epochs: 10
-  log_period: 50
+  batch_size: 64
+  epochs: 20
+  log_period: 20
   eval_frequency: 1
   save_interval: 1
   resume: false
   resume_ckpt_file: ''
-  finetune: ''
+  finetune: path/to/stage1_best.pth
   pretrain: ''
   img_aug: false
   txt_aug: false
-  sampler: identity
+  sampler: random
   num_instance: 2
   num_workers: 4
   training: true
-  stage: stage1
-  freeze_image_backbone: true
-  freeze_text_backbone: true
-  freeze_prototype_side: false
-  grad_clip: 0.5
+  stage: stage2
+  freeze_image_backbone: false
+  freeze_text_backbone: false
+  freeze_prototype_side: true
+  grad_clip: 1.0
   amp: false
   amp_dtype: fp16
-  proxy_temperature: 0.1
+  proxy_temperature: 0.07
 
 optimizer:
   type: AdamW
-  lr: 1.0e-4
-  lr_prototype_bank: 1.0e-4
-  lr_projectors: 5.0e-5
-  lr_image_backbone: 2.0e-5
-  lr_text_backbone: 1.0e-5
+  lr: 0.0001
+  lr_prototype_bank: 0.0
+  lr_projectors: 0.0
+  lr_image_backbone: 0.00002
+  lr_text_backbone: 0.00001
   weight_decay: 0.01
   weight_decay_prototype_bank: 0.01
   weight_decay_projectors: 0.05
-  lr_class_proxies: 3.0e-5
-  weight_decay_class_proxies: 0.01
+  lr_class_proxies: 0.0
+  weight_decay_class_proxies: null
   weight_decay_image_backbone: 0.01
   weight_decay_text_backbone: 0.01
   momentum: 0.9
@@ -115,7 +122,7 @@ optimizer:
   milestones: [40, 50]
   gamma: 0.1
   warmup_factor: 0.1
-  warmup_epochs: 0
+  warmup_epochs: 1
   warmup_method: linear
   scheduler: cosine
   target_lr: 0.0
@@ -128,14 +135,14 @@ dataset:
   num_workers: 4
 
 logging:
-  use_wandb: true
+  use_wandb: false
   project: PAS
   entity: null
   run_name: null
-  group: kaggle_quicktrain
+  group: stage2
   mode: online
-  tags: [pas, kaggle, quicktrain]
-  notes: Lightweight PAS training config for Kaggle P100 or T4x2 sanity training with canonical v1 method defaults.
+  tags: [pas, stage2, backbone_optimization]
+  notes: stage 2 backbone optimization from a stage 1 checkpoint with the same objective
   log_interval: 50
   log_code: false
   log_debug_metrics: true
@@ -146,10 +153,7 @@ evaluation:
   cross_domain_generalization: false
   target_domain: RSTPReid
   retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
-  batch_size: 64
+  batch_size: 512
   prototype_image_chunk_size: 8
   prototype_text_chunk_size: 16
   retrieval_scorer: exact
-
-
-

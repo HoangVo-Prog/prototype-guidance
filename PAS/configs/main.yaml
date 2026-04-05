@@ -58,14 +58,10 @@ loss:
   lambda_proxy_text_exact: 0.0
   use_loss_align: false
   lambda_align: 0.0
-  use_loss_diag: false
-  lambda_diag: 0.0
-  use_loss_ret_exact: true
-  use_loss_ret_exact_image: true
-  use_loss_ret_exact_text: true
-  lambda_ret_exact_image: 1.0
-  lambda_ret_exact_text: 1.0
-  ret_exact_temperature: 0.07
+  use_loss_diag: true
+  lambda_diag: 1.0
+  use_loss_ret: true
+  lambda_ret: 1.0
   use_loss_support: false
   lambda_support: 0.0
   support_min: 2.0
@@ -97,10 +93,10 @@ training:
   num_instance: 2
   num_workers: 4
   training: true
+  stage: stage1
   freeze_image_backbone: true
   freeze_text_backbone: true
-  freeze_prototype: false
-  freeze_proxy: false
+  freeze_prototype_side: false
   grad_clip: 1.0
   amp: false
   amp_dtype: fp16
@@ -161,3 +157,5 @@ evaluation:
   prototype_image_chunk_size: 8
   prototype_text_chunk_size: 16
   retrieval_scorer: exact
+
+

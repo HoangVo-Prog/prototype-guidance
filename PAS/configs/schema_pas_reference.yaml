@@ -209,20 +209,11 @@ loss:
   # Diagonal surrogate-vs-exact fidelity weight.
   lambda_diag: 1.0
 
-  # Legacy retrieval toggle. When set alone, it maps to use_loss_ret_exact_image.
-  use_loss_ret_exact: false
+  # Row-wise surrogate image-to-text retrieval is always the active retrieval loss.
+  use_loss_ret: true
 
-  # Explicit exact retrieval toggles for the image->text and text->image directions.
-  use_loss_ret_exact_image: false
-  use_loss_ret_exact_text: false
-
-  # Exact retrieval weights for each direction.
-  lambda_ret_exact_image: 1.0
-  lambda_ret_exact_text: 1.0
-
-  # Optional override temperature for the exact retrieval CE.
-  # null reuses model.temperature / the fixed eval retrieval temperature.
-  ret_exact_temperature: null
+  # Retrieval weight for the surrogate score matrix cross-entropy.
+  lambda_ret: 1.0
 
   # Enables the optional low-support routing penalty.
   use_loss_support: false
@@ -234,11 +225,15 @@ loss:
   # Minimum inverse-participation-ratio support before the penalty activates.
   support_min: 2.0
 
-  # If true, freeze the prototype bank parameters.
-  freeze_prototype: false
+  # Stage definition: stage1 trains prototype-side modules, stage2 trains backbone-side modules, joint trains both.
+  stage: stage1
 
-  # If true, freeze the class-proxy matrix so proxy losses update only the encoders/projectors.
-  freeze_proxy: false
+  # Stage-controlled backbone freeze knobs.
+  freeze_image_backbone: true
+  freeze_text_backbone: true
+
+  # Stage-controlled prototype-side freeze knob.
+  freeze_prototype_side: false
 
   # Enables the optional prototype balancing loss.
   use_balancing_loss: false
@@ -520,6 +515,7 @@ evaluation:
   # Retrieval scorer used by Evaluator. Supported values: exact | approximate.
   # Default exact preserves deployed pairwise pooling.
   retrieval_scorer: exact
+
 
 
 

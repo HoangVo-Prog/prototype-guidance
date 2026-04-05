@@ -7,7 +7,7 @@ The primary training path is now the PAS method:
 - learnable prototype bank with optional contextualization
 - routing and prototype aggregation
 - image-conditioned text token scoring and masked pooling
-- symmetric contrastive training with optional prototype regularization
+- row-wise surrogate image-to-text retrieval training with diagonal fidelity supervision and optional prototype regularization
 
 ## Main entrypoints
 
@@ -51,6 +51,7 @@ python test.py --config_file configs/train_pas_v1.yaml --output_dir <run_dir>
 
 - `README.upstream.md` is kept as a historical snapshot of the inherited upstream project.
 - Phase reports document the staged integration history and cleanup decisions.
+
 
 
 

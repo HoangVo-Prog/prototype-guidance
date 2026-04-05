@@ -8,6 +8,23 @@ from utils.config import apply_config_to_args, load_yaml_config, validate_runtim
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs')
 DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, 'default.yaml')
 DEFAULT_RETRIEVAL_METRICS = ['R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum']
+LEGACY_RETRIEVAL_FLAGS = {
+    '--use_loss_ret_exact': 'Legacy exact retrieval training is removed. Use --use_loss_ret for row-wise surrogate image-to-text retrieval.',
+    '--use_loss_ret_exact_image': 'Legacy exact image-side retrieval training is removed. Use --use_loss_ret for row-wise surrogate image-to-text retrieval.',
+    '--use_loss_ret_exact_text': 'Legacy text-to-image retrieval training is invalid because surrogate text embeddings are image-conditioned.',
+    '--lambda_ret_exact': 'Legacy exact retrieval weighting is removed. Use --lambda_ret for row-wise surrogate image-to-text retrieval.',
+    '--lambda_ret_exact_image': 'Legacy exact image-side retrieval weighting is removed. Use --lambda_ret for row-wise surrogate image-to-text retrieval.',
+    '--lambda_ret_exact_text': 'Legacy text-side retrieval weighting is removed. Column-wise text retrieval is invalid for image-conditioned text embeddings.',
+    '--ret_exact_temperature': 'Legacy exact retrieval temperature is removed. Use --temperature for surrogate retrieval scoring.',
+    '--use_loss_ret_text': 'Text-to-image retrieval loss is not supported because surrogate text embeddings are image-conditioned.',
+    '--lambda_ret_text': 'Text-to-image retrieval weighting is not supported because surrogate text embeddings are image-conditioned.',
+    '--bidirectional_ret': 'Bidirectional retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
+    '--clip_style_ret': 'CLIP-style symmetric retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
+    '--symmetric_ret': 'Symmetric retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
+    '--t2i_ret': 'Text-to-image retrieval over the surrogate score matrix is invalid because surrogate text embeddings depend on the image query.',
+    '--freeze_prototype': 'Legacy --freeze_prototype was replaced by --freeze_prototype_side.',
+    '--freeze_proxy': 'Legacy --freeze_proxy was replaced by --freeze_prototype_side.',
+}
 
 
 def _str2bool(value):
@@ -19,6 +36,13 @@ def _str2bool(value):
     if normalized in {'0', 'false', 'f', 'no', 'n', 'off'}:
         return False
     raise argparse.ArgumentTypeError(f'Invalid boolean value: {value}')
+
+
+def _prevalidate_removed_cli_flags(argv):
+    for token in argv or []:
+        option = token.split('=', 1)[0]
+        if option in LEGACY_RETRIEVAL_FLAGS:
+            raise ValueError(LEGACY_RETRIEVAL_FLAGS[option])
 
 
 def build_parser():
@@ -56,13 +80,8 @@ def build_parser():
     parser.add_argument('--lambda_align', type=float, default=1.0)
     parser.add_argument('--use_loss_diag', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_diag', type=float, default=1.0)
-    parser.add_argument('--use_loss_ret_exact', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--use_loss_ret_exact_image', type=_str2bool, nargs='?', const=True, default=None)
-    parser.add_argument('--use_loss_ret_exact_text', type=_str2bool, nargs='?', const=True, default=None)
-    parser.add_argument('--lambda_ret_exact', type=float, default=1.0)
-    parser.add_argument('--lambda_ret_exact_image', type=float, default=None)
-    parser.add_argument('--lambda_ret_exact_text', type=float, default=None)
-    parser.add_argument('--ret_exact_temperature', type=float, default=None)
+    parser.add_argument('--use_loss_ret', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--lambda_ret', type=float, default=1.0)
     parser.add_argument('--use_loss_support', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_support', type=float, default=0.0)
     parser.add_argument('--support_min', type=float, default=2.0)
@@ -119,10 +138,10 @@ def build_parser():
     parser.add_argument('--sampler', default='identity', help='choose sampler from [identity, random]')
     parser.add_argument('--num_instance', type=int, default=2)
     parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--stage', '--training_stage', dest='training_stage', type=str, default='stage1')
     parser.add_argument('--freeze_image_backbone', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--freeze_text_backbone', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--freeze_prototype', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--freeze_proxy', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--freeze_prototype_side', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--test', dest='training', default=True, action='store_false')
 
     parser.add_argument('--optimizer_type', '--optimizer', dest='optimizer', type=str, default='AdamW', help='[SGD, Adam, AdamW]')
@@ -192,6 +211,8 @@ def _finalize_args(args):
         args.retrieval_metrics = list(DEFAULT_RETRIEVAL_METRICS)
     args.use_prototype_bank = bool(args.use_prototype_bank)
     args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling)
+    args.training_stage = str(getattr(args, 'training_stage', 'stage1')).lower()
+
     legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)
     authoritative_contextualization = getattr(args, 'prototype_contextualization_enabled', None)
     override_config_data = getattr(args, 'override_config_data', {}) or {}
@@ -215,23 +236,16 @@ def _finalize_args(args):
     args.lambda_proxy_image = args.lambda_proxy if args.lambda_proxy_image is None else float(args.lambda_proxy_image)
     args.lambda_proxy_text = args.lambda_proxy if args.lambda_proxy_text is None else float(args.lambda_proxy_text)
     args.lambda_proxy_text_exact = args.lambda_proxy if args.lambda_proxy_text_exact is None else float(args.lambda_proxy_text_exact)
-    if args.use_loss_ret_exact_image is None:
-        args.use_loss_ret_exact_image = bool(args.use_loss_ret_exact)
-    else:
-        args.use_loss_ret_exact_image = bool(args.use_loss_ret_exact_image)
-    if args.use_loss_ret_exact_text is None:
-        args.use_loss_ret_exact_text = False
-    else:
-        args.use_loss_ret_exact_text = bool(args.use_loss_ret_exact_text)
-    args.lambda_ret_exact_image = args.lambda_ret_exact if args.lambda_ret_exact_image is None else float(args.lambda_ret_exact_image)
-    args.lambda_ret_exact_text = args.lambda_ret_exact if args.lambda_ret_exact_text is None else float(args.lambda_ret_exact_text)
-    args.use_loss_ret_exact = bool(args.use_loss_ret_exact_image or args.use_loss_ret_exact_text)
+    args.use_loss_ret = bool(args.use_loss_ret)
+    args.lambda_ret = float(args.lambda_ret)
     args.image_backbone = args.image_backbone or args.pretrain_choice
     args.text_backbone = args.text_backbone or 'clip_text_transformer'
     return args
 
 
 def get_args(argv=None):
+    argv = argv if argv is not None else sys.argv[1:]
+    _prevalidate_removed_cli_flags(argv)
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -243,12 +257,10 @@ def get_args(argv=None):
         parser,
         args,
         config_data,
-        argv if argv is not None else sys.argv[1:],
+        argv,
         override_config_data=override_config_data,
     )
     args.override_config_data = override_config_data
     args = _finalize_args(args)
     validate_runtime_args_namespace(args)
     return args
-
-

@@ -57,7 +57,7 @@ The logging path is implemented in:
 - `train/loss_proxy_image`: proxy loss on the image embedding branch.
 - `train/loss_proxy_text`: proxy loss on the surrogate text branch.
 - `train/loss_proxy_text_exact`: proxy loss on the exact pooled text branch.
-- `train/loss_ret_exact`: in-batch exact image-to-text retrieval cross-entropy in deployed scorer space.
+- `train/loss_ret`: row-wise image-to-text cross-entropy over the surrogate score matrix.
 - `train/loss_align`: cosine-alignment loss between image and surrogate text embeddings.
 - `train/loss_diag`: diagonal fidelity loss between surrogate and exact text embeddings.
 - `train/loss_support`: low-support routing penalty based on inverse participation ratio.
@@ -66,7 +66,7 @@ The logging path is implemented in:
 
 ### Weighted objective terms
 - `train/loss_proxy_weighted`: weighted proxy objective.
-- `train/loss_ret_exact_weighted`: weighted exact retrieval objective.
+- `train/loss_ret_weighted`: weighted row-wise surrogate retrieval objective.
 - `train/loss_align_weighted`: weighted alignment objective.
 - `train/loss_diag_weighted`: weighted diagonal fidelity objective.
 - `train/loss_support_weighted`: weighted support penalty.
@@ -79,7 +79,7 @@ These are logged during evaluation on the split selected by `dataset.val_dataset
 
 - `val/epoch`: epoch at which validation was run.
 - `val/loss_total`: proxy-disabled evaluation objective on the selected eval split.
-- `val/loss_ret_exact`: exact retrieval loss on the selected eval split.
+- `val/loss_ret`: row-wise surrogate retrieval loss on the selected eval split.
 - `val/loss_align`: image/surrogate alignment loss on the selected eval split.
 - `val/loss_diag`: surrogate/exact fidelity loss on the selected eval split.
 - `val/top1`: alias for `R1`, used as the primary model-selection metric.
@@ -96,7 +96,7 @@ These are logged only when `logging.log_debug_metrics=true`.
 - `debug/logit_scale`: multiplicative retrieval scale used for exact similarity scoring.
 - `debug/proxy_temperature`: temperature used for proxy-classification logits.
 - `debug/retrieval_temperature`: reciprocal of `logit_scale`, shown as the effective retrieval temperature.
-- `debug/ret_exact_temperature`: temperature used by the exact retrieval CE; equals `debug/retrieval_temperature` when unset in config.
+
 
 ### Embedding and pooled-feature norms
 - `debug/q_norm`: norm of the prototype summary vector `Q` used for token scoring.
@@ -110,14 +110,15 @@ These are logged only when `logging.log_debug_metrics=true`.
 - `debug/exact_text_embed_norm_raw`: mean norm of exact text embeddings before normalization.
 - `debug/exact_text_embed_unit_norm`: mean norm of final exact text embeddings after normalization.
 
-### Exact Retrieval Diagnostics
+### Retrieval Diagnostics
 - `debug/image_surrogate_positive_cosine_mean`: mean positive image-vs-surrogate cosine on the current batch.
 - `debug/image_surrogate_hardest_negative_cosine_mean`: mean hardest-negative image-vs-surrogate cosine on the current batch.
 - `debug/image_surrogate_margin_mean`: mean positive-minus-hardest-negative surrogate margin.
 - `debug/image_exact_positive_cosine_mean`: mean positive exact image-to-text cosine from the in-batch deployed scorer.
 - `debug/image_exact_hardest_negative_cosine_mean`: mean hardest-negative exact cosine from the in-batch deployed scorer.
 - `debug/image_exact_margin_mean`: mean positive-minus-hardest-negative exact margin.
-- `debug/exact_pairwise_logit_mean`: mean of the in-batch exact pairwise logits used by `L_ret_exact`.
-- `debug/exact_pairwise_logit_std`: standard deviation of the in-batch exact pairwise logits.
-- `debug/exact_pairwise_logit_scale_or_norm`: effective logit scale used for `L_ret_exact`.
-- `debug/exact_branch_grad_norm`: gradient norm observed at the exact pairwise retrieval logits used by `L_ret_exact`.
+- `debug/surrogate_pairwise_logit_mean`: mean of the in-batch surrogate pairwise logits used by `loss_ret`.
+- `debug/surrogate_pairwise_logit_std`: standard deviation of the in-batch surrogate pairwise logits.
+- `debug/surrogate_pairwise_positive_logit_mean`: mean positive surrogate retrieval logit on the batch diagonal.
+- `debug/surrogate_retrieval_grad_norm`: gradient norm observed at the surrogate pairwise retrieval logits used by `loss_ret`.
+

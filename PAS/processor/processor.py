@@ -99,7 +99,7 @@ def _collect_output_gradient_metrics(outputs, scale: float = 1.0):
         ('z_v', 'grad_norm_image_projected_output'),
         ('z_t_hat_diag', 'grad_norm_surrogate_text_projected_output'),
         ('z_t_exact_diag', 'grad_norm_exact_text_projected_output'),
-        ('exact_pairwise_logits', 'exact_branch_grad_norm'),
+        ('surrogate_pairwise_logits', 'surrogate_retrieval_grad_norm'),
     ):
         tensor = outputs.get(output_key)
         if not isinstance(tensor, torch.Tensor) or tensor.grad is None:
@@ -279,6 +279,7 @@ def do_inference(model, test_img_loader, test_txt_loader, args):
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
+
 
 
 

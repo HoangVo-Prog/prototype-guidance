@@ -61,13 +61,8 @@ class PrototypeConditionedTextHead(nn.Module):
         lambda_align: float = 1.0,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
-        use_loss_ret_exact: bool = False,
-        use_loss_ret_exact_image: Optional[bool] = None,
-        use_loss_ret_exact_text: Optional[bool] = None,
-        lambda_ret_exact: float = 1.0,
-        lambda_ret_exact_image: Optional[float] = None,
-        lambda_ret_exact_text: Optional[float] = None,
-        ret_exact_temperature: Optional[float] = None,
+        use_loss_ret: bool = True,
+        lambda_ret: float = 1.0,
         use_loss_support: bool = False,
         support_loss_weight: float = 0.0,
         support_min: float = 2.0,
@@ -157,13 +152,8 @@ class PrototypeConditionedTextHead(nn.Module):
             lambda_align=lambda_align,
             use_loss_diag=use_loss_diag,
             lambda_diag=lambda_diag,
-            use_loss_ret_exact=use_loss_ret_exact,
-            use_loss_ret_exact_image=use_loss_ret_exact_image,
-            use_loss_ret_exact_text=use_loss_ret_exact_text,
-            lambda_ret_exact=lambda_ret_exact,
-            lambda_ret_exact_image=lambda_ret_exact_image,
-            lambda_ret_exact_text=lambda_ret_exact_text,
-            ret_exact_temperature=ret_exact_temperature,
+            use_loss_ret=use_loss_ret,
+            lambda_ret=lambda_ret,
             use_loss_support=use_loss_support,
             support_loss_weight=support_loss_weight,
             support_min=support_min,
@@ -755,19 +745,15 @@ class PrototypeConditionedTextHead(nn.Module):
                 exact_text_projected=exact_outputs['text_projected'],
             )
         )
-        exact_pairwise_logits = None
-        if self.losses.use_loss_ret_exact:
-            exact_pairwise_logits = self._compute_exact_pairwise_similarity_logits(
+        surrogate_pairwise_logits = None
+        if self.losses.use_loss_ret:
+            surrogate_pairwise_logits = self.compute_surrogate_pairwise_logits(
                 image_projected=image_outputs['image_projected'],
-                summaries=image_outputs['summary'],
-                text_token_states=text_token_states,
-                token_ids=token_ids,
-                attention_mask=attention_mask,
-                special_token_positions=special_token_positions,
+                routing_weights=image_outputs['routing_weights'],
+                basis_bank=basis_outputs['basis_bank'],
                 image_chunk_size=image_outputs['image_projected'].size(0),
                 text_chunk_size=token_ids.size(0),
-                prepared_text=prepared_text,
-            ).t().contiguous()
+            )
         loss_outputs = self.losses(
             image_outputs['image_projected'],
             surrogate_text_projected,
@@ -775,7 +761,7 @@ class PrototypeConditionedTextHead(nn.Module):
             pids=pids,
             prototypes=context['prototypes'],
             routing_weights=image_outputs['routing_weights'],
-            exact_pairwise_logits=exact_pairwise_logits,
+            surrogate_pairwise_logits=surrogate_pairwise_logits,
             return_debug=return_debug,
             disable_proxy_losses=disable_proxy_losses,
         )
@@ -818,7 +804,7 @@ class PrototypeConditionedTextHead(nn.Module):
             'Z_t_raw': surrogate_text_projector_debug['projected_features_raw'],
             'Z_t_exact': exact_outputs['text_projected'],
             'Z_t_exact_raw': exact_outputs['text_projected_raw'],
-            'exact_pairwise_logits': exact_pairwise_logits,
+            'surrogate_pairwise_logits': surrogate_pairwise_logits,
             'losses': loss_outputs,
             'metrics': scalar_metrics,
         }
@@ -850,10 +836,10 @@ class PrototypeConditionedTextHead(nn.Module):
                     'basis_bank': basis_outputs['basis_bank'].detach(),
                 }
             )
-            if exact_pairwise_logits is not None:
-                outputs['debug']['exact_pairwise_logits'] = exact_pairwise_logits.detach()
-            if 'ret_exact_logits' in loss_outputs:
-                outputs['debug']['ret_exact_logits'] = loss_outputs['ret_exact_logits'].detach()
+            if surrogate_pairwise_logits is not None:
+                outputs['debug']['surrogate_pairwise_logits'] = surrogate_pairwise_logits.detach()
+            if 'surrogate_retrieval_logits' in loss_outputs:
+                outputs['debug']['surrogate_retrieval_logits'] = loss_outputs['surrogate_retrieval_logits'].detach()
             if 'basis_token_scores' in basis_outputs:
                 outputs['debug']['basis_token_scores'] = basis_outputs['basis_token_scores'].detach()
                 outputs['debug']['basis_token_weights'] = basis_outputs['basis_token_weights'].detach()
@@ -864,6 +850,10 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
+
+
+
+
 
 
 

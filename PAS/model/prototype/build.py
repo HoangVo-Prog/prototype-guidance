@@ -75,13 +75,8 @@ def build_prototype_head(
         lambda_align=getattr(args, 'lambda_align', 1.0),
         use_loss_diag=getattr(args, 'use_loss_diag', True),
         lambda_diag=getattr(args, 'lambda_diag', 1.0),
-        use_loss_ret_exact=getattr(args, 'use_loss_ret_exact', False),
-        use_loss_ret_exact_image=getattr(args, 'use_loss_ret_exact_image', getattr(args, 'use_loss_ret_exact', False)),
-        use_loss_ret_exact_text=getattr(args, 'use_loss_ret_exact_text', False),
-        lambda_ret_exact=getattr(args, 'lambda_ret_exact', 1.0),
-        lambda_ret_exact_image=getattr(args, 'lambda_ret_exact_image', getattr(args, 'lambda_ret_exact', 1.0)),
-        lambda_ret_exact_text=getattr(args, 'lambda_ret_exact_text', getattr(args, 'lambda_ret_exact', 1.0)),
-        ret_exact_temperature=getattr(args, 'ret_exact_temperature', None),
+        use_loss_ret=getattr(args, 'use_loss_ret', True),
+        lambda_ret=getattr(args, 'lambda_ret', 1.0),
         use_loss_support=getattr(args, 'use_loss_support', False),
         support_loss_weight=support_loss_weight,
         support_min=getattr(args, 'support_min', 2.0),
@@ -93,3 +88,4 @@ def build_prototype_head(
         learnable_contrastive_temperature=False,
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
     )
+

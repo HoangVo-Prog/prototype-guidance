@@ -131,6 +131,81 @@ class PASModel(nn.Module):
                 raise ValueError('Unfrozen fp16 backbone training requires training.amp=true so the backbone is updated under proper AMP scaling.')
         if bool(getattr(self.args, 'training', True)) and self.prototype_precision == 'fp16' and not bool(getattr(self.args, 'amp', False)):
             raise ValueError('model.prototype_precision=fp16 requires training.amp=true so prototype modules are updated under proper AMP scaling.')
+        legacy_retrieval_flags = {
+            'use_loss_ret_exact': 'Legacy exact retrieval training is removed. Use loss.use_loss_ret for row-wise surrogate image-to-text retrieval only.',
+            'use_loss_ret_exact_image': 'Legacy exact image-side retrieval training is removed. The only valid retrieval loss is row-wise surrogate image-to-text retrieval.',
+            'use_loss_ret_exact_text': 'Legacy text-to-image retrieval training is invalid because surrogate text embeddings are image-conditioned.',
+            'lambda_ret_exact': 'Legacy exact retrieval weighting is removed. Use loss.lambda_ret for surrogate row-wise retrieval.',
+            'lambda_ret_exact_image': 'Legacy exact image-side retrieval weighting is removed. Use loss.lambda_ret for surrogate row-wise retrieval.',
+            'lambda_ret_exact_text': 'Legacy text-side retrieval weighting is removed. Column-wise text retrieval is invalid for image-conditioned text embeddings.',
+            'ret_exact_temperature': 'Legacy exact retrieval temperature is removed. model.temperature defines the surrogate retrieval temperature.',
+            'freeze_prototype': 'training.freeze_prototype was replaced by training.freeze_prototype_side.',
+            'freeze_proxy': 'training.freeze_proxy was replaced by training.freeze_prototype_side.',
+        }
+        for attr_name, message in legacy_retrieval_flags.items():
+            if not hasattr(self.args, attr_name):
+                continue
+            value = getattr(self.args, attr_name)
+            if value in (None, False, 0, 0.0, ''):
+                continue
+            raise ValueError(message)
+
+        expected_stage_freezes = {
+            'stage1': (True, True, False),
+            'stage2': (False, False, True),
+            'joint': (False, False, False),
+        }
+        explicit_stage = getattr(self.args, 'training_stage', None)
+        configured_freezes = (
+            bool(getattr(self.args, 'freeze_image_backbone', True)),
+            bool(getattr(self.args, 'freeze_text_backbone', True)),
+            bool(getattr(self.args, 'freeze_prototype_side', False)),
+        )
+        if explicit_stage is None:
+            inferred_stage = None
+            for candidate_stage, expected_freezes in expected_stage_freezes.items():
+                if configured_freezes == expected_freezes:
+                    inferred_stage = candidate_stage
+                    break
+            if inferred_stage is None:
+                raise ValueError(
+                    'Could not infer training stage from freeze settings. Provide training.stage explicitly or use one of '
+                    f'{expected_stage_freezes}.'
+                )
+            self.training_stage = inferred_stage
+        else:
+            self.training_stage = str(explicit_stage).lower()
+        if self.training_stage not in expected_stage_freezes:
+            raise ValueError(f'training.stage must be one of [\'stage1\', \'stage2\', \'joint\']; got {self.training_stage!r}.')
+
+        expected_image_freeze, expected_text_freeze, expected_prototype_side_freeze = expected_stage_freezes[self.training_stage]
+        expected_freezes = (expected_image_freeze, expected_text_freeze, expected_prototype_side_freeze)
+        if configured_freezes != expected_freezes:
+            raise ValueError(
+                'training.stage={stage} requires freeze_image_backbone={img}, freeze_text_backbone={txt}, '
+                'and freeze_prototype_side={proto}. Got image={got_img}, text={got_txt}, prototype_side={got_proto}.'
+                .format(
+                    stage=self.training_stage,
+                    img=expected_image_freeze,
+                    txt=expected_text_freeze,
+                    proto=expected_prototype_side_freeze,
+                    got_img=configured_freezes[0],
+                    got_txt=configured_freezes[1],
+                    got_proto=configured_freezes[2],
+                )
+            )
+
+        if bool(getattr(self.args, 'training', True)):
+            if not bool(getattr(self.args, 'use_loss_ret', True)):
+                raise ValueError('Retrieval supervision must remain active from the beginning. Set loss.use_loss_ret=true.')
+            if float(getattr(self.args, 'lambda_ret', 1.0)) <= 0.0:
+                raise ValueError('loss.lambda_ret must be positive because row-wise surrogate retrieval is always active during training.')
+            if not bool(getattr(self.args, 'use_loss_diag', True)):
+                raise ValueError('Diagonal fidelity supervision must remain active. Set loss.use_loss_diag=true.')
+            if float(getattr(self.args, 'lambda_diag', 1.0)) <= 0.0:
+                raise ValueError('loss.lambda_diag must be positive because diagonal fidelity is always active during training.')
+            if self.training_stage == 'stage2' and not str(getattr(self.args, 'finetune', '') or '').strip():
+                raise ValueError('training.stage=stage2 requires training.finetune to point to a Stage 1 checkpoint.')
         TokenMaskBuilder(
             token_policy=str(getattr(self.args, 'token_policy', 'content_only')).lower(),
             special_token_ids=special_token_ids,
@@ -144,8 +219,7 @@ class PASModel(nn.Module):
     def _apply_freeze_policy(self):
         self.freeze_image_backbone = bool(getattr(self.args, 'freeze_image_backbone', True))
         self.freeze_text_backbone = bool(getattr(self.args, 'freeze_text_backbone', True))
-        self.freeze_prototype = bool(getattr(self.args, 'freeze_prototype', False))
-        self.freeze_proxy = bool(getattr(self.args, 'freeze_proxy', False))
+        self.freeze_prototype_side = bool(getattr(self.args, 'freeze_prototype_side', False))
 
         if self.freeze_image_backbone:
             self._freeze_module(self.base_model.visual)
@@ -156,10 +230,8 @@ class PASModel(nn.Module):
             self.base_model.ln_final.weight.requires_grad = False
             self.base_model.ln_final.bias.requires_grad = False
             self.base_model.text_projection.requires_grad = False
-        if self.freeze_prototype:
-            self._freeze_module(self.prototype_head.prototype_bank)
-        if self.freeze_proxy:
-            self.prototype_head.losses.class_proxies.requires_grad = False
+        if self.freeze_prototype_side:
+            self._freeze_module(self.prototype_head)
 
 
     def _collect_train_image_records(self, train_loader) -> list:
@@ -554,7 +626,7 @@ class PASModel(nn.Module):
                 'Z_t_exact_raw': prototype_outputs['exact_text_projected_raw'].detach(),
             }
         )
-        for key in ('basis_token_scores', 'basis_token_weights', 'basis_beta_logits_masked', 'image_proxy_logits', 'text_proxy_logits', 'text_exact_proxy_logits', 'ret_exact_logits', 'exact_pairwise_logits', 'class_proxies'):
+        for key in ('basis_token_scores', 'basis_token_weights', 'basis_beta_logits_masked', 'image_proxy_logits', 'text_proxy_logits', 'text_exact_proxy_logits', 'surrogate_retrieval_logits', 'surrogate_pairwise_logits', 'class_proxies'):
             value = prototype_outputs.get('debug', {}).get(key)
             if isinstance(value, torch.Tensor):
                 debug[key] = value.detach()
@@ -628,9 +700,7 @@ class PASModel(nn.Module):
             'loss_proxy_image': losses['loss_proxy_image'],
             'loss_proxy_text': losses['loss_proxy_text'],
             'loss_proxy_text_exact': losses['loss_proxy_text_exact'],
-            'loss_ret_exact': losses['loss_ret_exact'],
-            'loss_ret_exact_image': losses['loss_ret_exact_image'],
-            'loss_ret_exact_text': losses['loss_ret_exact_text'],
+            'loss_ret': losses['loss_ret'],
             'loss_align': losses['loss_align'],
             'loss_diag': losses['loss_diag'],
             'loss_support': losses['loss_support'],
@@ -640,9 +710,7 @@ class PASModel(nn.Module):
             'loss_proxy_text_weighted': losses['loss_proxy_text_weighted'],
             'loss_proxy_text_exact_weighted': losses['loss_proxy_text_exact_weighted'],
             'loss_proxy_weighted': losses['loss_proxy_weighted'],
-            'loss_ret_exact_image_weighted': losses['loss_ret_exact_image_weighted'],
-            'loss_ret_exact_text_weighted': losses['loss_ret_exact_text_weighted'],
-            'loss_ret_exact_weighted': losses['loss_ret_exact_weighted'],
+            'loss_ret_weighted': losses['loss_ret_weighted'],
             'loss_align_weighted': losses['loss_align_weighted'],
             'loss_diag_weighted': losses['loss_diag_weighted'],
             'loss_support_weighted': losses['loss_support_weighted'],
@@ -653,13 +721,8 @@ class PASModel(nn.Module):
             'lambda_proxy_text': losses['lambda_proxy_text'],
             'lambda_proxy_text_exact': losses['lambda_proxy_text_exact'],
             'use_loss_proxy_text_exact': losses['use_loss_proxy_text_exact'],
-            'use_loss_ret_exact': losses['use_loss_ret_exact'],
-            'use_loss_ret_exact_image': losses['use_loss_ret_exact_image'],
-            'use_loss_ret_exact_text': losses['use_loss_ret_exact_text'],
-            'lambda_ret_exact': losses['lambda_ret_exact'],
-            'lambda_ret_exact_image': losses['lambda_ret_exact_image'],
-            'lambda_ret_exact_text': losses['lambda_ret_exact_text'],
-            'ret_exact_temperature': losses['ret_exact_temperature'].detach(),
+            'use_loss_ret': losses['use_loss_ret'],
+            'lambda_ret': losses['lambda_ret'],
             'lambda_align': losses['lambda_align'],
             'lambda_diag': losses['lambda_diag'],
             'use_loss_support': losses['use_loss_support'],
@@ -673,10 +736,10 @@ class PASModel(nn.Module):
             'z_v': prototype_outputs['image_projected'],
             'z_t_hat_diag': prototype_outputs['surrogate_text_projected'],
             'z_t_exact_diag': prototype_outputs['exact_text_projected'],
-            'exact_pairwise_logits': prototype_outputs.get('exact_pairwise_logits'),
+            'surrogate_pairwise_logits': prototype_outputs.get('surrogate_pairwise_logits'),
             'debug': dict(prototype_outputs.get('metrics', {})),
         }
-        for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'exact_pairwise_logits'):
+        for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'surrogate_pairwise_logits'):
             tensor = outputs.get(grad_tensor_key)
             if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
                 tensor.retain_grad()
@@ -700,5 +763,9 @@ def build_model(args, num_classes, train_loader=None):
     else:
         model.prototype_head.float()
     return model
+
+
+
+
 
 
