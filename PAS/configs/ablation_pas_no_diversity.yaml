@@ -7,6 +7,7 @@ experiment:
 model:
   name: PAS
   variant: pas_v1_no_diversity
+  training_mode: pas
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
   text_backbone: clip_text_transformer
@@ -16,6 +17,7 @@ model:
   projector_dropout: 0.0
   projector_type: mlp2
   normalize_projector_outputs: true
+  use_custom_projector: true
   backbone_precision: fp32
   prototype_precision: fp32
   temperature: 0.07
@@ -53,6 +55,7 @@ loss:
   use_loss_diag: true
   lambda_diag: 1.0
   use_loss_ret: true
+  retrieval_mode: surrogate_i2t
   lambda_ret: 1.0
   use_loss_support: false
   lambda_support: 0.0

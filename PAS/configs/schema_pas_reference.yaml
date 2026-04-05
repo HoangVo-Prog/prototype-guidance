@@ -36,6 +36,11 @@ model:
   # CLI: --model_variant (str)
   variant: pas_v1
 
+  # High-level model execution path.
+  # Supported values: pas | vanilla_clip
+  # CLI: --training_mode (str)
+  training_mode: pas
+
   # CLIP checkpoint name passed into build_CLIP_from_openai_pretrained(...).
   # PAS runtime currently supports only ViT backbones whose text hidden width matches embed_dim:
   # - ViT-B/16
@@ -69,6 +74,11 @@ model:
   # If false, both paths use raw projector outputs.
   # CLI: --normalize_projector_outputs (bool)
   normalize_projector_outputs: true
+
+  # If false in vanilla_clip mode, bypasses the repo custom projector head and uses CLIP global embeddings directly.
+  # Ignored by PAS prototype/direct modes.
+  # CLI: --use_custom_projector (bool)
+  use_custom_projector: true
 
   # Hidden dimension inside the projector MLPs.
   # Any positive integer is accepted.
@@ -276,11 +286,17 @@ loss:
   # CLI: --lambda_diag (float)
   lambda_diag: 1.0
 
-  # Row-wise surrogate image-to-text retrieval is always the active retrieval loss.
+  # Enables retrieval supervision.
   # CLI: --use_loss_ret (bool)
   use_loss_ret: true
 
-  # Retrieval weight for the surrogate score matrix cross-entropy.
+  # Retrieval objective family.
+  # Supported values: surrogate_i2t | clip_bidirectional
+  # `clip_bidirectional` is only valid when model.training_mode=vanilla_clip.
+  # CLI: --retrieval_mode (str)
+  retrieval_mode: surrogate_i2t
+
+  # Retrieval weight for the active retrieval objective.
   # CLI: --lambda_ret (float)
   lambda_ret: 1.0
 

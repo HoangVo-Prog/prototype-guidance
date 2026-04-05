@@ -140,6 +140,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
             stride_size=1,
             model_name='PAS',
             model_variant='pas_test',
+            training_mode='pas',
             image_backbone='dummy_visual',
             text_backbone='dummy_text',
             embedding_dim=8,
@@ -148,6 +149,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
             projector_dropout=0.0,
             projector_type='mlp2',
             normalize_projector_outputs=True,
+            use_custom_projector=True,
             backbone_precision='fp32',
             prototype_precision='fp32',
             temperature=0.07,
@@ -156,6 +158,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
             lambda_proxy_image=1.0,
             lambda_proxy_text=1.0,
             lambda_proxy_text_exact=1.0,
+            retrieval_mode='surrogate_i2t',
             use_loss_proxy_image=True,
             use_loss_proxy_text=True,
             use_loss_proxy_text_exact=True,
@@ -228,6 +231,49 @@ class PhaseEIntegrationTests(unittest.TestCase):
         base.update(overrides)
         return SimpleNamespace(**base)
 
+    def test_vanilla_clip_mode_runs_with_exact_eval(self):
+        model = PASModel(
+            self._build_args(
+                training_mode='vanilla_clip',
+                use_prototype_bank=False,
+                use_image_conditioned_pooling=False,
+                use_custom_projector=False,
+                token_policy='eos_only',
+                retrieval_mode='clip_bidirectional',
+                use_loss_proxy_image=False,
+                use_loss_proxy_text=False,
+                use_loss_proxy_text_exact=False,
+                use_loss_align=False,
+                use_loss_diag=False,
+                use_loss_support=False,
+                use_balancing_loss=False,
+                use_diversity_loss=False,
+                retrieval_scorer='exact',
+            ),
+            num_classes=2,
+        )
+        outputs = model(self.batch, return_debug=False)
+        self.assertIn('loss_ret', outputs)
+        self.assertEqual(tuple(outputs['alpha'].shape), (4, 0))
+        evaluator = Evaluator(self.img_loader, self.text_loader, self._build_args(
+            training_mode='vanilla_clip',
+            use_prototype_bank=False,
+            use_image_conditioned_pooling=False,
+            use_custom_projector=False,
+            token_policy='eos_only',
+            retrieval_mode='clip_bidirectional',
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=False,
+            use_loss_support=False,
+            use_balancing_loss=False,
+            use_diversity_loss=False,
+            retrieval_scorer='exact',
+        ))
+        self.assertTrue(torch.isfinite(torch.tensor(evaluator.eval(model.eval()))))
+
     def test_forward_returns_surrogate_retrieval_outputs(self):
         model = PASModel(self._build_args(stage='stage1'), num_classes=2)
         outputs = model(self.batch, return_debug=False)
@@ -243,9 +289,9 @@ class PhaseEIntegrationTests(unittest.TestCase):
         outputs['loss_total'].backward()
         self.assertIsNotNone(outputs['surrogate_pairwise_logits'].grad)
 
-    def test_stage2_requires_checkpoint(self):
-        with self.assertRaisesRegex(ValueError, 'training.stage=stage2 requires training.finetune'):
-            PASModel(self._build_args(stage='stage2', finetune=''), num_classes=2)
+    def test_stage2_allows_missing_checkpoint(self):
+        model = PASModel(self._build_args(stage='stage2', finetune=''), num_classes=2)
+        self.assertIsNotNone(model)
 
     def test_stage2_freezes_prototype_side(self):
         model = PASModel(self._build_args(stage='stage2', finetune='runs/stage1/best.pth'), num_classes=2)

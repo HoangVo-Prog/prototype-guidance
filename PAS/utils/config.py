@@ -15,6 +15,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 
     ('model', 'name'): 'model_name',
     ('model', 'variant'): 'model_variant',
+    ('model', 'training_mode'): 'training_mode',
     ('model', 'pretrain_choice'): 'pretrain_choice',
     ('model', 'image_backbone'): 'image_backbone',
     ('model', 'text_backbone'): 'text_backbone',
@@ -24,6 +25,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'projector_dropout'): 'projector_dropout',
     ('model', 'projector_type'): 'projector_type',
     ('model', 'normalize_projector_outputs'): 'normalize_projector_outputs',
+    ('model', 'use_custom_projector'): 'use_custom_projector',
     ('model', 'backbone_precision'): 'backbone_precision',
     ('model', 'prototype_precision'): 'prototype_precision',
     ('model', 'temperature'): 'temperature',
@@ -64,6 +66,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('loss', 'use_loss_diag'): 'use_loss_diag',
     ('loss', 'lambda_diag'): 'lambda_diag',
     ('loss', 'use_loss_ret'): 'use_loss_ret',
+    ('loss', 'retrieval_mode'): 'retrieval_mode',
     ('loss', 'lambda_ret'): 'lambda_ret',
     ('loss', 'use_loss_support'): 'use_loss_support',
     ('loss', 'lambda_support'): 'lambda_support',
@@ -256,6 +259,7 @@ UNSUPPORTED_CONFIG_PATHS = {
 
 
 CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
+    ('model', 'training_mode'): ('pas', 'vanilla_clip'),
     ('model', 'projector_type'): ('mlp2', 'linear'),
     ('model', 'backbone_precision'): tuple(BACKBONE_PRECISION_ALIASES.keys()),
     ('model', 'prototype_precision'): tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
@@ -271,6 +275,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('prototype', 'contextualization_type'): ('self_attention', 'dense_self_attention', 'none'),
     ('text_pooling', 'token_policy'): ('content_only', 'content_plus_special', 'eos_only'),
     ('text_pooling', 'scoring_type'): ('cosine', 'dot'),
+    ('loss', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
     ('training', 'stage'): ('stage1', 'stage2', 'joint'),
     ('training', 'amp_dtype'): tuple(AMP_DTYPE_ALIASES.keys()),
     ('optimizer', 'type'): ('SGD', 'Adam', 'AdamW'),
@@ -283,6 +288,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
 
 
 RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
+    'training_mode': ('pas', 'vanilla_clip'),
     'projector_type': ('mlp2', 'linear'),
     'backbone_precision': tuple(BACKBONE_PRECISION_ALIASES.keys()),
     'prototype_precision': tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
@@ -298,6 +304,7 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'prototype_contextualization_type': ('self_attention', 'dense_self_attention', 'none'),
     'token_policy': ('content_only', 'content_plus_special', 'eos_only'),
     'token_scoring_type': ('cosine', 'dot'),
+    'retrieval_mode': ('surrogate_i2t', 'clip_bidirectional'),
     'training_stage': ('stage1', 'stage2', 'joint'),
     'amp_dtype': tuple(AMP_DTYPE_ALIASES.keys()),
     'optimizer': ('SGD', 'Adam', 'AdamW'),
@@ -406,8 +413,42 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         _validate_enum_value('.'.join(path), current, allowed_values)
     if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
         _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
+    training_mode = str(config_data.get('model', {}).get('training_mode', 'pas')).lower()
+    retrieval_mode = str(config_data.get('loss', {}).get('retrieval_mode', 'surrogate_i2t')).lower()
+    if training_mode == 'vanilla_clip':
+        if bool(config_data.get('model', {}).get('use_prototype_bank', True)):
+            raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_bank=false.')
+        if bool(config_data.get('model', {}).get('use_image_conditioned_pooling', True)):
+            raise ValueError('model.training_mode=vanilla_clip requires model.use_image_conditioned_pooling=false.')
+        if str(config_data.get('text_pooling', {}).get('token_policy', 'eos_only')).lower() != 'eos_only':
+            raise ValueError('model.training_mode=vanilla_clip requires text_pooling.token_policy=eos_only.')
+        if retrieval_mode != 'clip_bidirectional':
+            raise ValueError('model.training_mode=vanilla_clip requires loss.retrieval_mode=clip_bidirectional.')
+        if not bool(config_data.get('loss', {}).get('use_loss_ret', True)):
+            raise ValueError('model.training_mode=vanilla_clip requires loss.use_loss_ret=true.')
+        if str(config_data.get('evaluation', {}).get('retrieval_scorer', 'exact')).lower() != 'exact':
+            raise ValueError('model.training_mode=vanilla_clip requires evaluation.retrieval_scorer=exact.')
+        incompatible_flags = {
+            'loss.use_loss_proxy_image': bool(config_data.get('loss', {}).get('use_loss_proxy_image', False)),
+            'loss.use_loss_proxy_text': bool(config_data.get('loss', {}).get('use_loss_proxy_text', False)),
+            'loss.use_loss_proxy_text_exact': bool(config_data.get('loss', {}).get('use_loss_proxy_text_exact', False)),
+            'loss.use_loss_align': bool(config_data.get('loss', {}).get('use_loss_align', False)),
+            'loss.use_loss_diag': bool(config_data.get('loss', {}).get('use_loss_diag', False)),
+            'loss.use_loss_support': bool(config_data.get('loss', {}).get('use_loss_support', False)),
+            'loss.use_balancing_loss': bool(config_data.get('loss', {}).get('use_balancing_loss', False)),
+            'loss.use_diversity_loss': bool(config_data.get('loss', {}).get('use_diversity_loss', False)),
+        }
+        enabled_incompatible = sorted(name for name, enabled in incompatible_flags.items() if enabled)
+        if enabled_incompatible:
+            raise ValueError(
+                'model.training_mode=vanilla_clip does not support prototype/auxiliary losses. '
+                f'Disable: {enabled_incompatible}.'
+            )
+    elif retrieval_mode == 'clip_bidirectional':
+        raise ValueError('loss.retrieval_mode=clip_bidirectional is only supported when model.training_mode=vanilla_clip.')
     if (
-        bool(config_data.get('model', {}).get('use_prototype_bank', True))
+        training_mode != 'vanilla_clip'
+        and bool(config_data.get('model', {}).get('use_prototype_bank', True))
         and not bool(config_data.get('model', {}).get('use_image_conditioned_pooling', True))
     ):
         raise ValueError(
@@ -434,7 +475,40 @@ def validate_runtime_args_namespace(args) -> None:
     retrieval_metrics = getattr(args, 'retrieval_metrics', None)
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
-    if bool(getattr(args, 'use_prototype_bank', True)) and not bool(getattr(args, 'use_image_conditioned_pooling', True)):
+    training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
+    retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
+    if training_mode == 'vanilla_clip':
+        if bool(getattr(args, 'use_prototype_bank', True)):
+            raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_bank=false.')
+        if bool(getattr(args, 'use_image_conditioned_pooling', True)):
+            raise ValueError('model.training_mode=vanilla_clip requires model.use_image_conditioned_pooling=false.')
+        if str(getattr(args, 'token_policy', 'eos_only')).lower() != 'eos_only':
+            raise ValueError('model.training_mode=vanilla_clip requires text_pooling.token_policy=eos_only.')
+        if retrieval_mode != 'clip_bidirectional':
+            raise ValueError('model.training_mode=vanilla_clip requires loss.retrieval_mode=clip_bidirectional.')
+        if not bool(getattr(args, 'use_loss_ret', True)):
+            raise ValueError('model.training_mode=vanilla_clip requires loss.use_loss_ret=true.')
+        if str(getattr(args, 'retrieval_scorer', 'exact')).lower() != 'exact':
+            raise ValueError('model.training_mode=vanilla_clip requires evaluation.retrieval_scorer=exact.')
+        incompatible_flags = {
+            'loss.use_loss_proxy_image': bool(getattr(args, 'use_loss_proxy_image', False)),
+            'loss.use_loss_proxy_text': bool(getattr(args, 'use_loss_proxy_text', False)),
+            'loss.use_loss_proxy_text_exact': bool(getattr(args, 'use_loss_proxy_text_exact', False)),
+            'loss.use_loss_align': bool(getattr(args, 'use_loss_align', False)),
+            'loss.use_loss_diag': bool(getattr(args, 'use_loss_diag', False)),
+            'loss.use_loss_support': bool(getattr(args, 'use_loss_support', False)),
+            'loss.use_balancing_loss': bool(getattr(args, 'use_balancing_loss', False)),
+            'loss.use_diversity_loss': bool(getattr(args, 'use_diversity_loss', False)),
+        }
+        enabled_incompatible = sorted(name for name, enabled in incompatible_flags.items() if enabled)
+        if enabled_incompatible:
+            raise ValueError(
+                'model.training_mode=vanilla_clip does not support prototype/auxiliary losses. '
+                f'Disable: {enabled_incompatible}.'
+            )
+    elif retrieval_mode == 'clip_bidirectional':
+        raise ValueError('loss.retrieval_mode=clip_bidirectional is only supported when model.training_mode=vanilla_clip.')
+    if training_mode != 'vanilla_clip' and bool(getattr(args, 'use_prototype_bank', True)) and not bool(getattr(args, 'use_image_conditioned_pooling', True)):
         raise ValueError(
             'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'

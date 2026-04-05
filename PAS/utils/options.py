@@ -56,6 +56,7 @@ def build_parser():
 
     parser.add_argument('--model_name', default='PAS')
     parser.add_argument('--model_variant', default='pas_v1')
+    parser.add_argument('--training_mode', type=str, default='pas')
     parser.add_argument('--pretrain_choice', default='ViT-B/16')
     parser.add_argument('--image_backbone', default='clip_visual')
     parser.add_argument('--text_backbone', default='clip_text_transformer')
@@ -65,6 +66,7 @@ def build_parser():
     parser.add_argument('--projector_dropout', type=float, default=0.0)
     parser.add_argument('--projector_type', type=str, default='mlp2')
     parser.add_argument('--normalize_projector_outputs', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--use_custom_projector', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--backbone_precision', type=str, default='fp16')
     parser.add_argument('--prototype_precision', type=str, default='fp32')
     parser.add_argument('--temperature', type=float, default=0.07)
@@ -81,6 +83,7 @@ def build_parser():
     parser.add_argument('--use_loss_diag', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_diag', type=float, default=1.0)
     parser.add_argument('--use_loss_ret', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--retrieval_mode', type=str, default='surrogate_i2t')
     parser.add_argument('--lambda_ret', type=float, default=1.0)
     parser.add_argument('--use_loss_support', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_support', type=float, default=0.0)
@@ -209,9 +212,12 @@ def _finalize_args(args):
         args.prototype_init_path = None
     if not args.retrieval_metrics:
         args.retrieval_metrics = list(DEFAULT_RETRIEVAL_METRICS)
+    args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
     args.use_prototype_bank = bool(args.use_prototype_bank)
     args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling)
+    args.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
     args.training_stage = str(getattr(args, 'training_stage', 'stage1')).lower()
+    args.retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
 
     legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)
     authoritative_contextualization = getattr(args, 'prototype_contextualization_enabled', None)

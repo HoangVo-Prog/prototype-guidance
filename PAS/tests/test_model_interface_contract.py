@@ -131,6 +131,7 @@ class ModelInterfaceContractTests(unittest.TestCase):
             stride_size=1,
             model_name='PAS',
             model_variant='pas_contract',
+            training_mode='pas',
             image_backbone='dummy_visual',
             text_backbone='dummy_text',
             embedding_dim=8,
@@ -139,12 +140,14 @@ class ModelInterfaceContractTests(unittest.TestCase):
             projector_dropout=0.0,
             projector_type='mlp2',
             normalize_projector_outputs=True,
+            use_custom_projector=True,
             backbone_precision='fp32',
             prototype_precision='fp32',
             temperature=0.07,
             proxy_temperature=0.2,
             lambda_proxy=1.0,
             use_loss_proxy_text_exact=True,
+            retrieval_mode='surrogate_i2t',
             lambda_align=0.5,
             lambda_diag=0.25,
             use_loss_support=False,
@@ -224,6 +227,63 @@ class ModelInterfaceContractTests(unittest.TestCase):
         batch_indices = torch.arange(self.batch_size)
         torch.testing.assert_close(outputs.projected_pooled, outputs.projected_tokens[batch_indices, self.expected_eos])
         torch.testing.assert_close(outputs.pre_projection_pooled, outputs.pre_projection_tokens[batch_indices, self.expected_eos])
+
+    def test_vanilla_clip_extract_text_features_contract(self):
+        model = self._build_model(
+            training_mode='vanilla_clip',
+            use_prototype_bank=False,
+            use_image_conditioned_pooling=False,
+            use_custom_projector=False,
+            token_policy='eos_only',
+            retrieval_mode='clip_bidirectional',
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=False,
+            use_loss_support=False,
+            use_balancing_loss=False,
+            use_diversity_loss=False,
+        )
+        outputs = model.extract_text_features(self.caption_ids)
+        self.assertEqual(outputs.pooling_mode, 'eos_only')
+        batch_indices = torch.arange(self.batch_size)
+        torch.testing.assert_close(outputs.projected_pooled, outputs.projected_tokens[batch_indices, self.expected_eos])
+        self.assertFalse(hasattr(model.prototype_head, 'text_pool_query'))
+
+    def test_vanilla_clip_forward_and_eval_similarity(self):
+        model = self._build_model(
+            training_mode='vanilla_clip',
+            use_prototype_bank=False,
+            use_image_conditioned_pooling=False,
+            use_custom_projector=False,
+            token_policy='eos_only',
+            retrieval_mode='clip_bidirectional',
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=False,
+            use_loss_support=False,
+            use_balancing_loss=False,
+            use_diversity_loss=False,
+            retrieval_scorer='exact',
+        ).eval()
+        outputs = model(
+            {'images': self.images, 'caption_ids': self.caption_ids, 'pids': self.pids},
+            return_debug=True,
+        )
+        self.assertTrue(torch.isfinite(outputs['loss_total']))
+        self.assertEqual(tuple(outputs['alpha'].shape), (self.batch_size, 0))
+        self.assertEqual(tuple(outputs['z_v'].shape), (self.batch_size, self.prototype_dim))
+        self.assertEqual(tuple(outputs['z_t_hat_diag'].shape), (self.batch_size, self.prototype_dim))
+        image_features = model.encode_image_for_retrieval(self.images)
+        text_features = model.encode_text_for_retrieval(self.caption_ids)
+        self.assertEqual(set(text_features.keys()), {'text_projected'})
+        similarity = model.compute_retrieval_similarity(image_features, text_features)
+        self.assertEqual(tuple(similarity.shape), (self.batch_size, self.batch_size))
+        self.assertTrue(torch.isfinite(similarity).all())
+        self.assertIn('vanilla_clip_mode', outputs['debug'])
 
     def test_extract_text_features_contract_text_only(self):
         model = self._build_model(use_prototype_bank=False, use_image_conditioned_pooling=False)

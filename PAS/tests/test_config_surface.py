@@ -109,6 +109,90 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertFalse(config['model']['use_image_conditioned_pooling'])
         self.assertEqual(config['evaluation']['retrieval_scorer'], 'approximate')
 
+    def test_vanilla_clip_requires_eos_only_and_bidirectional_loss(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'training_mode': 'vanilla_clip',
+                    'use_prototype_bank': False,
+                    'use_image_conditioned_pooling': False,
+                    'use_custom_projector': False,
+                },
+                'text_pooling': {
+                    'token_policy': 'content_only',
+                },
+                'loss': {
+                    'use_loss_ret': True,
+                    'retrieval_mode': 'surrogate_i2t',
+                    'use_loss_proxy_image': False,
+                    'use_loss_proxy_text': False,
+                    'use_loss_proxy_text_exact': False,
+                    'use_loss_align': False,
+                    'use_loss_diag': False,
+                    'use_loss_support': False,
+                    'use_balancing_loss': False,
+                    'use_diversity_loss': False,
+                },
+                'evaluation': {
+                    'retrieval_scorer': 'exact',
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'vanilla_clip requires text_pooling.token_policy=eos_only'):
+            load_yaml_config(None, path)
+
+    def test_clip_bidirectional_requires_vanilla_mode(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'training_mode': 'pas',
+                },
+                'loss': {
+                    'retrieval_mode': 'clip_bidirectional',
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'clip_bidirectional is only supported'):
+            load_yaml_config(None, path)
+
+    def test_vanilla_clip_surface_loads(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'training_mode': 'vanilla_clip',
+                    'use_prototype_bank': False,
+                    'use_image_conditioned_pooling': False,
+                    'use_custom_projector': False,
+                },
+                'text_pooling': {
+                    'token_policy': 'eos_only',
+                },
+                'loss': {
+                    'use_loss_ret': True,
+                    'retrieval_mode': 'clip_bidirectional',
+                    'lambda_ret': 1.0,
+                    'use_loss_proxy_image': False,
+                    'use_loss_proxy_text': False,
+                    'use_loss_proxy_text_exact': False,
+                    'use_loss_align': False,
+                    'use_loss_diag': False,
+                    'use_loss_support': False,
+                    'use_balancing_loss': False,
+                    'use_diversity_loss': False,
+                },
+                'evaluation': {
+                    'retrieval_scorer': 'exact',
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertEqual(args.training_mode, 'vanilla_clip')
+        self.assertFalse(args.use_prototype_bank)
+        self.assertFalse(args.use_image_conditioned_pooling)
+        self.assertFalse(args.use_custom_projector)
+        self.assertEqual(args.token_policy, 'eos_only')
+        self.assertEqual(args.retrieval_mode, 'clip_bidirectional')
+
     def test_prototype_bank_requires_image_conditioned_pooling(self):
         path = self._write_config(
             {
