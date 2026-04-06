@@ -43,14 +43,14 @@ host:
   itself_only_global: false
   itself_select_ratio: 0.4
   itself_grab_embed_dim: 4096
-  itself_score_weight_global: 0.68
+  itself_score_weight_global: 0.32
   itself_tau: 0.015
   itself_margin: 0.1
   itself_return_all: true
-  itself_topk_type: mean
+  itself_topk_type: custom
   itself_layer_index: -1
   itself_average_attn_weights: true
-  itself_modify_k: false
+  itself_modify_k: true
 
 prototype:
   num_prototypes: 0
@@ -121,8 +121,8 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 128
-  epochs: 10
+  batch_size: 256
+  epochs: 15
   log_period: 20
   eval_frequency: 1
   save_interval: 1
@@ -131,8 +131,8 @@ training:
   finetune: ''
   pretrain: ''
   img_aug: true
-  txt_aug: false
-  sampler: random
+  txt_aug: true
+  sampler: identity
   num_instance: 2
   num_workers: 4
   training: true
@@ -147,14 +147,14 @@ training:
   proxy_temperature: 0.07
 
 optimizer:
-  type: AdamW
-  lr: 0.0001
+  type: Adam
+  lr: 1.0e-5
   lr_prototype_bank: 0.0
   lr_projectors: 0.0
   lr_host_projectors: 0.0001
   lr_image_backbone: 1.0e-5
   lr_text_backbone: 1.0e-5
-  weight_decay: 0.01
+  weight_decay: 4.0e-5
   weight_decay_prototype_bank: 0.0
   weight_decay_projectors: 0.0
   weight_decay_host_projectors: 0.01
@@ -168,7 +168,7 @@ optimizer:
   milestones: [40, 50]
   gamma: 0.1
   warmup_factor: 0.1
-  warmup_epochs: 1
+  warmup_epochs: 5
   warmup_method: linear
   scheduler: cosine
   target_lr: 0.0

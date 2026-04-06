@@ -372,6 +372,10 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertAlmostEqual(args.itself_score_weight_global, 0.32)
         self.assertEqual(args.itself_topk_type, 'custom')
         self.assertTrue(args.itself_modify_k)
+        self.assertEqual(args.batch_size, 256)
+        self.assertEqual(args.num_epoch, 15)
+        self.assertEqual(args.optimizer, 'Adam')
+        self.assertEqual(args.sampler, 'identity')
 
     def test_itself_reference_follows_dataset_cli_override(self):
         path = os.path.join(REPO_ROOT, 'configs', 'stage0', 'stage0_itself_host_only.yaml')
