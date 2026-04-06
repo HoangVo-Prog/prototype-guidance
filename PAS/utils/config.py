@@ -466,32 +466,6 @@ def load_itself_reference_runtime_overrides(
     for (section, key), source_key in shared_to_pas.items():
         _set(section, key, shared_args.get(source_key))
 
-    _set('training', 'img_aug', shared_args.get('img_aug'))
-    _set('training', 'txt_aug', shared_args.get('txt_aug'))
-    _set('training', 'sampler', shared_args.get('sampler'))
-    _set('training', 'num_instance', shared_args.get('num_instance'))
-    _set('dataset', 'num_workers', shared_args.get('num_workers'))
-    _set('evaluation', 'batch_size', shared_args.get('test_batch_size'))
-
-    training_stage = str(config_data.get('training', {}).get('stage', 'stage1')).lower()
-    if training_stage == 'stage0':
-        stage0_training_map = {
-            ('training', 'batch_size'): 'batch_size',
-            ('training', 'epochs'): 'num_epoch',
-            ('optimizer', 'type'): 'optimizer',
-            ('optimizer', 'lr'): 'lr',
-            ('optimizer', 'weight_decay'): 'weight_decay',
-            ('optimizer', 'alpha'): 'alpha',
-            ('optimizer', 'beta'): 'beta',
-            ('optimizer', 'warmup_epochs'): 'warmup_epochs',
-            ('optimizer', 'warmup_method'): 'warmup_method',
-            ('optimizer', 'scheduler'): 'lrscheduler',
-            ('optimizer', 'target_lr'): 'target_lr',
-            ('optimizer', 'power'): 'power',
-        }
-        for (section, key), source_key in stage0_training_map.items():
-            _set(section, key, shared_args.get(source_key))
-
     _set('host', 'itself_score_weight_global', dataset_entry.get('host_itself_score_weight_global'))
     _set('dataset', 'dataset_name', active_dataset)
     if 'target_domain' not in config_data.get('evaluation', {}):

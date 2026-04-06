@@ -154,6 +154,7 @@ class HostHeadTests(unittest.TestCase):
         self.assertIn('metrics', outputs)
         self.assertIn('surrogate_pairwise_logits', outputs)
         self.assertTrue(torch.isfinite(outputs['losses']['loss_total']))
+        self.assertTrue(torch.isfinite(outputs['losses']['loss_cid']))
         self.assertEqual(tuple(outputs['surrogate_pairwise_logits'].shape), (self.batch_size, self.batch_size))
         self.assertIn('itself_loss_tal', outputs['metrics'])
         self.assertIn('itself_loss_cid', outputs['metrics'])

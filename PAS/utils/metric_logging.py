@@ -11,6 +11,7 @@ TRAIN_LOSS_KEYS = (
     'loss_host_ret',
     'loss_host_ret_i2t',
     'loss_host_ret_t2i',
+    'loss_host_cid',
     'loss_proto_total',
     'loss_host_weighted',
     'lambda_host',

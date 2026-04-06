@@ -935,6 +935,7 @@ class PASModel(nn.Module):
             'loss_host_ret': host_losses['loss_ret'],
             'loss_host_ret_i2t': host_losses['loss_ret_i2t'],
             'loss_host_ret_t2i': host_losses['loss_ret_t2i'],
+            'loss_host_cid': host_losses.get('loss_cid', host_losses['loss_total'].new_zeros(())),
             'loss_proto_total': prototype_losses['loss_total'],
             'loss_proxy': prototype_losses['loss_proxy'],
             'loss_proxy_image': prototype_losses['loss_proxy_image'],
@@ -989,6 +990,7 @@ class PASModel(nn.Module):
         outputs['debug']['fusion_coefficient'] = self.fusion_coefficient
         outputs['debug']['host_loss_total'] = host_losses['loss_total'].detach()
         outputs['debug']['host_loss_ret'] = host_losses['loss_ret'].detach()
+        outputs['debug']['host_loss_cid'] = host_losses.get('loss_cid', host_losses['loss_total'].new_zeros(())).detach()
         for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'surrogate_pairwise_logits', 'host_pairwise_logits'):
             tensor = outputs.get(grad_tensor_key)
             if isinstance(tensor, torch.Tensor) and tensor.requires_grad:

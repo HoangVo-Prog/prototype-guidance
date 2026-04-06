@@ -137,7 +137,13 @@ class VisualEmbeddingLayer(nn.Module):
         return maxk_pool1d_var(refined, 1, 1, feat_lengths).float()
 
 
-def compute_tal(image_features: torch.Tensor, text_features: torch.Tensor, pid: torch.Tensor, tau: float = 0.015, margin: float = 0.1) -> torch.Tensor:
+def compute_tal_components(
+    image_features: torch.Tensor,
+    text_features: torch.Tensor,
+    pid: torch.Tensor,
+    tau: float = 0.015,
+    margin: float = 0.1,
+):
     image_norm = image_features / image_features.norm(dim=-1, keepdim=True).clamp_min(1e-12)
     text_norm = text_features / text_features.norm(dim=-1, keepdim=True).clamp_min(1e-12)
     scores = text_norm @ image_norm.t()
@@ -150,11 +156,17 @@ def compute_tal(image_features: torch.Tensor, text_features: torch.Tensor, pid: 
     exp_t2i = (scores.t() / tau).exp()
     alpha_i2t = (exp_i2t * labels / (exp_i2t * labels).sum(dim=1, keepdim=True).clamp_min(1e-12)).detach()
     alpha_t2i = (exp_t2i * labels / (exp_t2i * labels).sum(dim=1, keepdim=True).clamp_min(1e-12)).detach()
-    loss = (
-        (- (alpha_i2t * scores).sum(1) + tau * (exp_i2t * mask).sum(1).clamp(max=1e36).log() + margin).clamp(min=0)
-        + (- (alpha_t2i * scores.t()).sum(1) + tau * (exp_t2i * mask).sum(1).clamp(max=1e36).log() + margin).clamp(min=0)
-    )
-    return loss.sum()
+    loss_i2t = (
+        - (alpha_i2t * scores).sum(1)
+        + tau * (exp_i2t * mask).sum(1).clamp(max=1e36).log()
+        + margin
+    ).clamp(min=0).sum()
+    loss_t2i = (
+        - (alpha_t2i * scores.t()).sum(1)
+        + tau * (exp_t2i * mask).sum(1).clamp(max=1e36).log()
+        + margin
+    ).clamp(min=0).sum()
+    return loss_i2t + loss_t2i, loss_i2t, loss_t2i
 
 
 def cosine_similarity_matrix(image_features: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
@@ -164,19 +176,30 @@ def cosine_similarity_matrix(image_features: torch.Tensor, text_features: torch.
 
 
 def sample_hard_negatives(similarity: torch.Tensor, labels: torch.Tensor) -> Dict[str, list]:
-    num_samples = similarity.size(0)
+    similarity_cpu = similarity.detach().float().cpu()
+    labels_cpu = labels.detach().view(-1).cpu()
+    num_samples = similarity_cpu.size(0)
     hard_negatives = {'visual_negatives': [], 'text_negatives': []}
     for i in range(num_samples):
-        sorted_idx = torch.argsort(similarity[i], descending=True)
-        for j in sorted_idx:
-            if labels[i] != labels[j]:
-                hard_negatives['text_negatives'].append(j.item())
+        sorted_text_idx = torch.argsort(similarity_cpu[i], descending=True)
+        text_negative = None
+        for j in sorted_text_idx.tolist():
+            if int(labels_cpu[i].item()) != int(labels_cpu[j].item()):
+                text_negative = int(j)
                 break
-        sorted_idx = torch.argsort(similarity[:, i], descending=True)
-        for j in sorted_idx:
-            if labels[i] != labels[j]:
-                hard_negatives['visual_negatives'].append(j.item())
+        if text_negative is None:
+            text_negative = int(i)
+        hard_negatives['text_negatives'].append(text_negative)
+
+        sorted_visual_idx = torch.argsort(similarity_cpu[:, i], descending=True)
+        visual_negative = None
+        for j in sorted_visual_idx.tolist():
+            if int(labels_cpu[i].item()) != int(labels_cpu[j].item()):
+                visual_negative = int(j)
                 break
+        if visual_negative is None:
+            visual_negative = int(i)
+        hard_negatives['visual_negatives'].append(visual_negative)
     return hard_negatives
 
 
@@ -526,12 +549,32 @@ class ITSELFHostHead(nn.Module):
         similarity = self.compute_similarity_matrix(image_features, text_features)
         losses = self._empty_loss_outputs(image_features['global_image_embedding'])
         tal_loss = image_features['global_image_embedding'].new_zeros(())
+        tal_loss_i2t = image_features['global_image_embedding'].new_zeros(())
+        tal_loss_t2i = image_features['global_image_embedding'].new_zeros(())
         cid_loss = image_features['global_image_embedding'].new_zeros(())
         if self.use_host_loss and pids is not None:
             if 'tal' in self.loss_names:
-                tal_loss = compute_tal(image_features['global_image_embedding'], text_features['global_text_embedding'], pids, tau=self.tau, margin=self.margin)
+                tal_total_global, tal_i2t_global, tal_t2i_global = compute_tal_components(
+                    image_features['global_image_embedding'],
+                    text_features['global_text_embedding'],
+                    pids,
+                    tau=self.tau,
+                    margin=self.margin,
+                )
+                tal_loss = tal_total_global
+                tal_loss_i2t = tal_i2t_global
+                tal_loss_t2i = tal_t2i_global
                 if not self.only_global and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
-                    tal_loss = tal_loss + compute_tal(image_features['grab_image_embedding'], text_features['grab_text_embedding'], pids, tau=self.tau, margin=self.margin)
+                    tal_total_grab, tal_i2t_grab, tal_t2i_grab = compute_tal_components(
+                        image_features['grab_image_embedding'],
+                        text_features['grab_text_embedding'],
+                        pids,
+                        tau=self.tau,
+                        margin=self.margin,
+                    )
+                    tal_loss = tal_loss + tal_total_grab
+                    tal_loss_i2t = tal_loss_i2t + tal_i2t_grab
+                    tal_loss_t2i = tal_loss_t2i + tal_t2i_grab
             if 'cid' in self.loss_names and self.classifier_global is not None:
                 cid_loss = self._compute_cid_loss(
                     image_features['global_image_embedding'],
@@ -556,8 +599,9 @@ class ITSELFHostHead(nn.Module):
                 'loss_total': loss_total,
                 'loss_ret': tal_loss,
                 'loss_ret_weighted': tal_loss,
-                'loss_ret_i2t': tal_loss,
-                'loss_ret_t2i': tal_loss.new_zeros(()),
+                'loss_ret_i2t': tal_loss_i2t,
+                'loss_ret_t2i': tal_loss_t2i,
+                'loss_cid': cid_loss,
                 'use_loss_ret': tal_loss.new_tensor(float('tal' in self.loss_names and self.use_host_loss)),
                 'lambda_ret': tal_loss.new_tensor(1.0),
                 'debug_metrics': {

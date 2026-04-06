@@ -1,14 +1,15 @@
 # ITSELF dataset reference map for PAS.
 #
 # Purpose:
-# - keep one small source of truth for PAS-side ITSELF host-only reproduction runs keyed by dataset.dataset_name
+# - keep one small source of truth for PAS-side ITSELF host semantics keyed by dataset.dataset_name
 # - record the dataset-specific global/GRAB blend used when checking Stage 0 parity
 # - record which Stage 0 checkpoint later ITSELF stages should load
 #
 # Important:
 # - This file is metadata/reference, not a runtime config consumed directly by train.py.
 # - Stage configs under configs/stage0..stage3 remain the executable entry points.
-# - The only dataset-specific model knob tracked here is the ITSELF host score blend.
+# - Stage-specific training hyperparameters should stay in the stage YAMLs.
+# - This file only carries shared ITSELF host/model semantics plus dataset-specific host score blend metadata.
 # - `host_itself_score_weight_grab` is redundant at runtime because it is always
 #   interpreted as `1.0 - host_itself_score_weight_global`; it is kept here only as
 #   a readable mirror of the paper/reference blend.
@@ -32,25 +33,6 @@ shared_base_original_itself_args:
   stride_size: 16
   text_length: 77
   vocab_size: 49408
-  optimizer: Adam
-  lr: 1.0e-5
-  weight_decay: 4.0e-5
-  alpha: 0.9
-  beta: 0.999
-  num_epoch: 15
-  warmup_epochs: 5
-  warmup_method: linear
-  lrscheduler: cosine
-  target_lr: 0.0
-  power: 0.9
-  sampler: identity
-  num_instance: 2
-  batch_size: 128
-  test_batch_size: 512
-  num_workers: 4
-  training: true
-  img_aug: true
-  txt_aug: true
   only_global: false
   return_all: true
   topk_type: custom
