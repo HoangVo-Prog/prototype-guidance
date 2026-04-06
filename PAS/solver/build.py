@@ -57,7 +57,70 @@ def _group_weight_decay(args, group_name: str) -> float:
     return value
 
 
+def _use_original_itself_stage0_optimizer(args, model) -> bool:
+    del model
+    return (
+        str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
+        and str(getattr(args, 'training_stage', 'joint')).lower() == 'stage0'
+        and not bool(getattr(args, 'use_prototype_branch', False))
+    )
+
+
+def _build_original_itself_stage0_optimizer(args, model):
+    base_lr = float(getattr(args, 'lr', 1e-5))
+    base_weight_decay = float(getattr(args, 'weight_decay', 4e-5))
+    lr_factor = float(getattr(args, 'lr_factor', 5.0))
+    bias_lr_factor = float(getattr(args, 'bias_lr_factor', 2.0))
+    weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))
+    optimizer_eps = float(getattr(args, 'optimizer_eps', 1e-3))
+
+    param_groups = []
+    seen_parameter_ids = set()
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        seen_parameter_ids.add(id(parameter))
+        lr = base_lr
+        weight_decay = base_weight_decay
+
+        if 'cross' in name:
+            lr = base_lr * lr_factor
+        if 'bias' in name:
+            lr = base_lr * bias_lr_factor
+            weight_decay = weight_decay_bias
+        if 'classifier' in name or 'mlm_head' in name:
+            lr = base_lr * lr_factor
+        if 'visul_emb_layer' in name or 'visual_embedding_layer' in name:
+            lr = 1e-3
+        if 'texual_emb_layer' in name or 'textual_embedding_layer' in name:
+            lr = 1e-3
+
+        param_groups.append(
+            {
+                'params': [parameter],
+                'lr': lr,
+                'weight_decay': weight_decay,
+                'name': name,
+            }
+        )
+
+    trainable_parameter_ids = {id(parameter) for parameter in model.parameters() if parameter.requires_grad}
+    if seen_parameter_ids != trainable_parameter_ids:
+        raise RuntimeError('Original ITSELF Stage 0 optimizer did not include all trainable parameters.')
+
+    if args.optimizer == 'SGD':
+        return torch.optim.SGD(param_groups, lr=base_lr, momentum=args.momentum)
+    if args.optimizer == 'Adam':
+        return torch.optim.Adam(param_groups, lr=base_lr, betas=(args.alpha, args.beta), eps=optimizer_eps)
+    if args.optimizer == 'AdamW':
+        return torch.optim.AdamW(param_groups, lr=base_lr, betas=(args.alpha, args.beta), eps=1e-8)
+    raise NotImplementedError(f'Unsupported optimizer: {args.optimizer}')
+
+
 def build_optimizer(args, model):
+    if _use_original_itself_stage0_optimizer(args, model):
+        return _build_original_itself_stage0_optimizer(args, model)
+
     if not hasattr(model, 'named_optimizer_groups'):
         raise AttributeError('Model must define named_optimizer_groups() for Phase E optimizer construction.')
 

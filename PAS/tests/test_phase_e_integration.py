@@ -239,6 +239,10 @@ class PhaseEIntegrationTests(unittest.TestCase):
             momentum=0.9,
             alpha=0.9,
             beta=0.999,
+            lr_factor=5.0,
+            bias_lr_factor=2.0,
+            weight_decay_bias=0.0,
+            optimizer_eps=1e-8,
             training=True,
             amp=False,
             amp_dtype='fp16',
@@ -323,6 +327,55 @@ class PhaseEIntegrationTests(unittest.TestCase):
         self.assertEqual(tuple(outputs['alpha'].shape), (4, 4))
         evaluator = Evaluator(self.img_loader, self.text_loader, args)
         self.assertTrue(torch.isfinite(torch.tensor(evaluator.eval(model.eval()))))
+
+    def test_stage0_itself_optimizer_matches_original_policy(self):
+        args = self._build_args(
+            stage='stage0',
+            host_type='itself',
+            use_prototype_branch=False,
+            use_prototype_bank=False,
+            use_image_conditioned_pooling=False,
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=False,
+            use_loss_support=False,
+            use_balancing_loss=False,
+            use_diversity_loss=False,
+            optimizer='Adam',
+            lr=1e-5,
+            weight_decay=4e-5,
+            lr_factor=5.0,
+            bias_lr_factor=2.0,
+            weight_decay_bias=0.0,
+            optimizer_eps=1e-3,
+        )
+        model = PASModel(args, num_classes=2)
+        optimizer = build_optimizer(args, model)
+
+        self.assertAlmostEqual(optimizer.defaults['eps'], 1e-3)
+        groups_by_name = {group['name']: group for group in optimizer.param_groups}
+        self.assertAlmostEqual(groups_by_name['host_head.classifier_global.weight']['lr'], 5e-5)
+        self.assertAlmostEqual(groups_by_name['host_head.classifier_global.bias']['lr'], 5e-5)
+        self.assertAlmostEqual(groups_by_name['host_head.classifier_global.bias']['weight_decay'], 0.0)
+        self.assertAlmostEqual(groups_by_name['host_head.visual_embedding_layer.fc.weight']['lr'], 1e-3)
+        self.assertAlmostEqual(groups_by_name['host_head.visual_embedding_layer.fc.bias']['lr'], 1e-3)
+        self.assertAlmostEqual(groups_by_name['host_head.visual_embedding_layer.fc.bias']['weight_decay'], 0.0)
+        self.assertAlmostEqual(groups_by_name['base_model.visual.weight']['lr'], 1e-5)
+        self.assertAlmostEqual(groups_by_name['base_model.visual.weight']['weight_decay'], 4e-5)
+
+        optimizer_param_ids = {
+            id(parameter)
+            for group in optimizer.param_groups
+            for parameter in group['params']
+        }
+        model_param_ids = {
+            id(parameter)
+            for parameter in model.parameters()
+            if parameter.requires_grad
+        }
+        self.assertSetEqual(optimizer_param_ids, model_param_ids)
 
     def test_forward_returns_surrogate_retrieval_outputs(self):
         model = PASModel(self._build_args(stage='stage1'), num_classes=2)
