@@ -77,8 +77,8 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 128
-  epochs: 5
+  batch_size: 192
+  epochs: 10
   log_period: 20
   eval_frequency: 1
   save_interval: 1
@@ -88,7 +88,7 @@ training:
   pretrain: ''
   img_aug: true
   txt_aug: false
-  sampler: identity
+  sampler: random
   num_instance: 2
   num_workers: 4
   training: true
