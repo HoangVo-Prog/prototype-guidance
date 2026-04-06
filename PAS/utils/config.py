@@ -33,8 +33,13 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'stride_size'): 'stride_size',
     ('model', 'text_length'): 'text_length',
     ('model', 'vocab_size'): 'vocab_size',
+    ('model', 'use_prototype_branch'): 'use_prototype_branch',
     ('model', 'use_prototype_bank'): 'use_prototype_bank',
     ('model', 'use_image_conditioned_pooling'): 'use_image_conditioned_pooling',
+    ('host', 'enabled'): 'use_host_loss',
+    ('host', 'loss_weight'): 'lambda_host',
+    ('host', 'use_custom_projector'): 'use_custom_projector',
+    ('host', 'freeze_projectors'): 'freeze_host_projectors',
     ('model', 'return_debug_outputs'): 'return_debug_outputs',
 
     ('prototype', 'num_prototypes'): 'prototype_num_prototypes',
@@ -53,6 +58,19 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'normalize_for_self_interaction'): 'normalize_for_self_interaction',
     ('prototype', 'normalize_for_routing'): 'normalize_for_routing',
     ('prototype', 'dead_prototype_threshold'): 'prototype_dead_threshold',
+    ('fusion', 'enabled'): 'fusion_enabled',
+    ('fusion', 'coefficient'): 'fusion_coefficient',
+    ('fusion', 'coefficient_source'): 'fusion_coefficient_source',
+    ('objectives', 'use_host_loss'): 'use_host_loss',
+    ('objectives', 'lambda_host'): 'lambda_host',
+    ('objectives', 'use_proto_loss_ret'): 'use_loss_ret',
+    ('objectives', 'lambda_proto_ret'): 'lambda_ret',
+    ('objectives', 'use_diag_fidelity'): 'use_loss_diag',
+    ('objectives', 'lambda_diag'): 'lambda_diag',
+    ('objectives', 'use_diversity'): 'use_diversity_loss',
+    ('objectives', 'lambda_diversity'): 'diversity_loss_weight',
+    ('objectives', 'use_balance'): 'use_balancing_loss',
+    ('objectives', 'lambda_balance'): 'prototype_balance_loss_weight',
 
     ('loss', 'lambda_proxy'): 'lambda_proxy',
     ('loss', 'lambda_proxy_image'): 'lambda_proxy_image',
@@ -102,6 +120,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'freeze_image_backbone'): 'freeze_image_backbone',
     ('training', 'freeze_text_backbone'): 'freeze_text_backbone',
     ('training', 'freeze_prototype_side'): 'freeze_prototype_side',
+    ('training', 'freeze_host_projectors'): 'freeze_host_projectors',
     ('training', 'grad_clip'): 'grad_clip',
     ('training', 'amp'): 'amp',
     ('training', 'amp_dtype'): 'amp_dtype',
@@ -111,12 +130,14 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('optimizer', 'lr'): 'lr',
     ('optimizer', 'lr_prototype_bank'): 'lr_prototype_bank',
     ('optimizer', 'lr_projectors'): 'lr_projectors',
+    ('optimizer', 'lr_host_projectors'): 'lr_host_projectors',
     ('optimizer', 'lr_class_proxies'): 'lr_class_proxies',
     ('optimizer', 'lr_image_backbone'): 'lr_image_backbone',
     ('optimizer', 'lr_text_backbone'): 'lr_text_backbone',
     ('optimizer', 'weight_decay'): 'weight_decay',
     ('optimizer', 'weight_decay_prototype_bank'): 'weight_decay_prototype_bank',
     ('optimizer', 'weight_decay_projectors'): 'weight_decay_projectors',
+    ('optimizer', 'weight_decay_host_projectors'): 'weight_decay_host_projectors',
     ('optimizer', 'weight_decay_class_proxies'): 'weight_decay_class_proxies',
     ('optimizer', 'weight_decay_image_backbone'): 'weight_decay_image_backbone',
     ('optimizer', 'weight_decay_text_backbone'): 'weight_decay_text_backbone',
@@ -200,7 +221,10 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 SECTION_TEMPLATE = {
     'experiment': {},
     'model': {},
+    'host': {},
     'prototype': {},
+    'fusion': {},
+    'objectives': {},
     'loss': {},
     'text_pooling': {},
     'training': {},
@@ -276,7 +300,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('text_pooling', 'token_policy'): ('content_only', 'content_plus_special', 'eos_only'),
     ('text_pooling', 'scoring_type'): ('cosine', 'dot'),
     ('loss', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
-    ('training', 'stage'): ('stage1', 'stage2', 'joint'),
+    ('training', 'stage'): ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     ('training', 'amp_dtype'): tuple(AMP_DTYPE_ALIASES.keys()),
     ('optimizer', 'type'): ('SGD', 'Adam', 'AdamW'),
     ('optimizer', 'scheduler'): ('step', 'exp', 'poly', 'cosine', 'linear'),
@@ -305,7 +329,7 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'token_policy': ('content_only', 'content_plus_special', 'eos_only'),
     'token_scoring_type': ('cosine', 'dot'),
     'retrieval_mode': ('surrogate_i2t', 'clip_bidirectional'),
-    'training_stage': ('stage1', 'stage2', 'joint'),
+    'training_stage': ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     'amp_dtype': tuple(AMP_DTYPE_ALIASES.keys()),
     'optimizer': ('SGD', 'Adam', 'AdamW'),
     'lrscheduler': ('step', 'exp', 'poly', 'cosine', 'linear'),
@@ -414,6 +438,7 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
         _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
     training_mode = str(config_data.get('model', {}).get('training_mode', 'pas')).lower()
+    use_prototype_branch = bool(config_data.get('model', {}).get('use_prototype_branch', training_mode != 'vanilla_clip'))
     retrieval_mode = str(config_data.get('loss', {}).get('retrieval_mode', 'surrogate_i2t')).lower()
     if training_mode == 'vanilla_clip':
         if bool(config_data.get('model', {}).get('use_prototype_bank', True)):
@@ -448,6 +473,7 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         raise ValueError('loss.retrieval_mode=clip_bidirectional is only supported when model.training_mode=vanilla_clip.')
     if (
         training_mode != 'vanilla_clip'
+        and use_prototype_branch
         and bool(config_data.get('model', {}).get('use_prototype_bank', True))
         and not bool(config_data.get('model', {}).get('use_image_conditioned_pooling', True))
     ):
@@ -476,8 +502,11 @@ def validate_runtime_args_namespace(args) -> None:
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
     training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
+    use_prototype_branch = bool(getattr(args, 'use_prototype_branch', training_mode != 'vanilla_clip'))
     retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
     if training_mode == 'vanilla_clip':
+        if use_prototype_branch:
+            raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_branch=false.')
         if bool(getattr(args, 'use_prototype_bank', True)):
             raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_bank=false.')
         if bool(getattr(args, 'use_image_conditioned_pooling', True)):
@@ -508,7 +537,7 @@ def validate_runtime_args_namespace(args) -> None:
             )
     elif retrieval_mode == 'clip_bidirectional':
         raise ValueError('loss.retrieval_mode=clip_bidirectional is only supported when model.training_mode=vanilla_clip.')
-    if training_mode != 'vanilla_clip' and bool(getattr(args, 'use_prototype_bank', True)) and not bool(getattr(args, 'use_image_conditioned_pooling', True)):
+    if training_mode != 'vanilla_clip' and use_prototype_branch and bool(getattr(args, 'use_prototype_bank', True)) and not bool(getattr(args, 'use_image_conditioned_pooling', True)):
         raise ValueError(
             'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'

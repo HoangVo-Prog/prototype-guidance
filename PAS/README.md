@@ -2,12 +2,11 @@
 
 This repository is the active research codebase for the PAS image-text retrieval model built on top of an inherited CLIP-based retrieval project.
 
-The primary training path is now the PAS method:
-- image encoder -> global image embedding
-- learnable prototype bank with optional contextualization
-- routing and prototype aggregation
-- image-conditioned text token scoring and masked pooling
-- row-wise surrogate image-to-text retrieval training with diagonal fidelity supervision and optional prototype regularization
+The primary training path is now an integrated PAS host-plus-prototype method:
+- preserved CLIP host retrieval path with its own trainable projectors and standalone host score
+- optional prototype enhancement branch with routing, basis-bank construction, and image-conditioned surrogate text
+- residual score fusion `host + lambda_f * prototype` at evaluation time
+- host retrieval loss plus prototype row-wise retrieval, diagonal fidelity, and optional prototype regularization during training
 
 ## Main entrypoints
 

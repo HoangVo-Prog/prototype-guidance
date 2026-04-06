@@ -174,7 +174,11 @@ def build_dataloader(args, tranforms=None):
                                     num_workers=num_workers)
 
         eval_loss_loader = None
-        eval_annos = dataset.val_annos if args.val_dataset == 'val' else dataset.test_annos
+        preferred_eval_annos = 'val_annos' if args.val_dataset == 'val' else 'test_annos'
+        fallback_eval_annos = 'test_annos' if preferred_eval_annos == 'val_annos' else 'val_annos'
+        eval_annos = getattr(dataset, preferred_eval_annos, None)
+        if eval_annos is None:
+            eval_annos = getattr(dataset, fallback_eval_annos, None)
         if eval_annos:
             val_monitor_args = copy.copy(args)
             val_monitor_args.txt_aug = False

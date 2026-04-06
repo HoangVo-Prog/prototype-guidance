@@ -71,13 +71,15 @@ def build_parser():
     parser.add_argument('--prototype_precision', type=str, default='fp32')
     parser.add_argument('--temperature', type=float, default=0.07)
     parser.add_argument('--proxy_temperature', type=float, default=0.07)
+    parser.add_argument('--use_host_loss', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--lambda_host', type=float, default=1.0)
     parser.add_argument('--lambda_proxy', type=float, default=1.0)
     parser.add_argument('--lambda_proxy_image', type=float, default=None)
     parser.add_argument('--lambda_proxy_text', type=float, default=None)
     parser.add_argument('--lambda_proxy_text_exact', type=float, default=None)
-    parser.add_argument('--use_loss_proxy_image', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--use_loss_proxy_text', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--use_loss_proxy_text_exact', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--use_loss_proxy_image', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--use_loss_proxy_text', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--use_loss_proxy_text_exact', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--use_loss_align', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_align', type=float, default=1.0)
     parser.add_argument('--use_loss_diag', type=_str2bool, nargs='?', const=True, default=True)
@@ -92,8 +94,12 @@ def build_parser():
     parser.add_argument('--stride_size', type=int, default=16)
     parser.add_argument('--text_length', type=int, default=77)
     parser.add_argument('--vocab_size', type=int, default=49408)
+    parser.add_argument('--use_prototype_branch', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--use_prototype_bank', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_image_conditioned_pooling', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--fusion_enabled', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--fusion_coefficient', type=float, default=1.0)
+    parser.add_argument('--fusion_coefficient_source', type=str, default='fixed')
     parser.add_argument('--use_prototype_contextualization', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--return_debug_outputs', type=_str2bool, nargs='?', const=True, default=False)
 
@@ -142,6 +148,7 @@ def build_parser():
     parser.add_argument('--num_instance', type=int, default=2)
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--stage', '--training_stage', dest='training_stage', type=str, default='stage1')
+    parser.add_argument('--freeze_host_projectors', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--freeze_image_backbone', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--freeze_text_backbone', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--freeze_prototype_side', type=_str2bool, nargs='?', const=True, default=False)
@@ -151,12 +158,14 @@ def build_parser():
     parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--lr_prototype_bank', type=float, default=1e-3)
     parser.add_argument('--lr_projectors', type=float, default=1e-3)
+    parser.add_argument('--lr_host_projectors', type=float, default=None)
     parser.add_argument('--lr_image_backbone', type=float, default=0.0)
     parser.add_argument('--lr_text_backbone', type=float, default=0.0)
     parser.add_argument('--momentum', type=float, default=0.9)
     parser.add_argument('--weight_decay', type=float, default=1e-2)
     parser.add_argument('--weight_decay_prototype_bank', type=float, default=1e-2)
     parser.add_argument('--weight_decay_projectors', type=float, default=5e-2)
+    parser.add_argument('--weight_decay_host_projectors', type=float, default=None)
     parser.add_argument('--lr_class_proxies', type=float, default=None)
     parser.add_argument('--weight_decay_class_proxies', type=float, default=None)
     parser.add_argument('--weight_decay_image_backbone', type=float, default=0.0)
@@ -213,20 +222,34 @@ def _finalize_args(args):
     if not args.retrieval_metrics:
         args.retrieval_metrics = list(DEFAULT_RETRIEVAL_METRICS)
     args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
-    args.use_prototype_bank = bool(args.use_prototype_bank)
-    args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling)
+    override_config_data = getattr(args, 'override_config_data', {}) or {}
+    model_config = override_config_data.get('model', {}) if isinstance(override_config_data.get('model', {}), dict) else {}
+    cli_dests = getattr(args, 'cli_dests', set())
+    prototype_branch_explicit = 'use_prototype_branch' in cli_dests or 'use_prototype_branch' in model_config
+    if args.use_prototype_branch is None:
+        args.use_prototype_branch = args.training_mode != 'vanilla_clip'
+    args.use_prototype_branch = bool(args.use_prototype_branch)
+    if args.training_mode == 'vanilla_clip' and not prototype_branch_explicit:
+        args.use_prototype_branch = False
+    args.use_prototype_bank = bool(args.use_prototype_bank) if args.use_prototype_branch else False
+    args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling) if args.use_prototype_branch else False
     args.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
     args.training_stage = str(getattr(args, 'training_stage', 'stage1')).lower()
     args.retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
+    if args.fusion_enabled is None:
+        args.fusion_enabled = args.use_prototype_branch
+    args.fusion_enabled = bool(args.fusion_enabled) and args.use_prototype_branch
+    if args.training_stage == 'stage0' and 'use_prototype_branch' not in cli_dests:
+        args.use_prototype_branch = False
+        args.use_prototype_bank = False
+        args.use_image_conditioned_pooling = False
+        args.fusion_enabled = False
 
     legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)
     authoritative_contextualization = getattr(args, 'prototype_contextualization_enabled', None)
-    override_config_data = getattr(args, 'override_config_data', {}) or {}
-    model_config = override_config_data.get('model', {}) if isinstance(override_config_data.get('model', {}), dict) else {}
     prototype_config = override_config_data.get('prototype', {}) if isinstance(override_config_data.get('prototype', {}), dict) else {}
     authoritative_from_config = 'contextualization_enabled' in prototype_config
     legacy_from_config = 'use_prototype_contextualization' in model_config
-    cli_dests = getattr(args, 'cli_dests', set())
     authoritative_from_cli = 'prototype_contextualization_enabled' in cli_dests
     if authoritative_from_cli:
         authoritative_contextualization = bool(authoritative_contextualization)

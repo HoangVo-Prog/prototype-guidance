@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 
 from .clip_model import build_CLIP_from_openai_pretrained, convert_weights
+from .fusion import ResidualScoreFusion
 from .interfaces import EncoderOutput
 from .prototype import TokenMaskBuilder, build_prototype_head, init_mode_requires_data
 from .vanilla_clip import VanillaCLIPHead
@@ -51,27 +52,40 @@ class PASModel(nn.Module):
         self.return_debug_outputs = bool(getattr(args, 'return_debug_outputs', False))
         self.prototype_eval_image_chunk_size = int(getattr(args, 'prototype_eval_image_chunk_size', 32) or 32)
         self.prototype_eval_text_chunk_size = int(getattr(args, 'prototype_eval_text_chunk_size', 128) or 128)
-        self.use_prototype_bank = bool(getattr(args, 'use_prototype_bank', True))
-        self.use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', True))
+        self.use_host_loss = bool(getattr(args, 'use_host_loss', True))
+        self.lambda_host = float(getattr(args, 'lambda_host', 1.0))
+        default_use_prototype_branch = self.training_mode != 'vanilla_clip'
+        self.use_prototype_branch = bool(getattr(args, 'use_prototype_branch', default_use_prototype_branch))
+        self.use_prototype_bank = bool(getattr(args, 'use_prototype_bank', True)) if self.use_prototype_branch else False
+        self.use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', True)) if self.use_prototype_branch else False
+        default_fusion_enabled = self.use_prototype_branch
+        self.fusion_enabled = bool(getattr(args, 'fusion_enabled', default_fusion_enabled)) and self.use_prototype_branch
+        self.fusion_coefficient = float(getattr(args, 'fusion_coefficient', 1.0 if self.use_prototype_branch else 0.0))
+        self.fusion_coefficient_source = str(getattr(args, 'fusion_coefficient_source', 'fixed')).lower()
 
         self._validate_configuration()
-        if self.training_mode == 'vanilla_clip':
-            self.prototype_head = VanillaCLIPHead(
-                input_dim=self.embed_dim,
-                projector_output_dim=self.projection_dim,
-                projector_hidden_dim=getattr(args, 'projector_hidden_dim', self.embed_dim),
-                projector_dropout=getattr(args, 'projector_dropout', 0.0),
-                projector_type=getattr(args, 'projector_type', 'mlp2'),
-                normalize_projector_outputs=getattr(args, 'normalize_projector_outputs', True),
-                use_custom_projector=self.use_custom_projector,
-                special_token_ids=getattr(args, 'special_token_ids', None),
-                error_on_empty_kept_tokens=getattr(args, 'error_on_empty_kept_tokens', True),
-                contrastive_temperature_init=getattr(args, 'temperature', 0.07),
-                use_loss_ret=getattr(args, 'use_loss_ret', True),
-                lambda_ret=getattr(args, 'lambda_ret', 1.0),
-                retrieval_mode=self.retrieval_mode,
-            )
-        else:
+        self.token_mask_builder = TokenMaskBuilder(
+            token_policy='eos_only',
+            special_token_ids=getattr(args, 'special_token_ids', None),
+            error_on_empty_kept_tokens=getattr(args, 'error_on_empty_kept_tokens', True),
+        )
+        self.host_head = VanillaCLIPHead(
+            input_dim=self.embed_dim,
+            projector_output_dim=self.projection_dim,
+            projector_hidden_dim=getattr(args, 'projector_hidden_dim', self.embed_dim),
+            projector_dropout=getattr(args, 'projector_dropout', 0.0),
+            projector_type=getattr(args, 'projector_type', 'mlp2'),
+            normalize_projector_outputs=getattr(args, 'normalize_projector_outputs', True),
+            use_custom_projector=self.use_custom_projector,
+            special_token_ids=getattr(args, 'special_token_ids', None),
+            error_on_empty_kept_tokens=getattr(args, 'error_on_empty_kept_tokens', True),
+            contrastive_temperature_init=getattr(args, 'temperature', 0.07),
+            use_loss_ret=self.use_host_loss,
+            lambda_ret=1.0,
+            retrieval_mode='clip_bidirectional',
+        )
+        self.prototype_head = None
+        if self.use_prototype_branch:
             image_adapter = nn.Identity() if self.embed_dim == self.prototype_dim else nn.Linear(self.embed_dim, self.prototype_dim)
             text_adapter = nn.Identity() if self.embed_dim == self.prototype_dim else nn.Linear(self.embed_dim, self.prototype_dim)
             prototype_init_features = self._maybe_build_prototype_init_features(train_loader=train_loader, image_adapter=image_adapter)
@@ -83,6 +97,11 @@ class PASModel(nn.Module):
                 text_adapter=text_adapter,
                 prototype_init_features=prototype_init_features,
             )
+        self.fusion_module = ResidualScoreFusion(
+            enabled=self.fusion_enabled,
+            coefficient=self.fusion_coefficient,
+            coefficient_source=self.fusion_coefficient_source,
+        )
         self._log_runtime_mode_summary()
         self._apply_freeze_policy()
 
@@ -98,25 +117,16 @@ class PASModel(nn.Module):
 
     def _log_runtime_mode_summary(self):
         logger = logging.getLogger('pas.model')
-        if self.training_mode == 'vanilla_clip':
-            logger.info(
-                'Runtime mode: training_mode=%s text_representation=%s projector_mode=%s retrieval_mode=%s use_prototype_bank=%s use_image_conditioned_pooling=%s',
-                self.training_mode,
-                'eos_only',
-                'custom_projector' if self.use_custom_projector else 'clip_original_only',
-                self.retrieval_mode,
-                self.use_prototype_bank,
-                self.use_image_conditioned_pooling,
-            )
-            return
         logger.info(
-            'Runtime mode: training_mode=%s text_representation=%s projector_mode=%s retrieval_mode=%s use_prototype_bank=%s use_image_conditioned_pooling=%s',
+            'Runtime mode: training_mode=%s host_loss=%s prototype_branch=%s prototype_bank=%s image_conditioned_pooling=%s fusion_enabled=%s fusion_coefficient=%s fusion_source=%s',
             self.training_mode,
-            'image_conditioned' if self.use_image_conditioned_pooling else 'text_only',
-            'custom_projector',
-            self.retrieval_mode,
+            self.use_host_loss,
+            self.use_prototype_branch,
             self.use_prototype_bank,
             self.use_image_conditioned_pooling,
+            self.fusion_enabled,
+            self.fusion_coefficient,
+            self.fusion_coefficient_source,
         )
 
     def _validate_backbone_contract(self, base_cfg):
@@ -140,6 +150,8 @@ class PASModel(nn.Module):
         if self.training_mode not in {'pas', 'vanilla_clip'}:
             raise ValueError(f"model.training_mode must be one of ['pas', 'vanilla_clip']; got {self.training_mode!r}.")
         if self.training_mode == 'vanilla_clip':
+            if self.use_prototype_branch:
+                raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_branch=false.')
             if self.use_prototype_bank:
                 raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_bank=false.')
             if self.use_image_conditioned_pooling:
@@ -148,8 +160,8 @@ class PASModel(nn.Module):
                 raise ValueError('model.training_mode=vanilla_clip requires text_pooling.token_policy=eos_only.')
             if self.retrieval_mode != 'clip_bidirectional':
                 raise ValueError('model.training_mode=vanilla_clip requires loss.retrieval_mode=clip_bidirectional.')
-            if not bool(getattr(self.args, 'use_loss_ret', True)):
-                raise ValueError('model.training_mode=vanilla_clip requires loss.use_loss_ret=true.')
+            if not self.use_host_loss:
+                raise ValueError('model.training_mode=vanilla_clip requires objectives.use_host_loss=true.')
             if str(getattr(self.args, 'retrieval_scorer', 'exact')).lower() != 'exact':
                 raise ValueError('model.training_mode=vanilla_clip requires evaluation.retrieval_scorer=exact.')
             incompatible_flags = {
@@ -168,14 +180,17 @@ class PASModel(nn.Module):
                     'model.training_mode=vanilla_clip does not support prototype/auxiliary losses. '
                     f'Disable: {enabled_incompatible}.'
                 )
-        if self.training_mode != 'vanilla_clip' and self.use_prototype_bank and not self.use_image_conditioned_pooling:
+        elif self.retrieval_mode == 'clip_bidirectional':
+            raise ValueError('loss.retrieval_mode=clip_bidirectional is only supported when model.training_mode=vanilla_clip.')
+        if self.use_prototype_branch and self.use_prototype_bank and not self.use_image_conditioned_pooling:
             raise ValueError(
                 'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
                 'Prototype-routed training with text-only pooling is no longer supported.'
             )
-        if self.training_mode != 'vanilla_clip' and not self.use_prototype_bank and str(getattr(self.args, 'retrieval_scorer', 'exact')).lower() == 'approximate':
+        retrieval_scorer = str(getattr(self.args, 'retrieval_scorer', 'exact')).lower()
+        if (not self.use_prototype_branch or not self.use_prototype_bank) and retrieval_scorer == 'approximate':
             model_logger.warning(
-                'evaluation.retrieval_scorer=approximate with model.use_prototype_bank=false is accepted for config freedom, but approximate scoring is unavailable and eval may fall back to exact scoring.'
+                'evaluation.retrieval_scorer=approximate requires a live prototype bank; evaluation may fall back to exact scoring.'
             )
         if not bool(getattr(self.args, 'normalize_projector_outputs', True)):
             model_logger.warning(
@@ -186,8 +201,8 @@ class PASModel(nn.Module):
             bool(getattr(self.args, attr_name, False))
             for attr_name in ('use_loss_proxy_image', 'use_loss_proxy_text', 'use_loss_proxy_text_exact')
         )
-        if self.num_classes <= 0 and (self.training_mode != 'vanilla_clip' or proxy_losses_requested):
-            raise ValueError('PASModel requires num_classes > 0 when proxy-supervised training is active.')
+        if self.use_prototype_branch and proxy_losses_requested and self.num_classes <= 0:
+            raise ValueError('PASModel requires num_classes > 0 when prototype proxy-supervised training is active.')
         if self.prototype_eval_image_chunk_size <= 0 or self.prototype_eval_text_chunk_size <= 0:
             raise ValueError('Prototype evaluation chunk sizes must be positive integers.')
         configured_embedding_dim = getattr(self.args, 'embedding_dim', None)
@@ -232,14 +247,14 @@ class PASModel(nn.Module):
                 continue
             raise ValueError(message)
 
-        allowed_training_stages = {'stage1', 'stage2', 'joint'}
+        allowed_training_stages = {'stage0', 'stage1', 'stage2', 'stage3', 'joint'}
         explicit_stage = getattr(self.args, 'training_stage', None)
         if explicit_stage is None:
             self.training_stage = 'joint'
         else:
             self.training_stage = str(explicit_stage).lower()
         if self.training_stage not in allowed_training_stages:
-            raise ValueError(f'training.stage must be one of [\'stage1\', \'stage2\', \'joint\']; got {self.training_stage!r}.')
+            raise ValueError(f"training.stage must be one of ['stage0', 'stage1', 'stage2', 'stage3', 'joint']; got {self.training_stage!r}.")
         TokenMaskBuilder(
             token_policy=str(getattr(self.args, 'token_policy', 'content_only')).lower(),
             special_token_ids=special_token_ids,
@@ -253,6 +268,7 @@ class PASModel(nn.Module):
     def _apply_freeze_policy(self):
         self.freeze_image_backbone = bool(getattr(self.args, 'freeze_image_backbone', True))
         self.freeze_text_backbone = bool(getattr(self.args, 'freeze_text_backbone', True))
+        self.freeze_host_projectors = bool(getattr(self.args, 'freeze_host_projectors', False))
         self.freeze_prototype_side = bool(getattr(self.args, 'freeze_prototype_side', False))
 
         if self.freeze_image_backbone:
@@ -264,7 +280,10 @@ class PASModel(nn.Module):
             self.base_model.ln_final.weight.requires_grad = False
             self.base_model.ln_final.bias.requires_grad = False
             self.base_model.text_projection.requires_grad = False
-        if self.freeze_prototype_side:
+        if self.freeze_host_projectors:
+            self._freeze_module(self.host_head.image_projector)
+            self._freeze_module(self.host_head.text_projector)
+        if self.freeze_prototype_side and self.prototype_head is not None:
             self._freeze_module(self.prototype_head)
 
 
@@ -458,8 +477,8 @@ class PASModel(nn.Module):
 
     def _maybe_build_prototype_init_features(self, train_loader, image_adapter: nn.Module) -> Optional[torch.Tensor]:
         logger = logging.getLogger('pas.prototype_init')
-        if not self.use_prototype_bank:
-            logger.info('Skipping prototype initialization because model.use_prototype_bank=false.')
+        if not self.use_prototype_branch or not self.use_prototype_bank:
+            logger.info('Skipping prototype initialization because the prototype bank is disabled.')
             return None
         init_mode = getattr(self.args, 'prototype_init', 'normalized_random')
         init_path = getattr(self.args, 'prototype_init_path', None)
@@ -507,6 +526,65 @@ class PASModel(nn.Module):
     def _cast_to_prototype_dtype(self, tensor: torch.Tensor) -> torch.Tensor:
         return tensor.to(dtype=self._prototype_dtype())
 
+    def _encode_host_image_branch(self, image_output: EncoderOutput, return_debug: bool = False) -> Dict[str, object]:
+        return self.host_head.encode_image_branch(
+            self._cast_to_prototype_dtype(image_output.projected_pooled),
+            return_debug=return_debug,
+        )
+
+    def _encode_host_text_branch(self, text_output: EncoderOutput, return_debug: bool = False) -> Dict[str, object]:
+        return self.host_head.encode_text_branch(
+            self._cast_to_prototype_dtype(text_output.projected_pooled),
+            return_debug=return_debug,
+        )
+
+    def _zero_loss_outputs(self, reference: torch.Tensor) -> Dict[str, torch.Tensor]:
+        zero = reference.new_zeros(())
+        return {
+            'loss_total': zero,
+            'loss_proxy': zero,
+            'loss_proxy_image': zero,
+            'loss_proxy_text': zero,
+            'loss_proxy_text_exact': zero,
+            'loss_ret': zero,
+            'loss_align': zero,
+            'loss_diag': zero,
+            'loss_support': zero,
+            'loss_diversity': zero,
+            'loss_balance': zero,
+            'loss_proxy_image_weighted': zero,
+            'loss_proxy_text_weighted': zero,
+            'loss_proxy_text_exact_weighted': zero,
+            'loss_proxy_weighted': zero,
+            'loss_ret_weighted': zero,
+            'loss_align_weighted': zero,
+            'loss_diag_weighted': zero,
+            'loss_support_weighted': zero,
+            'loss_diversity_weighted': zero,
+            'loss_balance_weighted': zero,
+            'lambda_proxy': zero,
+            'lambda_proxy_image': zero,
+            'lambda_proxy_text': zero,
+            'lambda_proxy_text_exact': zero,
+            'use_loss_proxy_image': zero,
+            'use_loss_proxy_text': zero,
+            'use_loss_proxy_text_exact': zero,
+            'use_loss_ret': zero,
+            'lambda_ret': zero,
+            'use_loss_align': zero,
+            'lambda_align': zero,
+            'use_loss_diag': zero,
+            'lambda_diag': zero,
+            'use_loss_support': zero,
+            'lambda_support': zero,
+            'lambda_div': zero,
+            'lambda_bal': zero,
+            'proxy_temperature': zero,
+            'retrieval_temperature': zero,
+            'logit_scale': zero,
+            'debug_metrics': {},
+        }
+
     def extract_image_features(self, image: torch.Tensor) -> EncoderOutput:
         image_outputs = self.base_model.encode_image_intermediates(image, return_all=False, average_attn_weights=True)
         projected_tokens = image_outputs['projected_tokens'].float()
@@ -540,9 +618,8 @@ class PASModel(nn.Module):
         pre_projection_tokens = text_outputs['pre_projection_tokens']
         if pre_projection_tokens is not None:
             pre_projection_tokens = pre_projection_tokens.float()
-        token_mask_builder = self.prototype_head.token_mask_builder
-        token_mask = token_mask_builder.build_valid_mask(text.long())
-        special_positions = token_mask_builder.get_special_token_positions(text.long(), attention_mask=token_mask)
+        token_mask = self.token_mask_builder.build_valid_mask(text.long())
+        special_positions = self.token_mask_builder.get_special_token_positions(text.long(), attention_mask=token_mask)
         batch_indices = torch.arange(text.size(0), device=text.device)
         projected_pooled = None
         pre_projection_pooled = None
@@ -561,7 +638,7 @@ class PASModel(nn.Module):
             attention_weights=None,
             token_mask=token_mask,
             special_token_positions=special_positions,
-            pooling_mode='eos_only' if self.training_mode == 'vanilla_clip' else ('image_conditioned' if self.use_image_conditioned_pooling else 'text_only'),
+            pooling_mode='eos_only' if not self.use_prototype_branch else ('image_conditioned' if self.use_image_conditioned_pooling else 'text_only'),
             metadata={
                 'encoder': 'text',
                 'backbone': self.text_backbone,
@@ -572,36 +649,47 @@ class PASModel(nn.Module):
 
     def encode_image_for_retrieval(self, image: torch.Tensor) -> Dict[str, torch.Tensor]:
         image_output = self.extract_image_features(image)
-        prototype_outputs = self.prototype_head.encode_image_branch(self._cast_to_prototype_dtype(image_output.projected_pooled), return_debug=False)
+        host_image = self._encode_host_image_branch(image_output, return_debug=False)
+        summary = host_image['summary']
+        routing_weights = host_image['routing_weights']
+        if self.prototype_head is not None:
+            prototype_image = self.prototype_head.encode_image_branch(
+                self._cast_to_prototype_dtype(image_output.projected_pooled),
+                return_debug=False,
+            )
+            summary = prototype_image['summary']
+            routing_weights = prototype_image['routing_weights']
         return {
-            'image_projected': prototype_outputs['image_projected'],
-            'summary': prototype_outputs['summary'],
-            'routing_weights': prototype_outputs['routing_weights'],
+            'image_projected': host_image['image_projected'],
+            'host_image_projected': host_image['image_projected'],
+            'host_summary': host_image['summary'],
+            'summary': summary,
+            'routing_weights': routing_weights,
         }
 
     def encode_text_for_retrieval(self, text: torch.Tensor) -> Dict[str, torch.Tensor]:
         text_output = self.extract_text_features(text)
-        if self.training_mode == 'vanilla_clip':
-            text_outputs = self.prototype_head.encode_text_branch(
-                self._cast_to_prototype_dtype(text_output.projected_pooled),
-                return_debug=False,
-            )
-            return {
-                'text_projected': text_outputs['text_projected'],
-            }
-        return {
-            'text_token_states': self._cast_to_prototype_dtype(self._resolve_text_states(text_output)),
-            'token_ids': text.long(),
-            'attention_mask': text_output.token_mask,
-            'special_token_positions': {key: value for key, value in text_output.special_token_positions.items()},
+        host_text = self._encode_host_text_branch(text_output, return_debug=False)
+        outputs = {
+            'text_projected': host_text['text_projected'],
+            'host_text_projected': host_text['text_projected'],
         }
+        if self.prototype_head is not None:
+            outputs.update(
+                {
+                    'text_token_states': self._cast_to_prototype_dtype(self._resolve_text_states(text_output)),
+                    'token_ids': text.long(),
+                    'attention_mask': text_output.token_mask,
+                    'special_token_positions': {key: value for key, value in text_output.special_token_positions.items()},
+                }
+            )
+        return outputs
 
     def encode_text_basis_for_retrieval(self, text: torch.Tensor) -> Dict[str, torch.Tensor]:
-        if self.training_mode == 'vanilla_clip':
-            raise RuntimeError('encode_text_basis_for_retrieval is unavailable when model.training_mode=vanilla_clip. Use evaluation.retrieval_scorer=exact for global CLIP retrieval.')
-        if not self.use_prototype_bank:
-            raise RuntimeError('encode_text_basis_for_retrieval is unavailable when model.use_prototype_bank=false. Use evaluation.retrieval_scorer=exact for direct image-conditioned pooling.')
+        if self.prototype_head is None or not self.use_prototype_bank:
+            raise RuntimeError('encode_text_basis_for_retrieval is unavailable when model.use_prototype_bank=false. Use evaluation.retrieval_scorer=exact.')
         text_output = self.extract_text_features(text)
+        host_text = self._encode_host_text_branch(text_output, return_debug=False)
         context = self.prototype_head.get_prototype_context(return_debug=False)
         basis_outputs = self.prototype_head.build_text_basis_bank(
             text_token_states=self._cast_to_prototype_dtype(self._resolve_text_states(text_output)),
@@ -612,18 +700,24 @@ class PASModel(nn.Module):
             return_debug=False,
         )
         return {
+            'host_text_projected': host_text['text_projected'],
             'basis_bank': basis_outputs['basis_bank'],
         }
 
+    def _compute_host_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        host_image_projected = self._cast_to_prototype_dtype(image_features.get('host_image_projected', image_features['image_projected']))
+        host_text_projected = self._cast_to_prototype_dtype(text_features.get('host_text_projected', text_features.get('text_projected')))
+        similarity = self.host_head.compute_similarity_matrix(host_image_projected, host_text_projected)
+        if not torch.isfinite(similarity).all():
+            raise FloatingPointError('Host retrieval similarity contains NaN or Inf values.')
+        return similarity.float()
+
     def compute_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
-        if self.training_mode == 'vanilla_clip':
-            similarity = self.prototype_head.compute_similarity_matrix(
-                self._cast_to_prototype_dtype(image_features['image_projected']),
-                self._cast_to_prototype_dtype(text_features['text_projected']),
-            )
-        else:
-            similarity = self.prototype_head.compute_pairwise_similarity(
-                image_projected=self._cast_to_prototype_dtype(image_features['image_projected']),
+        host_similarity = self._compute_host_similarity(image_features, text_features)
+        prototype_similarity = None
+        if self.prototype_head is not None and 'text_token_states' in text_features:
+            prototype_similarity = self.prototype_head.compute_pairwise_similarity(
+                image_projected=self._cast_to_prototype_dtype(image_features.get('host_image_projected', image_features['image_projected'])),
                 summaries=self._cast_to_prototype_dtype(image_features['summary']),
                 text_token_states=self._cast_to_prototype_dtype(text_features['text_token_states']),
                 token_ids=text_features['token_ids'],
@@ -631,23 +725,29 @@ class PASModel(nn.Module):
                 special_token_positions=text_features.get('special_token_positions'),
                 image_chunk_size=self.prototype_eval_image_chunk_size,
                 text_chunk_size=self.prototype_eval_text_chunk_size,
-            )
+            ).float()
+        similarity = self.fusion_module(host_similarity, prototype_similarity)
         if not torch.isfinite(similarity).all():
             raise FloatingPointError('Retrieval similarity contains NaN or Inf values.')
         return similarity.float()
 
     def compute_approximate_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_basis_features: Dict[str, torch.Tensor]) -> torch.Tensor:
-        if self.training_mode == 'vanilla_clip':
-            raise RuntimeError('compute_approximate_retrieval_similarity is unavailable when model.training_mode=vanilla_clip. Use evaluation.retrieval_scorer=exact.')
-        if not self.use_prototype_bank:
-            raise RuntimeError('compute_approximate_retrieval_similarity is unavailable when model.use_prototype_bank=false. Use evaluation.retrieval_scorer=exact for direct image-conditioned pooling.')
-        similarity = self.prototype_head.compute_approximate_pairwise_similarity(
-            image_projected=self._cast_to_prototype_dtype(image_features['image_projected']),
+        if self.prototype_head is None or not self.use_prototype_bank:
+            raise RuntimeError('compute_approximate_retrieval_similarity is unavailable when model.use_prototype_bank=false. Use evaluation.retrieval_scorer=exact.')
+        host_similarity = self._compute_host_similarity(
+            image_features,
+            {
+                'host_text_projected': text_basis_features['host_text_projected'],
+            },
+        )
+        prototype_similarity = self.prototype_head.compute_approximate_pairwise_similarity(
+            image_projected=self._cast_to_prototype_dtype(image_features.get('host_image_projected', image_features['image_projected'])),
             routing_weights=self._cast_to_prototype_dtype(image_features['routing_weights']),
             basis_bank=self._cast_to_prototype_dtype(text_basis_features['basis_bank']),
             image_chunk_size=self.prototype_eval_image_chunk_size,
             text_chunk_size=self.prototype_eval_text_chunk_size,
-        )
+        ).float()
+        similarity = self.fusion_module(host_similarity, prototype_similarity)
         if not torch.isfinite(similarity).all():
             raise FloatingPointError('Approximate retrieval similarity contains NaN or Inf values.')
         return similarity.float()
@@ -656,61 +756,46 @@ class PASModel(nn.Module):
         self,
         image_output: EncoderOutput,
         text_output: EncoderOutput,
+        host_outputs: Dict[str, object],
         prototype_outputs: Dict[str, object],
     ) -> Dict[str, object]:
-        debug = dict(prototype_outputs.get('metrics', {}))
-        if self.training_mode == 'vanilla_clip':
-            debug.update(
-                {
-                    'image_global': image_output.projected_pooled.detach(),
-                    'text_tokens': text_output.projected_tokens.detach(),
-                    'text_eos': text_output.projected_pooled.detach(),
-                    'token_mask': text_output.token_mask.detach(),
-                    'special_token_positions': {key: value.detach() for key, value in text_output.special_token_positions.items()},
-                    'alpha': prototype_outputs['routing_weights'].detach(),
-                    'Q': prototype_outputs['summary'].detach(),
-                    'Theta_v': prototype_outputs['routing_weights'].new_empty((0, image_output.projected_pooled.size(-1))),
-                    'Theta_tilde': prototype_outputs['routing_weights'].new_empty((0, image_output.projected_pooled.size(-1))),
-                    'basis_bank': prototype_outputs['routing_weights'].new_empty((text_output.projected_pooled.size(0), 0, image_output.projected_pooled.size(-1))),
-                    'Z_v': prototype_outputs['image_projected'].detach(),
-                    'Z_v_raw': prototype_outputs['image_projected_raw'].detach(),
-                    'Z_t': prototype_outputs['surrogate_text_projected'].detach(),
-                    'Z_t_raw': prototype_outputs['surrogate_text_projected_raw'].detach(),
-                    'Z_t_exact': prototype_outputs['exact_text_projected'].detach(),
-                    'Z_t_exact_raw': prototype_outputs['exact_text_projected_raw'].detach(),
-                }
-            )
-            logits = prototype_outputs.get('debug', {}).get('retrieval_logits_i2t')
-            if isinstance(logits, torch.Tensor):
-                debug['retrieval_logits_i2t'] = logits.detach()
-                debug['surrogate_pairwise_logits'] = logits.detach()
-            return debug
+        debug = dict(host_outputs.get('metrics', {}))
+        debug.update(prototype_outputs.get('metrics', {}))
         debug.update(
             {
+                'fusion_coefficient': torch.tensor(self.fusion_coefficient, device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
+                'fusion_enabled': torch.tensor(float(self.fusion_enabled), device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
                 'image_global': image_output.projected_pooled.detach(),
                 'text_tokens': self._resolve_text_states(text_output).detach(),
                 'token_mask': text_output.token_mask.detach(),
                 'special_token_positions': {key: value.detach() for key, value in text_output.special_token_positions.items()},
+                'host_image_projected': host_outputs['image_projected'].detach(),
+                'host_text_projected': host_outputs['surrogate_text_projected'].detach(),
+                'host_pairwise_logits': host_outputs.get('surrogate_pairwise_logits').detach() if isinstance(host_outputs.get('surrogate_pairwise_logits'), torch.Tensor) else None,
                 'alpha': prototype_outputs['routing_weights'].detach(),
-                'beta': prototype_outputs['exact_token_weights'].detach(),
                 'Q': prototype_outputs['summary'].detach(),
                 'Theta_v': prototype_outputs['prototypes'].detach(),
                 'Theta_tilde': prototype_outputs['contextualized_prototypes'].detach(),
-                'token_valid_mask': prototype_outputs['token_valid_mask'].detach(),
-                'token_keep_mask': prototype_outputs['token_keep_mask'].detach(),
-                'beta_logits_masked': prototype_outputs['beta_logits_masked'].detach(),
                 'basis_bank': prototype_outputs['basis_bank'].detach(),
-                'T_pool': prototype_outputs['surrogate_pooled_text'].detach(),
-                'T_exact_pool': prototype_outputs['exact_pooled_text'].detach(),
-                'T_hat_pool': prototype_outputs['surrogate_pooled_text'].detach(),
-                'Z_v': prototype_outputs['image_projected'].detach(),
-                'Z_v_raw': prototype_outputs['image_projected_raw'].detach(),
+                'Z_v': host_outputs['image_projected'].detach(),
+                'Z_v_raw': host_outputs['image_projected_raw'].detach(),
                 'Z_t': prototype_outputs['surrogate_text_projected'].detach(),
                 'Z_t_raw': prototype_outputs['surrogate_text_projected_raw'].detach(),
                 'Z_t_exact': prototype_outputs['exact_text_projected'].detach(),
                 'Z_t_exact_raw': prototype_outputs['exact_text_projected_raw'].detach(),
             }
         )
+        for key in ('exact_token_weights', 'token_valid_mask', 'token_keep_mask', 'beta_logits_masked', 'surrogate_pooled_text', 'exact_pooled_text'):
+            value = prototype_outputs.get(key)
+            if isinstance(value, torch.Tensor):
+                debug[key] = value.detach()
+        if 'exact_token_weights' in prototype_outputs:
+            debug['beta'] = prototype_outputs['exact_token_weights'].detach()
+        if 'surrogate_pooled_text' in prototype_outputs:
+            debug['T_pool'] = prototype_outputs['surrogate_pooled_text'].detach()
+            debug['T_hat_pool'] = prototype_outputs['surrogate_pooled_text'].detach()
+        if 'exact_pooled_text' in prototype_outputs:
+            debug['T_exact_pool'] = prototype_outputs['exact_pooled_text'].detach()
         for key in ('basis_token_scores', 'basis_token_weights', 'basis_beta_logits_masked', 'image_proxy_logits', 'text_proxy_logits', 'text_exact_proxy_logits', 'surrogate_retrieval_logits', 'surrogate_pairwise_logits', 'class_proxies'):
             value = prototype_outputs.get('debug', {}).get(key)
             if isinstance(value, torch.Tensor):
@@ -722,7 +807,8 @@ class PASModel(nn.Module):
     def named_optimizer_groups(self) -> OrderedDict:
         groups = OrderedDict(
             prototype_bank=[],
-            projectors=[],
+            prototype_projectors=[],
+            host_projectors=[],
             class_proxies=[],
             image_backbone=[],
             text_backbone=[],
@@ -734,7 +820,9 @@ class PASModel(nn.Module):
             if name.startswith('prototype_head.prototype_bank'):
                 groups['prototype_bank'].append((name, parameter))
             elif name.startswith('prototype_head.image_projector') or name.startswith('prototype_head.text_projector') or name.startswith('prototype_head.image_adapter') or name.startswith('prototype_head.text_adapter'):
-                groups['projectors'].append((name, parameter))
+                groups['prototype_projectors'].append((name, parameter))
+            elif name.startswith('host_head.image_projector') or name.startswith('host_head.text_projector'):
+                groups['host_projectors'].append((name, parameter))
             elif name.startswith('prototype_head.losses.class_proxies'):
                 groups['class_proxies'].append((name, parameter))
             elif name.startswith('base_model.visual'):
@@ -746,13 +834,17 @@ class PASModel(nn.Module):
         return groups
 
     def forward(self, batch, epoch=None, current_step=None, return_debug: Optional[bool] = None, disable_proxy_losses: bool = False):
-        del epoch, current_step, disable_proxy_losses
+        del epoch, current_step
         images = batch['images']
         caption_ids = batch['caption_ids']
         pids = batch.get('pids')
-        if self.training_mode != 'vanilla_clip':
-            if pids is None:
-                raise KeyError("PASModel.forward requires batch['pids'] as class labels for the amortized proxy objective.")
+        proxy_losses_requested = self.prototype_head is not None and any(
+            bool(getattr(self.args, attr_name, False))
+            for attr_name in ('use_loss_proxy_image', 'use_loss_proxy_text', 'use_loss_proxy_text_exact')
+        )
+        if self.prototype_head is not None and proxy_losses_requested and pids is None:
+            raise KeyError("PASModel.forward requires batch['pids'] when prototype proxy losses are enabled.")
+        if pids is not None:
             for label_key in ('image_pids', 'caption_pids'):
                 paired_labels = batch.get(label_key)
                 if paired_labels is None:
@@ -762,15 +854,44 @@ class PASModel(nn.Module):
                     raise ValueError(
                         f"Batch label mismatch: batch['pids'] and batch['{label_key}'] must match exactly for paired training samples."
                     )
+
         image_output = self.extract_image_features(images)
         text_output = self.extract_text_features(caption_ids)
         should_return_debug = self.return_debug_outputs if return_debug is None else bool(return_debug)
-        if self.training_mode == 'vanilla_clip':
-            prototype_outputs = self.prototype_head(
-                image_embeddings=self._cast_to_prototype_dtype(image_output.projected_pooled),
-                text_embeddings=self._cast_to_prototype_dtype(text_output.projected_pooled),
-                return_debug=should_return_debug,
-            )
+
+        host_outputs = self.host_head(
+            image_embeddings=self._cast_to_prototype_dtype(image_output.projected_pooled),
+            text_embeddings=self._cast_to_prototype_dtype(text_output.projected_pooled),
+            return_debug=should_return_debug,
+        )
+        host_losses = host_outputs['losses']
+
+        if self.prototype_head is None:
+            empty_alpha = host_outputs['routing_weights']
+            empty_bank = empty_alpha.new_empty((text_output.projected_pooled.size(0), 0, self.prototype_dim))
+            prototype_outputs = {
+                'routing_weights': empty_alpha,
+                'summary': self._cast_to_prototype_dtype(image_output.projected_pooled),
+                'prototypes': empty_alpha.new_empty((0, self.prototype_dim)),
+                'contextualized_prototypes': empty_alpha.new_empty((0, self.prototype_dim)),
+                'basis_bank': empty_bank,
+                'token_valid_mask': text_output.token_mask,
+                'token_keep_mask': text_output.token_mask,
+                'beta_logits_masked': empty_alpha.new_empty((text_output.projected_pooled.size(0), text_output.projected_tokens.size(1))),
+                'exact_token_weights': empty_alpha.new_empty((text_output.projected_pooled.size(0), text_output.projected_tokens.size(1))),
+                'surrogate_pooled_text': self._cast_to_prototype_dtype(text_output.projected_pooled),
+                'exact_pooled_text': self._cast_to_prototype_dtype(text_output.projected_pooled),
+                'surrogate_text_projected': host_outputs['surrogate_text_projected'],
+                'surrogate_text_projected_raw': host_outputs['surrogate_text_projected_raw'],
+                'exact_text_projected': host_outputs['exact_text_projected'],
+                'exact_text_projected_raw': host_outputs['exact_text_projected_raw'],
+                'image_projected': host_outputs['image_projected'],
+                'image_projected_raw': host_outputs['image_projected_raw'],
+                'losses': self._zero_loss_outputs(host_outputs['image_projected']),
+                'metrics': {'prototype_branch_disabled': host_outputs['image_projected'].new_tensor(1.0)},
+                'debug': {},
+                'surrogate_pairwise_logits': None,
+            }
         else:
             prototype_outputs = self.prototype_head(
                 image_embeddings=self._cast_to_prototype_dtype(image_output.projected_pooled),
@@ -780,66 +901,82 @@ class PASModel(nn.Module):
                 attention_mask=text_output.token_mask,
                 special_token_positions=text_output.special_token_positions,
                 return_debug=should_return_debug,
-                disable_proxy_losses=False,
+                disable_proxy_losses=disable_proxy_losses,
             )
 
-        losses = prototype_outputs['losses']
-        if not torch.isfinite(losses['loss_total']):
+        prototype_losses = prototype_outputs['losses']
+        metric_losses = prototype_losses if self.prototype_head is not None else host_losses
+        loss_total = (self.lambda_host * host_losses['loss_total']) + prototype_losses['loss_total']
+        if not torch.isfinite(loss_total):
             raise FloatingPointError('loss_total contains NaN or Inf values.')
 
         outputs = {
-            'loss_total': losses['loss_total'],
-            'loss_proxy': losses['loss_proxy'],
-            'loss_proxy_image': losses['loss_proxy_image'],
-            'loss_proxy_text': losses['loss_proxy_text'],
-            'loss_proxy_text_exact': losses['loss_proxy_text_exact'],
-            'loss_ret': losses['loss_ret'],
-            'loss_align': losses['loss_align'],
-            'loss_diag': losses['loss_diag'],
-            'loss_support': losses['loss_support'],
-            'loss_diversity': losses['loss_diversity'],
-            'loss_balance': losses['loss_balance'],
-            'loss_proxy_image_weighted': losses['loss_proxy_image_weighted'],
-            'loss_proxy_text_weighted': losses['loss_proxy_text_weighted'],
-            'loss_proxy_text_exact_weighted': losses['loss_proxy_text_exact_weighted'],
-            'loss_proxy_weighted': losses['loss_proxy_weighted'],
-            'loss_ret_weighted': losses['loss_ret_weighted'],
-            'loss_align_weighted': losses['loss_align_weighted'],
-            'loss_diag_weighted': losses['loss_diag_weighted'],
-            'loss_support_weighted': losses['loss_support_weighted'],
-            'loss_diversity_weighted': losses['loss_diversity_weighted'],
-            'loss_balance_weighted': losses['loss_balance_weighted'],
-            'lambda_proxy': losses['lambda_proxy'],
-            'lambda_proxy_image': losses['lambda_proxy_image'],
-            'lambda_proxy_text': losses['lambda_proxy_text'],
-            'lambda_proxy_text_exact': losses['lambda_proxy_text_exact'],
-            'use_loss_proxy_text_exact': losses['use_loss_proxy_text_exact'],
-            'use_loss_ret': losses['use_loss_ret'],
-            'lambda_ret': losses['lambda_ret'],
-            'lambda_align': losses['lambda_align'],
-            'lambda_diag': losses['lambda_diag'],
-            'use_loss_support': losses['use_loss_support'],
-            'lambda_support': losses['lambda_support'],
-            'lambda_div': losses['lambda_div'],
-            'lambda_bal': losses['lambda_bal'],
-            'proxy_temperature': losses['proxy_temperature'].detach(),
-            'retrieval_temperature': losses['retrieval_temperature'].detach(),
-            'logit_scale': losses['logit_scale'].detach(),
+            'loss_total': loss_total,
+            'loss_host': host_losses['loss_total'],
+            'loss_host_ret': host_losses['loss_ret'],
+            'loss_host_ret_i2t': host_losses['loss_ret_i2t'],
+            'loss_host_ret_t2i': host_losses['loss_ret_t2i'],
+            'loss_proto_total': prototype_losses['loss_total'],
+            'loss_proxy': prototype_losses['loss_proxy'],
+            'loss_proxy_image': prototype_losses['loss_proxy_image'],
+            'loss_proxy_text': prototype_losses['loss_proxy_text'],
+            'loss_proxy_text_exact': prototype_losses['loss_proxy_text_exact'],
+            'loss_ret': prototype_losses['loss_ret'],
+            'loss_align': prototype_losses['loss_align'],
+            'loss_diag': prototype_losses['loss_diag'],
+            'loss_support': prototype_losses['loss_support'],
+            'loss_diversity': prototype_losses['loss_diversity'],
+            'loss_balance': prototype_losses['loss_balance'],
+            'loss_proxy_image_weighted': prototype_losses['loss_proxy_image_weighted'],
+            'loss_proxy_text_weighted': prototype_losses['loss_proxy_text_weighted'],
+            'loss_proxy_text_exact_weighted': prototype_losses['loss_proxy_text_exact_weighted'],
+            'loss_proxy_weighted': prototype_losses['loss_proxy_weighted'],
+            'loss_ret_weighted': prototype_losses['loss_ret_weighted'],
+            'loss_align_weighted': prototype_losses['loss_align_weighted'],
+            'loss_diag_weighted': prototype_losses['loss_diag_weighted'],
+            'loss_support_weighted': prototype_losses['loss_support_weighted'],
+            'loss_diversity_weighted': prototype_losses['loss_diversity_weighted'],
+            'loss_balance_weighted': prototype_losses['loss_balance_weighted'],
+            'loss_host_weighted': self.lambda_host * host_losses['loss_total'],
+            'lambda_host': host_losses['loss_total'].new_tensor(self.lambda_host),
+            'lambda_proxy': prototype_losses['lambda_proxy'],
+            'lambda_proxy_image': prototype_losses['lambda_proxy_image'],
+            'lambda_proxy_text': prototype_losses['lambda_proxy_text'],
+            'lambda_proxy_text_exact': prototype_losses['lambda_proxy_text_exact'],
+            'use_loss_proxy_text_exact': prototype_losses['use_loss_proxy_text_exact'],
+            'use_loss_ret': metric_losses['use_loss_ret'],
+            'lambda_ret': metric_losses['lambda_ret'],
+            'lambda_align': prototype_losses['lambda_align'],
+            'lambda_diag': prototype_losses['lambda_diag'],
+            'use_loss_support': prototype_losses['use_loss_support'],
+            'lambda_support': prototype_losses['lambda_support'],
+            'lambda_div': prototype_losses['lambda_div'],
+            'lambda_bal': prototype_losses['lambda_bal'],
+            'proxy_temperature': metric_losses['proxy_temperature'].detach(),
+            'retrieval_temperature': metric_losses['retrieval_temperature'].detach(),
+            'logit_scale': metric_losses['logit_scale'].detach(),
+            'host_retrieval_temperature': host_losses['retrieval_temperature'].detach(),
+            'host_logit_scale': host_losses['logit_scale'].detach(),
+            'fusion_coefficient': host_losses['loss_total'].new_tensor(self.fusion_coefficient),
             'alpha': prototype_outputs['routing_weights'].detach(),
-            'z_v': prototype_outputs['image_projected'],
+            'z_v': host_outputs['image_projected'],
             'z_t_hat_diag': prototype_outputs['surrogate_text_projected'],
             'z_t_exact_diag': prototype_outputs['exact_text_projected'],
             'surrogate_pairwise_logits': prototype_outputs.get('surrogate_pairwise_logits'),
-            'debug': dict(prototype_outputs.get('metrics', {})),
+            'host_pairwise_logits': host_outputs.get('surrogate_pairwise_logits'),
+            'debug': dict(host_outputs.get('metrics', {})),
         }
-        for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'surrogate_pairwise_logits'):
+        outputs['debug'].update(prototype_outputs.get('metrics', {}))
+        outputs['debug']['fusion_coefficient'] = self.fusion_coefficient
+        outputs['debug']['host_loss_total'] = host_losses['loss_total'].detach()
+        outputs['debug']['host_loss_ret'] = host_losses['loss_ret'].detach()
+        for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'surrogate_pairwise_logits', 'host_pairwise_logits'):
             tensor = outputs.get(grad_tensor_key)
             if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
                 tensor.retain_grad()
         if should_return_debug:
-            outputs['debug'] = self._build_debug_outputs(image_output, text_output, prototype_outputs)
+            outputs['debug'] = self._build_debug_outputs(image_output, text_output, host_outputs, prototype_outputs)
         return outputs
-
 
 PrototypeGuidedRetrievalModel = PASModel
 Model = PASModel
@@ -852,9 +989,13 @@ def build_model(args, num_classes, train_loader=None):
     else:
         model.base_model.float()
     if model.prototype_precision == 'fp16':
-        model.prototype_head.half()
+        model.host_head.half()
+        if model.prototype_head is not None:
+            model.prototype_head.half()
     else:
-        model.prototype_head.float()
+        model.host_head.float()
+        if model.prototype_head is not None:
+            model.prototype_head.float()
     return model
 
 

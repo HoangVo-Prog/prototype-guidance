@@ -379,7 +379,7 @@ class PrototypeConditionedTextHead(nn.Module):
 
         routing_weights, routing_debug = self.router(image_features, contextualized_prototypes, return_debug=True)
         summary, aggregator_debug = self.aggregator(routing_weights, contextualized_prototypes, return_debug=True)
-        image_proxy_features = image_features + summary
+        image_proxy_features = image_features
         image_projected, image_projector_debug = self.image_projector(image_proxy_features, return_debug=True)
 
         outputs = {

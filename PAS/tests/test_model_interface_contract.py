@@ -279,7 +279,7 @@ class ModelInterfaceContractTests(unittest.TestCase):
         self.assertEqual(tuple(outputs['z_t_hat_diag'].shape), (self.batch_size, self.prototype_dim))
         image_features = model.encode_image_for_retrieval(self.images)
         text_features = model.encode_text_for_retrieval(self.caption_ids)
-        self.assertEqual(set(text_features.keys()), {'text_projected'})
+        self.assertEqual(set(text_features.keys()), {'text_projected', 'host_text_projected'})
         similarity = model.compute_retrieval_similarity(image_features, text_features)
         self.assertEqual(tuple(similarity.shape), (self.batch_size, self.batch_size))
         self.assertTrue(torch.isfinite(similarity).all())
@@ -295,7 +295,7 @@ class ModelInterfaceContractTests(unittest.TestCase):
     def test_retrieval_encoder_contracts(self):
         model = self._build_model()
         image_features = model.encode_image_for_retrieval(self.images)
-        self.assertEqual(set(image_features.keys()), {'image_projected', 'summary', 'routing_weights'})
+        self.assertEqual(set(image_features.keys()), {'image_projected', 'host_image_projected', 'host_summary', 'summary', 'routing_weights'})
         self.assertEqual(tuple(image_features['image_projected'].shape), (self.batch_size, self.projection_dim))
         self.assertEqual(tuple(image_features['summary'].shape), (self.batch_size, self.prototype_dim))
         self.assertEqual(tuple(image_features['routing_weights'].shape), (self.batch_size, self.num_prototypes))
@@ -314,7 +314,7 @@ class ModelInterfaceContractTests(unittest.TestCase):
         torch.testing.assert_close(text_features['special_token_positions']['eos'], self.expected_eos)
 
         basis_features = model.encode_text_basis_for_retrieval(self.caption_ids)
-        self.assertEqual(set(basis_features.keys()), {'basis_bank'})
+        self.assertEqual(set(basis_features.keys()), {'host_text_projected', 'basis_bank'})
         self.assertEqual(tuple(basis_features['basis_bank'].shape), (self.batch_size, self.num_prototypes, self.prototype_dim))
 
     def test_exact_similarity_entrypoint_uses_deployed_pairwise_pipeline(self):
@@ -349,6 +349,9 @@ class ModelInterfaceContractTests(unittest.TestCase):
         )
         required_keys = {
             'loss_total',
+            'loss_host',
+            'loss_host_ret',
+            'loss_proto_total',
             'loss_proxy',
             'loss_proxy_text_exact',
             'loss_align',
@@ -409,7 +412,7 @@ class ModelInterfaceContractTests(unittest.TestCase):
         self.assertFalse(hasattr(model.prototype_head, 'prototype_bank'))
 
         image_features = model.encode_image_for_retrieval(self.images)
-        self.assertEqual(set(image_features.keys()), {'image_projected', 'summary', 'routing_weights'})
+        self.assertEqual(set(image_features.keys()), {'image_projected', 'host_image_projected', 'host_summary', 'summary', 'routing_weights'})
         self.assertEqual(tuple(image_features['routing_weights'].shape), (self.batch_size, 0))
         self.assertEqual(tuple(image_features['summary'].shape), (self.batch_size, self.prototype_dim))
 
@@ -451,10 +454,11 @@ class ModelInterfaceContractTests(unittest.TestCase):
     def test_named_optimizer_groups_contract_exposes_required_group_names(self):
         model = self._build_model(freeze_image_backbone=False, freeze_text_backbone=False)
         groups = model.named_optimizer_groups()
-        for key in ('prototype_bank', 'projectors', 'class_proxies', 'image_backbone', 'text_backbone', 'other'):
+        for key in ('prototype_bank', 'prototype_projectors', 'host_projectors', 'class_proxies', 'image_backbone', 'text_backbone', 'other'):
             self.assertIn(key, groups)
         self.assertGreater(len(groups['prototype_bank']), 0)
-        self.assertGreater(len(groups['projectors']), 0)
+        self.assertGreater(len(groups['prototype_projectors']), 0)
+        self.assertGreater(len(groups['host_projectors']), 0)
         self.assertGreater(len(groups['class_proxies']), 0)
         self.assertGreater(len(groups['image_backbone']), 0)
         self.assertGreater(len(groups['text_backbone']), 0)

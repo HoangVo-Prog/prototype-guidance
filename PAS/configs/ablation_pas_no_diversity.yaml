@@ -25,9 +25,15 @@ model:
   stride_size: 16
   text_length: 77
   vocab_size: 49408
+  use_prototype_branch: true
   use_prototype_bank: true
   use_image_conditioned_pooling: true
   return_debug_outputs: false
+
+host:
+  enabled: true
+  loss_weight: 1.0
+  freeze_projectors: true
 
 prototype:
   num_prototypes: 32
@@ -42,6 +48,11 @@ prototype:
   normalize_for_self_interaction: true
   normalize_for_routing: true
   dead_prototype_threshold: 0.005
+
+fusion:
+  enabled: true
+  coefficient: 1.0
+  coefficient_source: fixed
 
 loss:
   use_diversity_loss: false
@@ -92,6 +103,7 @@ training:
   freeze_image_backbone: true
   freeze_text_backbone: true
   freeze_prototype_side: false
+  freeze_host_projectors: true
   grad_clip: 1.0
   amp: false
   amp_dtype: fp16
@@ -102,11 +114,13 @@ optimizer:
   lr: 0.001
   lr_prototype_bank: 0.001
   lr_projectors: 0.001
+  lr_host_projectors: 0.0
   lr_image_backbone: 0.0
   lr_text_backbone: 0.0
   weight_decay: 0.01
   weight_decay_prototype_bank: 0.01
   weight_decay_projectors: 0.05
+  weight_decay_host_projectors: 0.05
   lr_class_proxies: null
   weight_decay_class_proxies: null
   weight_decay_image_backbone: 0.0

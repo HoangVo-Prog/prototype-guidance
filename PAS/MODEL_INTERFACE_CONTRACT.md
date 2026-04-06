@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the active Phase E model interface for the PAS retrieval system after the amortized surrogate training update.
+This document describes the active PAS model interface after the host-plus-prototype integration update.
 
 ## 1. Primary Model Wrapper
 
@@ -10,7 +10,7 @@ This document describes the active Phase E model interface for the PAS retrieval
 - Class: `PASModel`
 - Builder: `build_model(args, num_classes)`
 
-The model owns the CLIP backbone, prototype head, freeze policy, optimizer-group exposure, retrieval encoding helpers, exact deployed retrieval scoring, and the amortized surrogate training forward path.
+The model owns the CLIP backbone, a preserved host retrieval head, an optional prototype enhancement head, residual score fusion, freeze policy, optimizer-group exposure, retrieval encoding helpers, exact deployed retrieval scoring, and the combined host-plus-prototype training forward path.
 
 Backbone support:
 - PAS currently supports only `ViT-B/16`, `ViT-B/32`, and `ViT-L/14`.

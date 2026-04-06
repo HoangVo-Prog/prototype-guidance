@@ -1,12 +1,12 @@
 experiment:
-  name: pas_stage2_backbone_optimization
+  name: stage2_host_projector_coadaptation
   output_dir: runs
   seed: 11
   local_rank: 0
 
 model:
   name: PAS
-  variant: pas_stage2
+  variant: stage2_host_projector_coadapt
   training_mode: pas
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
@@ -25,9 +25,15 @@ model:
   stride_size: 16
   text_length: 77
   vocab_size: 49408
+  use_prototype_branch: true
   use_prototype_bank: true
   use_image_conditioned_pooling: true
   return_debug_outputs: false
+
+host:
+  enabled: true
+  loss_weight: 1.0
+  freeze_projectors: false
 
 prototype:
   num_prototypes: 32
@@ -47,11 +53,16 @@ prototype:
   normalize_for_routing: true
   dead_prototype_threshold: 0.005
 
+fusion:
+  enabled: true
+  coefficient: 1.0
+  coefficient_source: fixed
+
 loss:
   use_diversity_loss: true
   diversity_loss_weight: 0.01
-  use_balancing_loss: false
-  balance_loss_weight: 0.0
+  use_balancing_loss: true
+  balance_loss_weight: 0.01
   use_loss_proxy_image: false
   use_loss_proxy_text: false
   use_loss_proxy_text_exact: false
@@ -82,7 +93,7 @@ text_pooling:
 
 training:
   batch_size: 64
-  epochs: 20
+  epochs: 8
   log_period: 20
   eval_frequency: 1
   save_interval: 1
@@ -97,9 +108,10 @@ training:
   num_workers: 4
   training: true
   stage: stage2
-  freeze_image_backbone: false
-  freeze_text_backbone: false
-  freeze_prototype_side: true
+  freeze_image_backbone: true
+  freeze_text_backbone: true
+  freeze_prototype_side: false
+  freeze_host_projectors: false
   grad_clip: 1.0
   amp: false
   amp_dtype: fp16
@@ -107,22 +119,24 @@ training:
 
 optimizer:
   type: AdamW
-  lr: 0.0001
-  lr_prototype_bank: 0.0
-  lr_projectors: 0.0
-  lr_image_backbone: 0.00002
-  lr_text_backbone: 0.00001
+  lr: 0.0002
+  lr_prototype_bank: 0.0001
+  lr_projectors: 0.0001
+  lr_host_projectors: 0.0002
+  lr_image_backbone: 0.0
+  lr_text_backbone: 0.0
   weight_decay: 0.01
   weight_decay_prototype_bank: 0.01
   weight_decay_projectors: 0.05
+  weight_decay_host_projectors: 0.05
   lr_class_proxies: 0.0
-  weight_decay_class_proxies: null
-  weight_decay_image_backbone: 0.01
-  weight_decay_text_backbone: 0.01
+  weight_decay_class_proxies: 0.0
+  weight_decay_image_backbone: 0.0
+  weight_decay_text_backbone: 0.0
   momentum: 0.9
   alpha: 0.9
   beta: 0.999
-  milestones: [40, 50]
+  milestones: [5, 7]
   gamma: 0.1
   warmup_factor: 0.1
   warmup_epochs: 1
@@ -138,14 +152,14 @@ dataset:
   num_workers: 4
 
 logging:
-  use_wandb: false
+  use_wandb: true
   project: PAS
   entity: null
   run_name: null
-  group: stage2
+  group: stage2_host_projector_coadapt
   mode: online
-  tags: [pas, stage2, backbone_optimization]
-  notes: stage 2 backbone optimization from a stage 1 checkpoint with the same objective
+  tags: [pas, stage2, host_projectors, coadaptation]
+  notes: Light co-adaptation of host projectors with the prototype branch while CLIP trunks stay frozen.
   log_interval: 50
   log_code: false
   log_debug_metrics: true

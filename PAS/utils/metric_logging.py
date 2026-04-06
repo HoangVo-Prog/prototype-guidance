@@ -7,6 +7,13 @@ import torch.nn.functional as F
 
 TRAIN_LOSS_KEYS = (
     'loss_total',
+    'loss_host',
+    'loss_host_ret',
+    'loss_host_ret_i2t',
+    'loss_host_ret_t2i',
+    'loss_proto_total',
+    'loss_host_weighted',
+    'lambda_host',
     'loss_proxy',
     'loss_proxy_image',
     'loss_proxy_text',
@@ -32,6 +39,11 @@ TRAIN_LOSS_KEYS = (
 
 DEBUG_METRIC_MAP = {
     'logit_scale': 'debug/logit_scale',
+    'host_logit_scale': 'debug/host_logit_scale',
+    'host_retrieval_temperature': 'debug/host_retrieval_temperature',
+    'fusion_coefficient': 'debug/fusion_coefficient',
+    'host_loss_total': 'debug/host_loss_total',
+    'host_loss_ret': 'debug/host_loss_ret',
     'proxy_temperature': 'debug/proxy_temperature',
     'retrieval_temperature': 'debug/retrieval_temperature',
     'image_embed_norm_std': 'debug/image_embed_norm_std',

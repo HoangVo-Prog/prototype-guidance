@@ -203,6 +203,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
             freeze_image_backbone=freeze_image_backbone,
             freeze_text_backbone=freeze_text_backbone,
             freeze_prototype_side=freeze_prototype_side,
+            freeze_host_projectors=(stage == 'stage1'),
             finetune=finetune,
             prototype_eval_image_chunk_size=2,
             prototype_eval_text_chunk_size=2,
@@ -299,7 +300,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
         optimizer = build_optimizer(self._build_args(stage='stage2', finetune='runs/stage1/best.pth'), model)
         groups = {group['name']: group for group in optimizer.param_groups}
         self.assertNotIn('prototype_bank', groups)
-        self.assertNotIn('projectors', groups)
+        self.assertNotIn('prototype_projectors', groups)
         self.assertNotIn('class_proxies', groups)
         self.assertIn('image_backbone', groups)
         self.assertIn('text_backbone', groups)

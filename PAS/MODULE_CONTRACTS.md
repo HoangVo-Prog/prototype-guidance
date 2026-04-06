@@ -1,5 +1,11 @@
 ﻿# MODULE_CONTRACTS
 
+## model/fusion.py
+- Class: `ResidualScoreFusion`
+- Purpose: fuses the preserved host score with the optional prototype score as `host + lambda * prototype`.
+- Inputs: host similarity `[N_text, N_image]`, optional prototype similarity `[N_text, N_image]`.
+- Outputs: fused similarity `[N_text, N_image]`.
+
 ## model/prototype/prototype_bank.py
 - Class: `PrototypeBank`
 - Purpose: owns the learnable prototype table `Theta_v`.
