@@ -184,7 +184,7 @@ logging:
   group: itself_host_only
   mode: online
   tags: [pas, itself, baseline, host_only]
-  notes: Convenience baseline config for ITSELF host-only mode inside PAS.
+  notes: Convenience ITSELF host-only baseline config. Use it to create the reproduction checkpoint that should be compared against the original ITSELF code metrics.
   log_interval: 50
   log_code: false
   log_debug_metrics: true

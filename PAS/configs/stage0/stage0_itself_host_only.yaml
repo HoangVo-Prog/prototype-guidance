@@ -184,7 +184,7 @@ logging:
   group: stage0_itself_host_only
   mode: online
   tags: [pas, itself, stage0, host_only]
-  notes: Vanilla ITSELF host-only baseline inside PAS with no prototype branch.
+  notes: Stage 0 creates the PAS ITSELF host-only checkpoint and is the reproduction run used to verify whether PAS matches the original ITSELF metrics before any prototype training.
   log_interval: 50
   log_code: false
   log_debug_metrics: true

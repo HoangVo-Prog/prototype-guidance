@@ -1,4 +1,4 @@
-# FULL_RUN_INSTRUCTIONS
+ï»¿# FULL_RUN_INSTRUCTIONS
 
 ## 1. Scope
 
@@ -104,6 +104,48 @@ Why this is required even though training already evaluates:
 - the standalone eval creates a dedicated `test_log.txt`
 - it makes the final reported metrics easier to archive and audit
 - it avoids relying only on training-time log parsing
+
+## 5.1 Staged Host Checkpoint Policy
+
+For both supported host families, Stage 0 is the checkpoint-creation stage and later stages must load that checkpoint chain explicitly.
+
+CLIP host path:
+- Stage 0 creates the preserved CLIP host-only checkpoint.
+- Stage 1 must load the Stage 0 CLIP checkpoint through `training.finetune`.
+- Stage 2 must load the Stage 1 CLIP+prototype checkpoint through `training.finetune`.
+- Stage 3 must load the Stage 2 CLIP+prototype checkpoint through `training.finetune` and `evaluation.checkpoint_path`.
+
+ITSELF host path:
+- Stage 0 creates the PAS ITSELF host-only checkpoint.
+- Stage 0 is also the reproduction/verification run that should be checked against the original ITSELF codebase metrics before prototype training starts.
+- Stage 1 must load the Stage 0 ITSELF checkpoint through `training.finetune`.
+- Stage 2 must load the Stage 1 ITSELF+prototype checkpoint through `training.finetune`.
+- Stage 3 must load the Stage 2 ITSELF+prototype checkpoint through `training.finetune` and `evaluation.checkpoint_path`.
+
+Practical rule:
+- do not start Stage 1 for a host family until the corresponding Stage 0 checkpoint exists and its host-only metrics have been verified
+- treat Stage 0 as baseline reproduction, not as an optional warmup
+
+## 5.2 ITSELF Staged Run Sequence
+
+Recommended ITSELF execution order:
+
+```bash
+python train.py --config_file configs/stage0/stage0_itself_host_only.yaml
+python train.py --config_file configs/stage1/stage1_itself_host_plus_prototype.yaml
+python train.py --config_file configs/stage2/stage2_itself_host_plus_prototype.yaml
+python test.py --config_file configs/stage3/stage3_itself_fusion_calibration.yaml --output_dir <run_dir>
+```
+
+Before launching Stage 1, replace:
+- `training.finetune` in `configs/stage1/stage1_itself_host_plus_prototype.yaml` with the real Stage 0 `best.pth`
+
+Before launching Stage 2, replace:
+- `training.finetune` in `configs/stage2/stage2_itself_host_plus_prototype.yaml` with the real Stage 1 `best.pth`
+
+Before launching Stage 3, replace:
+- `training.finetune` in `configs/stage3/stage3_itself_fusion_calibration.yaml` with the real Stage 2 `best.pth`
+- `evaluation.checkpoint_path` in `configs/stage3/stage3_itself_fusion_calibration.yaml` with the same Stage 2 `best.pth`
 
 ## 6. Per-Table Full Run Instructions
 
@@ -296,7 +338,7 @@ Single-seed is acceptable only when:
 - or the table block is explicitly marked as provisional
 
 Aggregation rule:
-- report `mean ± std` over the `3` seeds for every multi-seed PAS result block
+- report `mean Â± std` over the `3` seeds for every multi-seed PAS result block
 - never report the single best seed as the final paper number for a multi-seed group
 
 ## 8. Checkpoint Policy
@@ -344,7 +386,7 @@ Current repo limitation:
 For PAS paper tables:
 - use `best.pth` selected by `val/pas/R1`
 - run standalone eval on `best.pth`
-- aggregate `R1`, `R5`, `R10`, `mAP`, `mINP`, and `rSum` over seeds with `mean ± std`
+- aggregate `R1`, `R5`, `R10`, `mAP`, `mINP`, and `rSum` over seeds with `mean Â± std`
 
 Handling failed seeds:
 - if a seed crashes before producing `best.pth`, rerun the same seed from scratch
@@ -393,4 +435,5 @@ The following full-run groups are mentioned in the planning documents but are no
 - automatic table-row export
 
 These should be treated as planned but blocked, not silently approximated.
+
 

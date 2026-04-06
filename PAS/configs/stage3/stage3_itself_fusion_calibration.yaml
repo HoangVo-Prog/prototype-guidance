@@ -184,7 +184,7 @@ logging:
   group: stage3_itself_fusion_calibration
   mode: online
   tags: [pas, itself, stage3, fusion]
-  notes: Validation-time fusion sweep for the ITSELF host plus prototype model.
+  notes: Stage 3 requires the trained Stage 2 ITSELF+prototype checkpoint in both training.finetune and evaluation.checkpoint_path, then calibrates fusion on val.
   log_interval: 50
   log_code: false
   log_debug_metrics: true

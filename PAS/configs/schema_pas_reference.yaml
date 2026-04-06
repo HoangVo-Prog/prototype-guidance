@@ -1,4 +1,4 @@
-# PAS commented config schema reference.
+﻿# PAS commented config schema reference.
 #
 # This file is a copy/edit template, not the only valid config.
 # It documents the active YAML keys consumed by utils/config.py and utils/options.py.
@@ -426,10 +426,10 @@ loss:
   support_min: 2.0
 
   # Stage definition for the staged host+prototype schedule.
-  # - stage0: host-only reproduction
-  # - stage1: frozen-host prototype training
-  # - stage2: light host-projector co-adaptation with frozen CLIP trunks
-  # - stage3: fusion calibration / evaluation-time checkpoint loading
+  # - stage0: host-only reproduction and checkpoint creation for the selected host family
+  # - stage1: frozen-host prototype training; should load the Stage 0 checkpoint in training.finetune
+  # - stage2: light host-projector co-adaptation; should load the Stage 1 checkpoint in training.finetune
+  # - stage3: fusion calibration / evaluation-time checkpoint loading; should load the Stage 2 checkpoint
   # - joint:  train everything in one run (secondary ablation path)
   # CLI: --stage or --training_stage (str); runtime key is training.stage
   stage: stage1
@@ -538,6 +538,10 @@ training:
   resume_ckpt_file: ''
 
   # Optional finetune checkpoint path loaded into model weights before optimizer creation.
+  # In staged runs this should usually point to the previous stage checkpoint:
+  # - stage1 -> Stage 0 checkpoint for the selected host family
+  # - stage2 -> Stage 1 checkpoint
+  # - stage3 -> Stage 2 checkpoint
   # CLI: --finetune (str/path)
   finetune: ''
 
@@ -769,6 +773,8 @@ logging:
 
 evaluation:
   # Optional checkpoint path for standalone test.py evaluation.
+  # For stage3 fusion-calibration configs this should point to the same trained Stage 2 checkpoint
+  # referenced by training.finetune.
   # CLI: --checkpoint_path or --checkpoint (str/path)
   checkpoint_path: ''
 
@@ -806,6 +812,7 @@ evaluation:
   # Default exact preserves deployed pairwise pooling.
   # CLI: --retrieval_scorer (str)
   retrieval_scorer: exact
+
 
 
 

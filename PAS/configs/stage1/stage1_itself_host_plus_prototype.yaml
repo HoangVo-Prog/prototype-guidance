@@ -184,7 +184,7 @@ logging:
   group: stage1_itself_host_plus_prototype
   mode: online
   tags: [pas, itself, stage1, prototype]
-  notes: Freeze the ITSELF host and train the additive prototype branch on top.
+  notes: Stage 1 requires the Stage 0 ITSELF host-only checkpoint in training.finetune, then freezes the ITSELF host and trains the additive prototype branch on top.
   log_interval: 50
   log_code: false
   log_debug_metrics: true

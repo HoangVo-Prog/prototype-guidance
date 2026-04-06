@@ -184,7 +184,7 @@ logging:
   group: stage2_itself_host_plus_prototype
   mode: online
   tags: [pas, itself, stage2, coadaptation]
-  notes: Light co-adaptation of the ITSELF host head with the prototype branch while CLIP trunks stay frozen.
+  notes: Stage 2 requires the Stage 1 ITSELF+prototype checkpoint in training.finetune and performs light co-adaptation while the CLIP trunks stay frozen.
   log_interval: 50
   log_code: false
   log_debug_metrics: true
