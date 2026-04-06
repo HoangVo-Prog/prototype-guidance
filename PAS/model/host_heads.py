@@ -528,6 +528,12 @@ class ITSELFHostHead(nn.Module):
         }
 
     def _compute_cid_loss(self, image_features: torch.Tensor, text_features: torch.Tensor, pids: torch.Tensor, mlp: nn.Module, pair_classifier: nn.Module, id_classifier: nn.Module) -> torch.Tensor:
+        max_supported_label = int(pair_classifier.out_features) - 2
+        batch_min_label = int(pids.min().item())
+        batch_max_label = int(pids.max().item())
+        if batch_min_label < 0 or batch_max_label > max_supported_label:
+            return image_features.new_zeros(())
+
         similarity = cosine_similarity_matrix(image_features, text_features)
         hard_negatives = sample_hard_negatives(similarity, pids)
         max_label = int(pids.max().item())
