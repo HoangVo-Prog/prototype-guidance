@@ -160,7 +160,7 @@ logging:
   group: stage3_fusion_calibration
   mode: online
   tags: [pas, stage3, fusion, calibration]
-  notes: Validation-time fusion sweep config. Load a trained checkpoint, tune fusion.coefficient on val, then report the chosen lambda on test.
+  notes: Stage 3 requires the trained Stage 2 CLIP+prototype checkpoint in both training.finetune and evaluation.checkpoint_path, then calibrates fusion on val.
   log_interval: 50
   log_code: false
   log_debug_metrics: true

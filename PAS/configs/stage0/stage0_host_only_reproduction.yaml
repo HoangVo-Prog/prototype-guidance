@@ -160,7 +160,7 @@ logging:
   group: stage0_host_only
   mode: online
   tags: [pas, stage0, host_only, vanilla_clip]
-  notes: Host-only CLIP reproduction checkpoint used as the preserved baseline for later prototype stages.
+  notes: Stage 0 creates the PAS CLIP host-only checkpoint and is the reproduction run used to verify the preserved baseline before any prototype training.
   log_interval: 50
   log_code: false
   log_debug_metrics: true

@@ -192,6 +192,15 @@ model:
   return_debug_outputs: false
 
 
+itself_reference:
+  # Optional metadata-driven loader for ITSELF host settings.
+  # PAS resolves this at config/runtime load time, not from checkpoints.
+  # When enabled, PAS reads configs/itself_dataset_reference.yaml and applies the
+  # shared ITSELF host defaults plus the dataset-specific host blend weight.
+  # Dataset selection always comes from dataset.dataset_name after CLI/config resolution.
+  enabled: true
+  path: ../itself_dataset_reference.yaml
+
 host:
   # Host family switch.
   # Supported values: clip | itself

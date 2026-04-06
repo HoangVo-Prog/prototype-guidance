@@ -1,0 +1,110 @@
+# ITSELF dataset reference map for PAS.
+#
+# Purpose:
+# - keep one small source of truth for PAS-side ITSELF host-only reproduction runs keyed by dataset.dataset_name
+# - record the dataset-specific global/GRAB blend used when checking Stage 0 parity
+# - record which Stage 0 checkpoint later ITSELF stages should load
+#
+# Important:
+# - This file is metadata/reference, not a runtime config consumed directly by train.py.
+# - Stage configs under configs/stage0..stage3 remain the executable entry points.
+# - The only dataset-specific model knob tracked here is the ITSELF host score blend.
+# - `host_itself_score_weight_grab` is redundant at runtime because it is always
+#   interpreted as `1.0 - host_itself_score_weight_global`; it is kept here only as
+#   a readable mirror of the paper/reference blend.
+# - `preferred_eval_row` is a human-readable label copied from original-ITSELF logs.
+#   PAS does not consume it programmatically.
+
+reference:
+  source_repo: WACV2026-Oral-ITSELF
+  executable_stage0_config: configs/stage0/stage0_itself_host_only.yaml
+  executable_baseline_config: configs/baselines/itself_host_only.yaml
+  expected_stage_chain:
+    stage0: creates the PAS ITSELF host-only reproduction checkpoint
+    stage1: load Stage 0 best checkpoint through training.finetune
+    stage2: load Stage 1 best checkpoint through training.finetune
+    stage3: load Stage 2 best checkpoint through training.finetune and evaluation.checkpoint_path
+
+shared_base_original_itself_args:
+  pretrain_choice: ViT-B/16
+  loss_names: tal+cid
+  img_size: [384, 128]
+  stride_size: 16
+  text_length: 77
+  vocab_size: 49408
+  optimizer: Adam
+  lr: 1.0e-5
+  weight_decay: 4.0e-5
+  alpha: 0.9
+  beta: 0.999
+  num_epoch: 15
+  warmup_epochs: 5
+  warmup_method: linear
+  lrscheduler: cosine
+  target_lr: 0.0
+  power: 0.9
+  sampler: identity
+  num_instance: 2
+  batch_size: 256
+  test_batch_size: 512
+  num_workers: 4
+  training: true
+  img_aug: true
+  txt_aug: true
+  only_global: false
+  return_all: true
+  topk_type: custom
+  layer_index: -1
+  average_attn_weights: true
+  modify_k: true
+  tau: 0.015
+  select_ratio: 0.4
+  margin: 0.1
+  lambda1_weight: 0.5
+  lambda2_weight: 3.5
+
+pas_stage0_shared_alignment:
+  host_type: itself
+  use_prototype_branch: false
+  use_prototype_bank: false
+  use_image_conditioned_pooling: false
+  host_itself_loss_names: tal+cid
+  host_itself_only_global: false
+  host_itself_select_ratio: 0.4
+  host_itself_grab_embed_dim: 4096
+  host_itself_tau: 0.015
+  host_itself_margin: 0.1
+  host_itself_return_all: true
+  host_itself_topk_type: custom
+  host_itself_layer_index: -1
+  host_itself_average_attn_weights: true
+  host_itself_modify_k: true
+
+datasets:
+  CUHK-PEDES:
+    preferred_eval_row: null
+    host_itself_score_weight_global: null
+    host_itself_score_weight_grab: null
+    stage0_best_checkpoint: runs/CUHK-PEDES/<timestamp>_stage0_itself_host_only/best.pth
+    notes:
+      - Fill the global weight from a verified original ITSELF run or paper table.
+      - In PAS Stage 0, set host.itself_score_weight_global to this dataset value.
+
+  ICFG-PEDES:
+    preferred_eval_row: null
+    host_itself_score_weight_global: null
+    host_itself_score_weight_grab: null
+    stage0_best_checkpoint: runs/ICFG-PEDES/<timestamp>_stage0_itself_host_only/best.pth
+    notes:
+      - Fill the global weight from a verified original ITSELF run or paper table.
+      - In PAS Stage 0, set host.itself_score_weight_global to this dataset value.
+
+  RSTPReid:
+    preferred_eval_row: global+grab(0.32)-t2i
+    host_itself_score_weight_global: 0.32
+    host_itself_score_weight_grab: 0.68
+    stage0_best_checkpoint: runs/RSTPReid/<timestamp>_stage0_itself_host_only/best.pth
+    notes:
+      - This comes from the verified original ITSELF run/log shared for RSTPReid.
+      - In PAS Stage 0, set host.itself_score_weight_global to 0.32.
+      - PAS derives the GRAB contribution as 1.0 - host.itself_score_weight_global.

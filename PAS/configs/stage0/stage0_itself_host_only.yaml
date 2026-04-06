@@ -30,6 +30,10 @@ model:
   use_image_conditioned_pooling: false
   return_debug_outputs: false
 
+itself_reference:
+  enabled: true
+  path: ../itself_dataset_reference.yaml
+
 host:
   type: itself
   enabled: true

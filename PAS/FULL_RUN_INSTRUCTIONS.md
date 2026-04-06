@@ -128,6 +128,10 @@ Practical rule:
 
 ## 5.2 ITSELF Staged Run Sequence
 
+Dataset-specific Stage 0 reproduction reference:
+- use `configs/itself_dataset_reference.yaml` to look up the original ITSELF baseline settings, the dataset-specific `host.itself_score_weight_global` value, and the intended checkpoint chain for later stages
+- for `RSTPReid`, the current verified reference row is `global+grab(0.32)-t2i`, so Stage 0 parity checks should use `host.itself_score_weight_global: 0.32`
+
 Recommended ITSELF execution order:
 
 ```bash

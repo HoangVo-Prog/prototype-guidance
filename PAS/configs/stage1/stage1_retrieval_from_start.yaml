@@ -160,7 +160,7 @@ logging:
   group: stage1_frozen_host
   mode: online
   tags: [pas, stage1, frozen_host, prototype]
-  notes: Train only the prototype-side branch on top of a preserved Stage 0 host checkpoint.
+  notes: Stage 1 requires the Stage 0 CLIP host-only checkpoint in training.finetune, then freezes the CLIP host and trains the additive prototype branch on top.
   log_interval: 50
   log_code: false
   log_debug_metrics: true
