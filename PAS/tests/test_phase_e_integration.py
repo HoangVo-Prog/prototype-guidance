@@ -227,12 +227,18 @@ class PhaseEIntegrationTests(unittest.TestCase):
             lr=0.01,
             lr_prototype_bank=0.02,
             lr_projectors=0.04,
+            lr_prototype_routing=0.05,
+            lr_prototype_pooling=0.06,
+            lr_prototype_contextualization=0.07,
             lr_class_proxies=0.03,
             lr_image_backbone=0.001,
             lr_text_backbone=0.001,
             weight_decay=0.01,
             weight_decay_prototype_bank=0.02,
             weight_decay_projectors=0.04,
+            weight_decay_prototype_routing=0.08,
+            weight_decay_prototype_pooling=0.09,
+            weight_decay_prototype_contextualization=0.11,
             weight_decay_class_proxies=0.07,
             weight_decay_image_backbone=0.05,
             weight_decay_text_backbone=0.06,
@@ -356,14 +362,41 @@ class PhaseEIntegrationTests(unittest.TestCase):
 
         self.assertAlmostEqual(optimizer.defaults['eps'], 1e-3)
         groups_by_name = {group['name']: group for group in optimizer.param_groups}
-        self.assertAlmostEqual(groups_by_name['host_head.classifier_global.weight']['lr'], 5e-5)
-        self.assertAlmostEqual(groups_by_name['host_head.classifier_global.bias']['lr'], 5e-5)
-        self.assertAlmostEqual(groups_by_name['host_head.classifier_global.bias']['weight_decay'], 0.0)
-        self.assertAlmostEqual(groups_by_name['host_head.visual_embedding_layer.fc.weight']['lr'], 1e-3)
-        self.assertAlmostEqual(groups_by_name['host_head.visual_embedding_layer.fc.bias']['lr'], 1e-3)
-        self.assertAlmostEqual(groups_by_name['host_head.visual_embedding_layer.fc.bias']['weight_decay'], 0.0)
-        self.assertAlmostEqual(groups_by_name['base_model.visual.weight']['lr'], 1e-5)
-        self.assertAlmostEqual(groups_by_name['base_model.visual.weight']['weight_decay'], 4e-5)
+        self.assertAlmostEqual(groups_by_name['stage0_itself::classifier']['lr'], 5e-5)
+        self.assertAlmostEqual(groups_by_name['stage0_itself::classifier_bias']['lr'], 5e-5)
+        self.assertAlmostEqual(groups_by_name['stage0_itself::classifier_bias']['weight_decay'], 0.0)
+        self.assertAlmostEqual(groups_by_name['stage0_itself::visual_embedding']['lr'], 1e-3)
+        self.assertAlmostEqual(groups_by_name['stage0_itself::visual_embedding_bias']['lr'], 1e-3)
+        self.assertAlmostEqual(groups_by_name['stage0_itself::visual_embedding_bias']['weight_decay'], 0.0)
+        self.assertAlmostEqual(groups_by_name['stage0_itself::base']['lr'], 1e-5)
+        self.assertAlmostEqual(groups_by_name['stage0_itself::base']['weight_decay'], 4e-5)
+
+        optimizer_param_ids = {
+            id(parameter)
+            for group in optimizer.param_groups
+            for parameter in group['params']
+        }
+        model_param_ids = {
+            id(parameter)
+            for parameter in model.parameters()
+            if parameter.requires_grad
+        }
+        self.assertSetEqual(optimizer_param_ids, model_param_ids)
+
+    def test_pas_optimizer_uses_module_specific_lr_groups(self):
+        args = self._build_args(stage='stage1')
+        model = PASModel(args, num_classes=2)
+        optimizer = build_optimizer(args, model)
+
+        groups_by_name = {group['name']: group for group in optimizer.param_groups}
+        self.assertAlmostEqual(groups_by_name['prototype_bank']['lr'], 0.02)
+        self.assertAlmostEqual(groups_by_name['prototype_bank']['weight_decay'], 0.02)
+        self.assertAlmostEqual(groups_by_name['prototype_projectors']['lr'], 0.04)
+        self.assertAlmostEqual(groups_by_name['prototype_projectors']['weight_decay'], 0.04)
+        self.assertAlmostEqual(groups_by_name['prototype_pooling']['lr'], 0.06)
+        self.assertAlmostEqual(groups_by_name['prototype_pooling']['weight_decay'], 0.09)
+        self.assertAlmostEqual(groups_by_name['class_proxies']['lr'], 0.03)
+        self.assertAlmostEqual(groups_by_name['class_proxies']['weight_decay'], 0.07)
 
         optimizer_param_ids = {
             id(parameter)
@@ -403,6 +436,9 @@ class PhaseEIntegrationTests(unittest.TestCase):
         groups = {group['name']: group for group in optimizer.param_groups}
         self.assertNotIn('prototype_bank', groups)
         self.assertNotIn('prototype_projectors', groups)
+        self.assertNotIn('prototype_routing', groups)
+        self.assertNotIn('prototype_pooling', groups)
+        self.assertNotIn('prototype_contextualization', groups)
         self.assertNotIn('class_proxies', groups)
         self.assertIn('image_backbone', groups)
         self.assertIn('text_backbone', groups)

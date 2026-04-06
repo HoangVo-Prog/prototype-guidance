@@ -627,6 +627,18 @@ optimizer:
   # CLI: --lr_projectors (float)
   lr_projectors: 0.001
 
+  # Learning rate for prototype routing params.
+  # CLI: --lr_prototype_routing (float)
+  lr_prototype_routing: 0.001
+
+  # Learning rate for prototype pooling params such as text_pool_query.
+  # CLI: --lr_prototype_pooling (float)
+  lr_prototype_pooling: 0.001
+
+  # Learning rate for prototype contextualization params.
+  # CLI: --lr_prototype_contextualization (float)
+  lr_prototype_contextualization: 0.001
+
   # Optional class-proxy learning rate override. null falls back to optimizer.lr.
   # CLI: --lr_class_proxies (float)
   lr_class_proxies: null
@@ -650,6 +662,12 @@ optimizer:
   weight_decay_prototype_bank: 0.01
   # CLI: --weight_decay_projectors (float)
   weight_decay_projectors: 0.05
+  # CLI: --weight_decay_prototype_routing (float)
+  weight_decay_prototype_routing: 0.05
+  # CLI: --weight_decay_prototype_pooling (float)
+  weight_decay_prototype_pooling: 0.05
+  # CLI: --weight_decay_prototype_contextualization (float)
+  weight_decay_prototype_contextualization: 0.05
 
   # Optional class-proxy weight decay override. null falls back to optimizer.weight_decay.
   # CLI: --weight_decay_class_proxies (float)

@@ -123,12 +123,18 @@ optimizer:
   lr: 0.0
   lr_prototype_bank: 0.0
   lr_projectors: 0.0
+  lr_prototype_routing: 0.0
+  lr_prototype_pooling: 0.0
+  lr_prototype_contextualization: 0.0
   lr_host_projectors: 0.0
   lr_image_backbone: 0.0
   lr_text_backbone: 0.0
   weight_decay: 0.0
   weight_decay_prototype_bank: 0.0
   weight_decay_projectors: 0.0
+  weight_decay_prototype_routing: 0.0
+  weight_decay_prototype_pooling: 0.0
+  weight_decay_prototype_contextualization: 0.0
   weight_decay_host_projectors: 0.0
   lr_class_proxies: 0.0
   weight_decay_class_proxies: 0.0

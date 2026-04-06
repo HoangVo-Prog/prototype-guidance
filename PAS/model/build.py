@@ -824,6 +824,9 @@ class PASModel(nn.Module):
         groups = OrderedDict(
             prototype_bank=[],
             prototype_projectors=[],
+            prototype_routing=[],
+            prototype_pooling=[],
+            prototype_contextualization=[],
             host_projectors=[],
             class_proxies=[],
             image_backbone=[],
@@ -833,17 +836,39 @@ class PASModel(nn.Module):
         for name, parameter in self.named_parameters():
             if not parameter.requires_grad:
                 continue
-            if name.startswith('prototype_head.prototype_bank'):
+            if name.startswith('prototype_head.losses.class_proxies'):
+                groups['class_proxies'].append((name, parameter))
+            elif name.startswith('prototype_head.prototype_bank'):
                 groups['prototype_bank'].append((name, parameter))
-            elif name.startswith('prototype_head.image_projector') or name.startswith('prototype_head.text_projector') or name.startswith('prototype_head.image_adapter') or name.startswith('prototype_head.text_adapter'):
+            elif name.startswith('prototype_head.contextualizer'):
+                groups['prototype_contextualization'].append((name, parameter))
+            elif name.startswith('prototype_head.router'):
+                groups['prototype_routing'].append((name, parameter))
+            elif (
+                name.startswith('prototype_head.text_pool_query')
+                or name.startswith('prototype_head.token_pooler')
+                or name.startswith('prototype_head.token_scorer')
+                or name.startswith('prototype_head.token_mask_builder')
+            ):
+                groups['prototype_pooling'].append((name, parameter))
+            elif (
+                name.startswith('prototype_head.image_projector')
+                or name.startswith('prototype_head.text_projector')
+                or name.startswith('prototype_head.image_adapter')
+                or name.startswith('prototype_head.text_adapter')
+            ):
                 groups['prototype_projectors'].append((name, parameter))
             elif name.startswith('host_head'):
                 groups['host_projectors'].append((name, parameter))
-            elif name.startswith('prototype_head.losses.class_proxies'):
-                groups['class_proxies'].append((name, parameter))
             elif name.startswith('base_model.visual'):
                 groups['image_backbone'].append((name, parameter))
-            elif name.startswith('base_model.transformer') or name.startswith('base_model.token_embedding') or name.startswith('base_model.positional_embedding') or name.startswith('base_model.ln_final') or name.startswith('base_model.text_projection'):
+            elif (
+                name.startswith('base_model.transformer')
+                or name.startswith('base_model.token_embedding')
+                or name.startswith('base_model.positional_embedding')
+                or name.startswith('base_model.ln_final')
+                or name.startswith('base_model.text_projection')
+            ):
                 groups['text_backbone'].append((name, parameter))
             else:
                 groups['other'].append((name, parameter))

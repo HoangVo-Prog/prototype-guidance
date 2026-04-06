@@ -515,15 +515,28 @@ class ModelInterfaceContractTests(unittest.TestCase):
     def test_named_optimizer_groups_contract_exposes_required_group_names(self):
         model = self._build_model(freeze_image_backbone=False, freeze_text_backbone=False)
         groups = model.named_optimizer_groups()
-        for key in ('prototype_bank', 'prototype_projectors', 'host_projectors', 'class_proxies', 'image_backbone', 'text_backbone', 'other'):
+        for key in (
+            'prototype_bank',
+            'prototype_projectors',
+            'prototype_routing',
+            'prototype_pooling',
+            'prototype_contextualization',
+            'host_projectors',
+            'class_proxies',
+            'image_backbone',
+            'text_backbone',
+            'other',
+        ):
             self.assertIn(key, groups)
         self.assertGreater(len(groups['prototype_bank']), 0)
         self.assertGreater(len(groups['prototype_projectors']), 0)
+        self.assertGreater(len(groups['prototype_pooling']), 0)
         self.assertGreater(len(groups['host_projectors']), 0)
         self.assertGreater(len(groups['class_proxies']), 0)
         self.assertGreater(len(groups['image_backbone']), 0)
         self.assertGreater(len(groups['text_backbone']), 0)
         self.assertTrue(any(name == 'prototype_head.losses.class_proxies' for name, _ in groups['class_proxies']))
+        self.assertTrue(any(name == 'prototype_head.text_pool_query' for name, _ in groups['prototype_pooling']))
 
     def test_evaluator_defaults_to_exact_retrieval_pipeline(self):
         model = self._build_model(retrieval_scorer='exact').eval()

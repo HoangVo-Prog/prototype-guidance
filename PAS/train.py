@@ -10,7 +10,7 @@ import torch
 from datasets import build_dataloader
 from model import build_model
 from processor.processor import do_train
-from solver import build_lr_scheduler, build_optimizer
+from solver import build_lr_scheduler, build_optimizer, summarize_optimizer_param_groups
 from utils.checkpoint import Checkpointer
 from utils.comm import get_rank, synchronize
 from utils.env import load_runtime_environment
@@ -179,6 +179,15 @@ if __name__ == '__main__':
         if unexpected_keys:
             logger.warning('Finetune checkpoint has unexpected keys: %s', unexpected_keys[:20])
     optimizer = build_optimizer(args, model)
+    for group_summary in summarize_optimizer_param_groups(optimizer):
+        logger.info(
+            'Optimizer group %-28s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
+            group_summary['name'],
+            group_summary['lr'],
+            group_summary['weight_decay'],
+            group_summary['tensor_count'],
+            group_summary['parameter_count'],
+        )
     scheduler = build_lr_scheduler(args, optimizer)
 
     if args.distributed:
