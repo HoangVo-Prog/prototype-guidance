@@ -154,7 +154,7 @@ dataset:
 
 logging:
   use_wandb: true
-  project: PAS
+  project: PAS-Stage2
   entity: null
   run_name: null
   group: stage2_host_projector_coadapt

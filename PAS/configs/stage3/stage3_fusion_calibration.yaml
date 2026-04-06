@@ -154,7 +154,7 @@ dataset:
 
 logging:
   use_wandb: false
-  project: PAS
+  project: PAS-Stage3
   entity: null
   run_name: null
   group: stage3_fusion_calibration
