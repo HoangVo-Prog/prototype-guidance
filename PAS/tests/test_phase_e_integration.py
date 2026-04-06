@@ -129,6 +129,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
 
     def _build_args(self, stage='stage1', finetune='', **overrides):
         stage_freezes = {
+            'stage0': (False, False, True),
             'stage1': (True, True, False),
             'stage2': (False, False, True),
             'joint': (False, False, False),
