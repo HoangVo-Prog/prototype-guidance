@@ -10,11 +10,18 @@
 # - Phase E runtime constraints are called out inline when a key exists but only a subset is currently supported.
 # - CLI annotations use the format: `# CLI: --flag_name (type)`.
 # - Canonical staged configs currently live at:
-#   - configs/stage0/stage0_host_only_reproduction.yaml
-#   - configs/stage1/stage1_retrieval_from_start.yaml
-#   - configs/stage2/stage2_backbone_optimization.yaml
-#   - configs/stage3/stage3_fusion_calibration.yaml
-#   - configs/baselines/vanilla_clip.yaml mirrors the stage0 host-only baseline.
+#   - CLIP host path:
+#     - configs/stage0/stage0_host_only_reproduction.yaml
+#     - configs/stage1/stage1_retrieval_from_start.yaml
+#     - configs/stage2/stage2_backbone_optimization.yaml
+#     - configs/stage3/stage3_fusion_calibration.yaml
+#     - configs/baselines/vanilla_clip.yaml mirrors the stage0 CLIP host-only baseline.
+#   - ITSELF host path:
+#     - configs/stage0/stage0_itself_host_only.yaml
+#     - configs/stage1/stage1_itself_host_plus_prototype.yaml
+#     - configs/stage2/stage2_itself_host_plus_prototype.yaml
+#     - configs/stage3/stage3_itself_fusion_calibration.yaml
+#     - configs/baselines/itself_host_only.yaml mirrors the stage0 ITSELF host-only baseline.
 
 experiment:
   # Any experiment/run name string. Used in output directory naming and logs.
@@ -42,8 +49,12 @@ model:
   # CLI: --model_variant (str)
   variant: pas_v1
 
-  # High-level model execution path.
+  # High-level compatibility mode.
   # Supported values: pas | vanilla_clip
+  # - vanilla_clip is the strict legacy CLIP-only baseline mode.
+  # - pas is the general PAS runtime and now covers:
+  #   - host.type=clip with or without the prototype branch
+  #   - host.type=itself with or without the prototype branch
   # CLI: --training_mode (str)
   training_mode: pas
 
@@ -180,6 +191,82 @@ model:
   # CLI: --return_debug_outputs (bool)
   return_debug_outputs: false
 
+
+host:
+  # Host family switch.
+  # Supported values: clip | itself
+  # - clip   -> CLIP-centered host scoring path
+  # - itself -> ITSELF-style host scoring path with global plus GRAB features and TAL/CID training
+  # CLI: --host_type (str)
+  type: clip
+
+  # Master enable/disable flag for host-side losses.
+  # In practice this should remain true for all real experiments.
+  # CLI: --use_host_loss (bool)
+  enabled: true
+
+  # Weight applied to the host loss contribution inside the total objective.
+  # CLI: --lambda_host (float)
+  loss_weight: 1.0
+
+  # Freezes the trainable host-side head modules.
+  # For host.type=clip this means the host projectors.
+  # For host.type=itself this freezes the ITSELF host head modules such as GRAB layers and CID classifiers.
+  # CLI: --freeze_host_projectors (bool)
+  freeze_projectors: false
+
+  # ITSELF-host-specific options.
+  # These are ignored when host.type=clip.
+  # CLI: --itself_loss_names (str)
+  itself_loss_names: tal+cid
+
+  # If true, run the ITSELF host in global-only mode and disable the GRAB branch.
+  # CLI: --itself_only_global (bool)
+  itself_only_global: false
+
+  # Fraction of non-special tokens / non-CLS image patches selected by the GRAB layers.
+  # CLI: --itself_select_ratio (float)
+  itself_select_ratio: 0.4
+
+  # Output width of the ITSELF GRAB embeddings.
+  # CLI: --itself_grab_embed_dim (int)
+  itself_grab_embed_dim: 4096
+
+  # Weight of the global branch in the fused ITSELF host score.
+  # Final ITSELF host score is approximately:
+  #   itself_score_weight_global * global_score + (1 - itself_score_weight_global) * grab_score
+  # CLI: --itself_score_weight_global (float)
+  itself_score_weight_global: 0.68
+
+  # TAL temperature.
+  # CLI: --itself_tau (float)
+  itself_tau: 0.015
+
+  # TAL margin.
+  # CLI: --itself_margin (float)
+  itself_margin: 0.1
+
+  # If true, ask the CLIP backbone for the per-layer attention stack so ITSELF top-k selection can use
+  # averaged/std/custom attention aggregation instead of a fallback uniform attention.
+  # CLI: --itself_return_all (bool)
+  itself_return_all: true
+
+  # Supported values: mean | std | layer_index | custom
+  # CLI: --itself_topk_type (str)
+  itself_topk_type: mean
+
+  # Used only when itself_topk_type=layer_index.
+  # CLI: --itself_layer_index (int)
+  itself_layer_index: -1
+
+  # Passed through to the backbone attention aggregation helper.
+  # CLI: --itself_average_attn_weights (bool)
+  itself_average_attn_weights: true
+
+  # If true, shrink the GRAB top-k selection during training.
+  # CLI: --itself_modify_k (bool)
+  itself_modify_k: false
+
 prototype:
   # Number of learnable prototypes. Positive integer.
   # CLI: --prototype_num_prototypes (int)
@@ -315,7 +402,9 @@ loss:
 
   # Retrieval objective family.
   # Supported values: surrogate_i2t | clip_bidirectional
-  # `clip_bidirectional` is only valid when model.training_mode=vanilla_clip.
+  # - clip_bidirectional is only valid for model.training_mode=vanilla_clip with host.type=clip.
+  # - surrogate_i2t is the prototype-branch retrieval loss mode and is also the placeholder value used by
+  #   ITSELF-host configs, where the actual host loss comes from host.itself_loss_names rather than this field.
   # CLI: --retrieval_mode (str)
   retrieval_mode: surrogate_i2t
 

@@ -1,21 +1,31 @@
 # PAS Retrieval
 
-This repository is the active research codebase for the PAS image-text retrieval model built on top of an inherited CLIP-based retrieval project.
+This repository is the active research codebase for PAS image-text retrieval.
 
-The primary training path is now an integrated PAS host-plus-prototype method:
-- preserved CLIP host retrieval path with its own trainable projectors and standalone host score
-- optional prototype enhancement branch with routing, basis-bank construction, and image-conditioned surrogate text
-- residual score fusion `host + lambda_f * prototype` at evaluation time
-- host retrieval loss plus prototype row-wise retrieval, diagonal fidelity, and optional prototype regularization during training
+PAS now supports two explicit host families:
+- `host.type=clip`: the preserved CLIP-centered host path, with or without the prototype branch
+- `host.type=itself`: a self-contained ITSELF-style host path re-implemented inside PAS, with or without the prototype branch
+
+The integrated retrieval design is host-plus-prototype:
+- the selected host path remains independently trainable, scorable, and reportable
+- the prototype branch is optional and additive
+- fused evaluation uses `host + lambda_f * prototype`
+- prototype losses remain separated from host losses so host-only and host-plus-prototype ablations stay clean
 
 ## Main entrypoints
 
 - `train.py`: PAS training entrypoint
 - `test.py`: retrieval evaluation entrypoint
-- `configs/train_pas_v1.yaml`: main experiment config
-- `configs/debug_pas_v1.yaml`: short debug config
-- `configs/ablation_pas_no_context.yaml`: contextualization ablation
-- `configs/ablation_pas_no_diversity.yaml`: diversity-loss ablation
+- `configs/baselines/vanilla_clip.yaml`: CLIP host-only baseline
+- `configs/baselines/itself_host_only.yaml`: ITSELF host-only baseline
+- `configs/stage0/stage0_host_only_reproduction.yaml`: CLIP Stage 0 host-only reproduction
+- `configs/stage0/stage0_itself_host_only.yaml`: ITSELF Stage 0 host-only reproduction
+- `configs/stage1/stage1_retrieval_from_start.yaml`: CLIP host + prototype Stage 1
+- `configs/stage1/stage1_itself_host_plus_prototype.yaml`: ITSELF host + prototype Stage 1
+- `configs/stage2/stage2_backbone_optimization.yaml`: CLIP host + prototype Stage 2
+- `configs/stage2/stage2_itself_host_plus_prototype.yaml`: ITSELF host + prototype Stage 2
+- `configs/stage3/stage3_fusion_calibration.yaml`: CLIP host + prototype Stage 3
+- `configs/stage3/stage3_itself_fusion_calibration.yaml`: ITSELF host + prototype Stage 3
 - `scripts/phase_e_smoke.py`: synthetic end-to-end smoke harness
 
 ## Repository layout
@@ -40,10 +50,11 @@ WANDB_API_KEY=your_wandb_api_key_here
 ## Typical commands
 
 ```bash
-python train.py --config_file configs/train_pas_v1.yaml
-python train.py --config_file configs/debug_pas_v1.yaml
-python train.py --config_file configs/kaggle_pas_quicktrain.yaml
-python test.py --config_file configs/train_pas_v1.yaml --output_dir <run_dir>
+python train.py --config_file configs/baselines/vanilla_clip.yaml
+python train.py --config_file configs/baselines/itself_host_only.yaml
+python train.py --config_file configs/stage1/stage1_itself_host_plus_prototype.yaml
+python train.py --config_file configs/stage2/stage2_itself_host_plus_prototype.yaml
+python test.py --config_file configs/stage3/stage3_itself_fusion_calibration.yaml --output_dir <run_dir>
 ```
 
 ## Notes

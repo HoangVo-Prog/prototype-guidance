@@ -71,8 +71,21 @@ def build_parser():
     parser.add_argument('--prototype_precision', type=str, default='fp32')
     parser.add_argument('--temperature', type=float, default=0.07)
     parser.add_argument('--proxy_temperature', type=float, default=0.07)
+    parser.add_argument('--host_type', type=str, default='clip')
     parser.add_argument('--use_host_loss', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_host', type=float, default=1.0)
+    parser.add_argument('--itself_loss_names', type=str, default='tal+cid')
+    parser.add_argument('--itself_only_global', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--itself_select_ratio', type=float, default=0.4)
+    parser.add_argument('--itself_grab_embed_dim', type=int, default=4096)
+    parser.add_argument('--itself_score_weight_global', type=float, default=0.68)
+    parser.add_argument('--itself_tau', type=float, default=0.015)
+    parser.add_argument('--itself_margin', type=float, default=0.1)
+    parser.add_argument('--itself_return_all', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--itself_topk_type', type=str, default='mean')
+    parser.add_argument('--itself_layer_index', type=int, default=-1)
+    parser.add_argument('--itself_average_attn_weights', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--itself_modify_k', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_proxy', type=float, default=1.0)
     parser.add_argument('--lambda_proxy_image', type=float, default=None)
     parser.add_argument('--lambda_proxy_text', type=float, default=None)
@@ -222,6 +235,7 @@ def _finalize_args(args):
     if not args.retrieval_metrics:
         args.retrieval_metrics = list(DEFAULT_RETRIEVAL_METRICS)
     args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
+    args.host_type = str(getattr(args, 'host_type', 'clip')).lower()
     override_config_data = getattr(args, 'override_config_data', {}) or {}
     model_config = override_config_data.get('model', {}) if isinstance(override_config_data.get('model', {}), dict) else {}
     cli_dests = getattr(args, 'cli_dests', set())
@@ -239,7 +253,7 @@ def _finalize_args(args):
     if args.fusion_enabled is None:
         args.fusion_enabled = args.use_prototype_branch
     args.fusion_enabled = bool(args.fusion_enabled) and args.use_prototype_branch
-    if args.training_stage == 'stage0' and 'use_prototype_branch' not in cli_dests:
+    if args.training_stage == 'stage0':
         args.use_prototype_branch = False
         args.use_prototype_bank = False
         args.use_image_conditioned_pooling = False

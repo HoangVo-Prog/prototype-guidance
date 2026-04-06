@@ -1,0 +1,621 @@
+from typing import Dict, Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from .vanilla_clip import VanillaCLIPHead
+
+
+def l2norm(x: torch.Tensor, dim: int = -1, eps: float = 1e-8) -> torch.Tensor:
+    norm = torch.pow(x, 2).sum(dim=dim, keepdim=True).sqrt() + eps
+    return torch.div(x, norm)
+
+
+def maxk(x: torch.Tensor, dim: int, k: int) -> torch.Tensor:
+    index = x.topk(k, dim=dim)[1]
+    return x.gather(dim, index)
+
+
+def maxk_pool1d_var(x: torch.Tensor, dim: int, k: int, lengths: torch.Tensor) -> torch.Tensor:
+    results = []
+    lengths_list = [int(value) for value in lengths.detach().cpu().tolist()]
+    for idx, length in enumerate(lengths_list):
+        effective_k = min(k, max(length, 1))
+        max_k_i = maxk(x[idx, :max(length, 1), :], dim - 1, effective_k).mean(dim - 1)
+        results.append(max_k_i)
+    return torch.stack(results, dim=0)
+
+
+class MLP(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, num_layers: int):
+        super().__init__()
+        self.output_dim = int(output_dim)
+        self.num_layers = int(num_layers)
+        hidden_dims = [hidden_dim] * (self.num_layers - 1)
+        self.layers = nn.ModuleList(nn.Linear(n, k) for n, k in zip([input_dim] + hidden_dims, hidden_dims + [output_dim]))
+        self.bns = nn.ModuleList(nn.BatchNorm1d(k) for k in hidden_dims + [output_dim])
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch_size, num_tokens, width = x.size()
+        x = x.reshape(batch_size * num_tokens, width)
+        for layer_index, (bn, layer) in enumerate(zip(self.bns, self.layers)):
+            x = layer(x)
+            if layer_index < self.num_layers - 1:
+                x = F.relu(bn(x))
+        return x.view(batch_size, num_tokens, self.output_dim)
+
+
+class TextualEmbeddingLayer(nn.Module):
+    def __init__(self, input_dim: int = 512, embed_dim: int = 4096, ratio: float = 0.4):
+        super().__init__()
+        self.embed_dim = int(embed_dim)
+        self.linear = nn.Linear(input_dim, embed_dim)
+        self.mlp = MLP(input_dim, embed_dim // 2, embed_dim, 2)
+        self.ratio = float(ratio)
+
+    def forward(
+        self,
+        features: torch.Tensor,
+        text: torch.Tensor,
+        attention: torch.Tensor,
+        current_step: Optional[int] = None,
+    ) -> torch.Tensor:
+        mask = (text != 0).to(dtype=features.dtype)
+        lengths = mask.sum(dim=1) - 2
+        sequence_length = attention.size(1)
+        if current_step is not None:
+            ratio_start = 0.65
+            ratio_end = 0.5
+            total_steps = 10 * 145
+            current_step = min(max(int(current_step), 1), total_steps)
+            ratio = current_step / float(total_steps)
+            k = int((sequence_length - 2) * ratio_start * ((ratio_end / ratio_start) ** ratio))
+        else:
+            k = int((sequence_length - 2) * self.ratio)
+        k = max(k, 1)
+
+        batch_size = features.size(0)
+        eos_positions = text.argmax(dim=-1)
+        attention = attention.clone()
+        attention[torch.arange(batch_size, device=attention.device), :, eos_positions] = -1
+        attention[torch.arange(batch_size, device=attention.device), :, 0] = -1
+        attention = attention[torch.arange(batch_size, device=attention.device), eos_positions, :]
+        attention = attention * mask
+
+        effective_k = min(k, attention.size(-1))
+        topk_indices = attention.topk(dim=-1, k=effective_k)[1].unsqueeze(-1).expand(batch_size, effective_k, features.size(2))
+        selected = torch.gather(input=features, dim=1, index=topk_indices)
+        selected = l2norm(selected, dim=-1)
+
+        lengths = torch.tensor(
+            [max(min(int(lengths[i].item()), selected.size(1)), 1) for i in range(batch_size)],
+            device=selected.device,
+            dtype=selected.dtype,
+        )
+        base = self.linear(selected)
+        refined = self.mlp(selected) + base
+        return maxk_pool1d_var(refined, 1, 1, lengths).float()
+
+
+class VisualEmbeddingLayer(nn.Module):
+    def __init__(self, input_dim: int = 512, embed_dim: int = 4096, ratio: float = 0.4):
+        super().__init__()
+        self.embed_dim = int(embed_dim)
+        self.fc = nn.Linear(input_dim, embed_dim)
+        self.mlp = MLP(input_dim, embed_dim // 2, embed_dim, 2)
+        self.ratio = float(ratio)
+
+    def forward(
+        self,
+        features: torch.Tensor,
+        attention: torch.Tensor,
+        current_step: Optional[int] = None,
+    ) -> torch.Tensor:
+        sequence_length = attention.size(1)
+        if current_step is not None:
+            ratio_start = 0.65
+            ratio_end = 0.5
+            total_steps = 10 * 145
+            current_step = min(max(int(current_step), 1), total_steps)
+            ratio = current_step / float(total_steps)
+            k = int((sequence_length - 1) * ratio_start * ((ratio_end / ratio_start) ** ratio))
+        else:
+            k = int((sequence_length - 1) * self.ratio)
+        k = max(k, 1)
+
+        batch_size = features.size(0)
+        attention = attention.clone()
+        attention[torch.arange(batch_size, device=attention.device), :, 0] = -1
+        effective_k = min(k, attention.size(-1))
+        indices = attention[:, 0].topk(dim=-1, k=effective_k)[1]
+        indices = indices.unsqueeze(-1).expand(batch_size, effective_k, features.size(2))
+        selected = torch.gather(input=features, dim=1, index=indices)
+        selected = l2norm(selected, dim=-1)
+        feat_lengths = torch.full((batch_size,), float(selected.size(1)), device=selected.device, dtype=selected.dtype)
+        refined = self.mlp(selected) + self.fc(selected)
+        return maxk_pool1d_var(refined, 1, 1, feat_lengths).float()
+
+
+def compute_tal(image_features: torch.Tensor, text_features: torch.Tensor, pid: torch.Tensor, tau: float = 0.015, margin: float = 0.1) -> torch.Tensor:
+    image_norm = image_features / image_features.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    text_norm = text_features / text_features.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    scores = text_norm @ image_norm.t()
+    batch_size = scores.shape[0]
+    pid = pid.reshape((batch_size, 1))
+    pid_dist = pid - pid.t()
+    labels = (pid_dist == 0).float().to(scores.device)
+    mask = 1.0 - labels
+    exp_i2t = (scores / tau).exp()
+    exp_t2i = (scores.t() / tau).exp()
+    alpha_i2t = (exp_i2t * labels / (exp_i2t * labels).sum(dim=1, keepdim=True).clamp_min(1e-12)).detach()
+    alpha_t2i = (exp_t2i * labels / (exp_t2i * labels).sum(dim=1, keepdim=True).clamp_min(1e-12)).detach()
+    loss = (
+        (- (alpha_i2t * scores).sum(1) + tau * (exp_i2t * mask).sum(1).clamp(max=1e36).log() + margin).clamp(min=0)
+        + (- (alpha_t2i * scores.t()).sum(1) + tau * (exp_t2i * mask).sum(1).clamp(max=1e36).log() + margin).clamp(min=0)
+    )
+    return loss.sum()
+
+
+def cosine_similarity_matrix(image_features: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
+    image_norm = F.normalize(image_features, p=2, dim=1)
+    text_norm = F.normalize(text_features, p=2, dim=1)
+    return text_norm @ image_norm.t()
+
+
+def sample_hard_negatives(similarity: torch.Tensor, labels: torch.Tensor) -> Dict[str, list]:
+    num_samples = similarity.size(0)
+    hard_negatives = {'visual_negatives': [], 'text_negatives': []}
+    for i in range(num_samples):
+        sorted_idx = torch.argsort(similarity[i], descending=True)
+        for j in sorted_idx:
+            if labels[i] != labels[j]:
+                hard_negatives['text_negatives'].append(j.item())
+                break
+        sorted_idx = torch.argsort(similarity[:, i], descending=True)
+        for j in sorted_idx:
+            if labels[i] != labels[j]:
+                hard_negatives['visual_negatives'].append(j.item())
+                break
+    return hard_negatives
+
+
+def update_labels_for_negatives(labels: torch.Tensor, hard_negatives: Dict[str, list], max_label: int) -> torch.Tensor:
+    new_labels = labels.clone()
+    num_samples = len(labels)
+    for i in range(num_samples):
+        new_labels[hard_negatives['text_negatives'][i]] = max_label + 1
+        new_labels[hard_negatives['visual_negatives'][i]] = max_label + 1
+    return new_labels
+
+
+def create_sample_pairs(image_features: torch.Tensor, text_features: torch.Tensor, hard_negatives: Dict[str, list], new_labels: torch.Tensor, labels: torch.Tensor):
+    num_samples = image_features.size(0)
+    visual_feats = []
+    textual_feats = []
+    all_labels = []
+    for i in range(num_samples):
+        visual_feats.append(image_features[i])
+        textual_feats.append(text_features[i])
+        all_labels.append(labels[i])
+        neg_idx = hard_negatives['visual_negatives'][i]
+        visual_feats.append(image_features[neg_idx])
+        textual_feats.append(text_features[i])
+        all_labels.append(new_labels[neg_idx])
+        neg_idx = hard_negatives['text_negatives'][i]
+        visual_feats.append(image_features[i])
+        textual_feats.append(text_features[neg_idx])
+        all_labels.append(new_labels[neg_idx])
+    return torch.stack(visual_feats), torch.stack(textual_feats), torch.stack(all_labels)
+
+
+def compute_cid(logits_1: torch.Tensor, logits_2: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    criterion = nn.CrossEntropyLoss(reduction='mean')
+    return 0.5 * (criterion(logits_1, labels) + criterion(logits_2, labels))
+
+
+def compute_id(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    criterion = nn.CrossEntropyLoss(reduction='mean')
+    return criterion(logits, labels)
+
+class CLIPHostAdapter(nn.Module):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.core = VanillaCLIPHead(**kwargs)
+        self.output_dim = self.core.output_dim
+
+    def freeze_trainable_head(self):
+        for module in (self.core.image_projector, self.core.text_projector):
+            for parameter in module.parameters():
+                parameter.requires_grad = False
+
+    def encode_image_branch(self, image_output, return_debug: bool = False, current_step: Optional[int] = None) -> Dict[str, object]:
+        del current_step
+        outputs = self.core.encode_image_branch(image_output.projected_pooled, return_debug=return_debug)
+        outputs['global_image_embedding'] = image_output.projected_pooled.float()
+        outputs['grab_image_embedding'] = None
+        outputs['host_similarity_logits'] = None
+        return outputs
+
+    def encode_text_branch(self, text_output, token_ids: torch.Tensor, return_debug: bool = False, current_step: Optional[int] = None) -> Dict[str, object]:
+        del token_ids, current_step
+        outputs = self.core.encode_text_branch(text_output.projected_pooled, return_debug=return_debug)
+        outputs['global_text_embedding'] = text_output.projected_pooled.float()
+        outputs['grab_text_embedding'] = None
+        return outputs
+
+    def compute_similarity_matrix(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        return self.core.compute_similarity_matrix(image_features.get('image_projected'), text_features.get('text_projected'))
+
+    def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None):
+        del pids, token_ids, current_step
+        outputs = self.core(
+            image_embeddings=image_output.projected_pooled,
+            text_embeddings=text_output.projected_pooled,
+            return_debug=return_debug,
+        )
+        outputs['global_image_embedding'] = image_output.projected_pooled.float()
+        outputs['global_text_embedding'] = text_output.projected_pooled.float()
+        outputs['grab_image_embedding'] = None
+        outputs['grab_text_embedding'] = None
+        outputs['host_similarity_logits'] = outputs.get('surrogate_pairwise_logits')
+        return outputs
+
+
+class ITSELFHostHead(nn.Module):
+    def __init__(self, args, input_dim: int, num_classes: int):
+        super().__init__()
+        self.args = args
+        self.input_dim = int(input_dim)
+        self.num_classes = int(num_classes)
+        self.grab_embed_dim = int(getattr(args, 'itself_grab_embed_dim', 4096))
+        self.select_ratio = float(getattr(args, 'itself_select_ratio', 0.4))
+        self.only_global = bool(getattr(args, 'itself_only_global', False))
+        self.topk_type = str(getattr(args, 'itself_topk_type', 'mean')).lower()
+        self.layer_index = int(getattr(args, 'itself_layer_index', -1))
+        self.modify_k = bool(getattr(args, 'itself_modify_k', False))
+        self.score_weight_global = float(getattr(args, 'itself_score_weight_global', 0.68))
+        self.tau = float(getattr(args, 'itself_tau', 0.015))
+        self.margin = float(getattr(args, 'itself_margin', 0.1))
+        loss_names = str(getattr(args, 'itself_loss_names', 'tal+cid')).lower()
+        self.loss_names = {name.strip() for name in loss_names.split('+') if name.strip()}
+        self.use_host_loss = bool(getattr(args, 'use_host_loss', True))
+
+        if not self.only_global:
+            self.visual_embedding_layer = VisualEmbeddingLayer(input_dim=self.input_dim, embed_dim=self.grab_embed_dim, ratio=self.select_ratio)
+            self.textual_embedding_layer = TextualEmbeddingLayer(input_dim=self.input_dim, embed_dim=self.grab_embed_dim, ratio=self.select_ratio)
+        else:
+            self.visual_embedding_layer = None
+            self.textual_embedding_layer = None
+
+        if 'cid' in self.loss_names:
+            effective_classes = self.num_classes + 1
+            self.classifier_global = nn.Linear(self.input_dim, effective_classes)
+            self.mlp_global = nn.Sequential(
+                nn.Linear(2 * self.input_dim, self.input_dim),
+                nn.LayerNorm(self.input_dim),
+                nn.GELU(),
+            )
+            self.classifier_id_global = nn.Linear(self.input_dim, effective_classes)
+            nn.init.normal_(self.classifier_global.weight.data, std=0.001)
+            nn.init.constant_(self.classifier_global.bias.data, val=0.0)
+            nn.init.normal_(self.classifier_id_global.weight.data, std=0.001)
+            nn.init.constant_(self.classifier_id_global.bias.data, val=0.0)
+            if not self.only_global:
+                self.classifier_grab = nn.Linear(self.grab_embed_dim, effective_classes)
+                self.mlp_grab = nn.Sequential(
+                    nn.Linear(2 * self.grab_embed_dim, self.grab_embed_dim),
+                    nn.LayerNorm(self.grab_embed_dim),
+                    nn.GELU(),
+                )
+                self.classifier_id_grab = nn.Linear(self.grab_embed_dim, effective_classes)
+                nn.init.normal_(self.classifier_grab.weight.data, std=0.001)
+                nn.init.constant_(self.classifier_grab.bias.data, val=0.0)
+                nn.init.normal_(self.classifier_id_grab.weight.data, std=0.001)
+                nn.init.constant_(self.classifier_id_grab.bias.data, val=0.0)
+        else:
+            self.classifier_global = None
+            self.mlp_global = None
+            self.classifier_id_global = None
+            self.classifier_grab = None
+            self.mlp_grab = None
+            self.classifier_id_grab = None
+
+        self.output_dim = self.input_dim
+
+    def freeze_trainable_head(self):
+        for parameter in self.parameters():
+            parameter.requires_grad = False
+
+    def _normalize_attention(self, attention: Optional[torch.Tensor], batch_size: int, num_tokens: int, device, dtype) -> torch.Tensor:
+        if attention is None:
+            return torch.ones(batch_size, num_tokens, num_tokens, device=device, dtype=dtype)
+        if attention.ndim == 4:
+            attention = attention.mean(dim=1)
+        return attention.to(device=device, dtype=dtype)
+
+    def _rollout(self, attentions: torch.Tensor) -> torch.Tensor:
+        if attentions.ndim == 5:
+            num_layers, batch_size, _, num_tokens, _ = attentions.shape
+        else:
+            num_layers, batch_size, num_tokens, _ = attentions.shape
+        result = torch.eye(num_tokens, device=attentions.device, dtype=attentions.dtype).unsqueeze(0).expand(batch_size, -1, -1)
+        discard_ratios = [0.25, 1.0, 1.0, 1.0, 0.25, 0.25, 1.0, 1.0, 1.0, 1.0, 0.25, 0.25]
+        for layer in range(min(4, num_layers), num_layers):
+            if layer in {5, 6, 7, 8, 9, 10}:
+                continue
+            attn = attentions[layer]
+            if attn.ndim == 4:
+                attn = attn.mean(dim=1)
+            flat = attn.view(batch_size, -1)
+            num_to_discard = int(flat.size(-1) * discard_ratios[min(layer, len(discard_ratios) - 1)])
+            if num_to_discard > 0:
+                _, indices = flat.topk(num_to_discard, dim=-1, largest=False)
+                for batch_index in range(batch_size):
+                    idx = indices[batch_index]
+                    idx = idx[idx != 0]
+                    flat[batch_index, idx] = 0
+                attn = flat.view(batch_size, num_tokens, num_tokens)
+            identity = torch.eye(num_tokens, device=attentions.device, dtype=attentions.dtype).unsqueeze(0).expand(batch_size, -1, -1)
+            attn = (attn + identity) / 2.0
+            attn = attn / attn.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+            result = torch.bmm(attn, result)
+        return result
+
+    def _prepare_attention(self, attention_weights, batch_size: int, num_tokens: int, device, dtype) -> torch.Tensor:
+        if isinstance(attention_weights, (list, tuple)):
+            layers = [self._normalize_attention(attn, batch_size, num_tokens, device, dtype) for attn in attention_weights]
+            stacked = torch.stack(layers, dim=0)
+        elif isinstance(attention_weights, torch.Tensor) and attention_weights.ndim >= 3:
+            stacked = attention_weights.unsqueeze(0) if attention_weights.ndim in {3, 4} else attention_weights
+            stacked = stacked.to(device=device, dtype=dtype)
+        else:
+            return torch.ones(batch_size, num_tokens, num_tokens, device=device, dtype=dtype)
+
+        if self.topk_type == 'std' and stacked.size(0) > 1:
+            reduced = stacked.std(dim=0, unbiased=False)
+        elif self.topk_type == 'layer_index' and 0 <= self.layer_index < stacked.size(0):
+            reduced = stacked[self.layer_index]
+        elif self.topk_type == 'custom' and stacked.size(0) > 1:
+            return self._rollout(stacked)
+        else:
+            reduced = stacked.mean(dim=0)
+        if reduced.ndim == 4:
+            reduced = reduced.mean(dim=1)
+        return self._normalize_attention(reduced, batch_size, num_tokens, device, dtype)
+
+    def encode_image_branch(self, image_output, return_debug: bool = False, current_step: Optional[int] = None) -> Dict[str, object]:
+        global_embedding = image_output.projected_pooled.float()
+        outputs = {
+            'image_embedding': global_embedding,
+            'image_projected': global_embedding,
+            'image_projected_raw': global_embedding,
+            'image_proxy_features': global_embedding,
+            'routing_weights': global_embedding.new_empty((global_embedding.size(0), 0)),
+            'summary': global_embedding,
+            'global_image_embedding': global_embedding,
+            'grab_image_embedding': None,
+            'router_debug': {},
+            'aggregator_debug': {},
+        }
+        if not self.only_global:
+            attention = self._prepare_attention(
+                image_output.attention_weights,
+                batch_size=image_output.projected_tokens.size(0),
+                num_tokens=image_output.projected_tokens.size(1),
+                device=image_output.projected_tokens.device,
+                dtype=image_output.projected_tokens.dtype,
+            )
+            outputs['grab_image_embedding'] = self.visual_embedding_layer(
+                image_output.projected_tokens.float(),
+                attention.float(),
+                current_step=current_step if self.modify_k else None,
+            )
+        if return_debug:
+            outputs['debug'] = {
+                'itself_host_type': global_embedding.new_tensor(1.0),
+                'itself_only_global': global_embedding.new_tensor(float(self.only_global)),
+            }
+        return outputs
+
+    def encode_text_branch(self, text_output, token_ids: torch.Tensor, return_debug: bool = False, current_step: Optional[int] = None) -> Dict[str, object]:
+        global_embedding = text_output.projected_pooled.float()
+        outputs = {
+            'text_embedding': global_embedding,
+            'text_projected': global_embedding,
+            'text_projected_raw': global_embedding,
+            'global_text_embedding': global_embedding,
+            'grab_text_embedding': None,
+        }
+        if not self.only_global:
+            attention = self._prepare_attention(
+                text_output.attention_weights,
+                batch_size=text_output.projected_tokens.size(0),
+                num_tokens=text_output.projected_tokens.size(1),
+                device=text_output.projected_tokens.device,
+                dtype=text_output.projected_tokens.dtype,
+            )
+            outputs['grab_text_embedding'] = self.textual_embedding_layer(
+                text_output.projected_tokens.float(),
+                token_ids.long(),
+                attention.float(),
+                current_step=current_step if self.modify_k else None,
+            )
+        if return_debug:
+            outputs['debug'] = {
+                'itself_host_type': global_embedding.new_tensor(1.0),
+                'itself_only_global': global_embedding.new_tensor(float(self.only_global)),
+            }
+        return outputs
+
+    def compute_similarity_matrix(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        global_similarity = cosine_similarity_matrix(image_features['global_image_embedding'], text_features['global_text_embedding'])
+        if self.only_global or image_features.get('grab_image_embedding') is None or text_features.get('grab_text_embedding') is None:
+            return global_similarity
+        grab_similarity = cosine_similarity_matrix(image_features['grab_image_embedding'], text_features['grab_text_embedding'])
+        return (self.score_weight_global * global_similarity) + ((1.0 - self.score_weight_global) * grab_similarity)
+
+    def _empty_loss_outputs(self, reference: torch.Tensor) -> Dict[str, torch.Tensor]:
+        zero = reference.new_zeros(())
+        return {
+            'loss_total': zero,
+            'loss_ret': zero,
+            'loss_ret_i2t': zero,
+            'loss_ret_t2i': zero,
+            'loss_proxy': zero,
+            'loss_proxy_image': zero,
+            'loss_proxy_text': zero,
+            'loss_proxy_text_exact': zero,
+            'loss_align': zero,
+            'loss_diag': zero,
+            'loss_support': zero,
+            'loss_diversity': zero,
+            'loss_balance': zero,
+            'loss_proxy_image_weighted': zero,
+            'loss_proxy_text_weighted': zero,
+            'loss_proxy_text_exact_weighted': zero,
+            'loss_proxy_weighted': zero,
+            'loss_ret_weighted': zero,
+            'loss_align_weighted': zero,
+            'loss_diag_weighted': zero,
+            'loss_support_weighted': zero,
+            'loss_diversity_weighted': zero,
+            'loss_balance_weighted': zero,
+            'lambda_proxy': zero,
+            'lambda_proxy_image': zero,
+            'lambda_proxy_text': zero,
+            'lambda_proxy_text_exact': zero,
+            'use_loss_proxy_image': zero,
+            'use_loss_proxy_text': zero,
+            'use_loss_proxy_text_exact': zero,
+            'use_loss_ret': zero,
+            'lambda_ret': zero,
+            'use_loss_align': zero,
+            'lambda_align': zero,
+            'use_loss_diag': zero,
+            'lambda_diag': zero,
+            'use_loss_support': zero,
+            'lambda_support': zero,
+            'lambda_div': zero,
+            'lambda_bal': zero,
+            'proxy_temperature': zero,
+            'retrieval_temperature': reference.new_tensor(self.tau),
+            'logit_scale': reference.new_tensor(1.0 / max(self.tau, 1e-12)),
+            'debug_metrics': {},
+        }
+
+    def _compute_cid_loss(self, image_features: torch.Tensor, text_features: torch.Tensor, pids: torch.Tensor, mlp: nn.Module, pair_classifier: nn.Module, id_classifier: nn.Module) -> torch.Tensor:
+        similarity = cosine_similarity_matrix(image_features, text_features)
+        hard_negatives = sample_hard_negatives(similarity, pids)
+        max_label = int(pids.max().item())
+        new_labels = update_labels_for_negatives(pids, hard_negatives, max_label)
+        ni_feats, nt_feats, nlabels = create_sample_pairs(image_features, text_features, hard_negatives, new_labels, pids)
+        z_feats1 = mlp(torch.cat([ni_feats.float(), nt_feats.float()], dim=1))
+        z_feats2 = mlp(torch.cat([nt_feats.float(), ni_feats.float()], dim=1))
+        cross_modal_logits1 = pair_classifier(z_feats1.float())
+        cross_modal_logits2 = pair_classifier(z_feats2.float())
+        cid_pair = compute_cid(cross_modal_logits1, cross_modal_logits2, nlabels.to(cross_modal_logits1.device))
+        image_logits = id_classifier(image_features.float())
+        text_logits = id_classifier(text_features.float())
+        cid_id = compute_id(image_logits, pids) + compute_id(text_logits, pids)
+        return cid_pair + cid_id
+
+    def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None):
+        image_features = self.encode_image_branch(image_output, return_debug=return_debug, current_step=current_step)
+        text_features = self.encode_text_branch(text_output, token_ids, return_debug=return_debug, current_step=current_step)
+        similarity = self.compute_similarity_matrix(image_features, text_features)
+        losses = self._empty_loss_outputs(image_features['global_image_embedding'])
+        tal_loss = image_features['global_image_embedding'].new_zeros(())
+        cid_loss = image_features['global_image_embedding'].new_zeros(())
+        if self.use_host_loss and pids is not None:
+            if 'tal' in self.loss_names:
+                tal_loss = compute_tal(image_features['global_image_embedding'], text_features['global_text_embedding'], pids, tau=self.tau, margin=self.margin)
+                if not self.only_global and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
+                    tal_loss = tal_loss + compute_tal(image_features['grab_image_embedding'], text_features['grab_text_embedding'], pids, tau=self.tau, margin=self.margin)
+            if 'cid' in self.loss_names and self.classifier_global is not None:
+                cid_loss = self._compute_cid_loss(
+                    image_features['global_image_embedding'],
+                    text_features['global_text_embedding'],
+                    pids,
+                    self.mlp_global,
+                    self.classifier_global,
+                    self.classifier_id_global,
+                )
+                if not self.only_global and self.classifier_grab is not None and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
+                    cid_loss = cid_loss + self._compute_cid_loss(
+                        image_features['grab_image_embedding'],
+                        text_features['grab_text_embedding'],
+                        pids,
+                        self.mlp_grab,
+                        self.classifier_grab,
+                        self.classifier_id_grab,
+                    )
+        loss_total = tal_loss + cid_loss
+        losses.update(
+            {
+                'loss_total': loss_total,
+                'loss_ret': tal_loss,
+                'loss_ret_weighted': tal_loss,
+                'loss_ret_i2t': tal_loss,
+                'loss_ret_t2i': tal_loss.new_zeros(()),
+                'use_loss_ret': tal_loss.new_tensor(float('tal' in self.loss_names and self.use_host_loss)),
+                'lambda_ret': tal_loss.new_tensor(1.0),
+                'debug_metrics': {
+                    'itself_score_weight_global': similarity.new_tensor(self.score_weight_global).detach(),
+                    'itself_score_weight_grab': similarity.new_tensor(1.0 - self.score_weight_global).detach(),
+                    'itself_loss_tal': tal_loss.detach(),
+                    'itself_loss_cid': cid_loss.detach(),
+                    'itself_global_similarity_mean': cosine_similarity_matrix(
+                        image_features['global_image_embedding'],
+                        text_features['global_text_embedding'],
+                    ).mean().detach(),
+                },
+            }
+        )
+        if not self.only_global and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
+            losses['debug_metrics']['itself_grab_similarity_mean'] = cosine_similarity_matrix(
+                image_features['grab_image_embedding'],
+                text_features['grab_text_embedding'],
+            ).mean().detach()
+        return {
+            'routing_weights': image_features['routing_weights'],
+            'summary': image_features['summary'],
+            'image_projected': image_features['global_image_embedding'],
+            'image_projected_raw': image_features['global_image_embedding'],
+            'surrogate_text_projected': text_features['global_text_embedding'],
+            'surrogate_text_projected_raw': text_features['global_text_embedding'],
+            'exact_text_projected': text_features['global_text_embedding'],
+            'exact_text_projected_raw': text_features['global_text_embedding'],
+            'losses': losses,
+            'metrics': dict(losses['debug_metrics']),
+            'debug': dict(losses['debug_metrics']),
+            'surrogate_pairwise_logits': similarity,
+            'host_similarity_logits': similarity,
+            'global_image_embedding': image_features['global_image_embedding'],
+            'global_text_embedding': text_features['global_text_embedding'],
+            'grab_image_embedding': image_features.get('grab_image_embedding'),
+            'grab_text_embedding': text_features.get('grab_text_embedding'),
+        }
+
+
+def build_host_head(args, input_dim: int, num_classes: int):
+    host_type = str(getattr(args, 'host_type', 'clip')).lower()
+    if host_type == 'clip':
+        return CLIPHostAdapter(
+            input_dim=input_dim,
+            projector_output_dim=getattr(args, 'projection_dim', input_dim),
+            projector_hidden_dim=getattr(args, 'projector_hidden_dim', input_dim),
+            projector_dropout=getattr(args, 'projector_dropout', 0.0),
+            projector_type=getattr(args, 'projector_type', 'mlp2'),
+            normalize_projector_outputs=getattr(args, 'normalize_projector_outputs', True),
+            use_custom_projector=getattr(args, 'use_custom_projector', True),
+            special_token_ids=getattr(args, 'special_token_ids', None),
+            error_on_empty_kept_tokens=getattr(args, 'error_on_empty_kept_tokens', True),
+            contrastive_temperature_init=getattr(args, 'temperature', 0.07),
+            use_loss_ret=getattr(args, 'use_host_loss', True),
+            lambda_ret=1.0,
+            retrieval_mode='clip_bidirectional',
+        )
+    if host_type == 'itself':
+        return ITSELFHostHead(args=args, input_dim=input_dim, num_classes=num_classes)
+    raise ValueError(f"Unsupported host_type={host_type!r}. Allowed values: ['clip', 'itself']")

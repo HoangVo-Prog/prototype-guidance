@@ -96,7 +96,9 @@ class Evaluator:
             return torch.cat(batches, 0)
         if isinstance(first, dict):
             return {key: self._concat_feature_batches([batch[key] for batch in batches]) for key in first.keys()}
-        raise TypeError(f'Unsupported feature batch type: {type(first)}')
+        if isinstance(first, (list, tuple)):
+            return type(first)(self._concat_feature_batches(list(items)) for items in zip(*batches))
+        return first
 
     def _feature_batch_size(self, features):
         if isinstance(features, torch.Tensor):
@@ -106,9 +108,37 @@ class Evaluator:
         if isinstance(features, dict):
             if not features:
                 raise ValueError('Feature dictionaries must not be empty.')
-            first_key = next(iter(features))
-            return self._feature_batch_size(features[first_key])
+            for value in features.values():
+                try:
+                    return self._feature_batch_size(value)
+                except (TypeError, ValueError):
+                    continue
+            raise ValueError('Feature dictionaries must contain at least one batched tensor value.')
+        if isinstance(features, (list, tuple)) and features:
+            return self._feature_batch_size(features[0])
         raise TypeError(f'Unsupported feature container type: {type(features)}')
+
+    def _feature_to_cpu(self, value):
+        if isinstance(value, torch.Tensor):
+            return value.detach().cpu()
+        if isinstance(value, dict):
+            return {key: self._feature_to_cpu(sub_value) for key, sub_value in value.items()}
+        if isinstance(value, list):
+            return [self._feature_to_cpu(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._feature_to_cpu(item) for item in value)
+        return value
+
+    def _feature_to_device(self, value, device):
+        if isinstance(value, torch.Tensor):
+            return value.to(device)
+        if isinstance(value, dict):
+            return {key: self._feature_to_device(sub_value, device) for key, sub_value in value.items()}
+        if isinstance(value, list):
+            return [self._feature_to_device(item, device) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._feature_to_device(item, device) for item in value)
+        return value
 
     def _positive_gallery_structure(self, text_ids: torch.Tensor, image_ids: torch.Tensor):
         positive_mask = text_ids.view(-1, 1).eq(image_ids.view(1, -1))
@@ -154,7 +184,9 @@ class Evaluator:
         metrics['val/debug/eval_hardest_negative_exact_cosine_mean'] = float(hardest_negative.mean().item())
         metrics['val/debug/eval_exact_margin_mean'] = float((positive_scores - hardest_negative).mean().item())
 
-        image_projected = image_features.get('image_projected') if isinstance(image_features, dict) else None
+        image_projected = None
+        if isinstance(image_features, dict):
+            image_projected = image_features.get('prototype_image_projected', image_features.get('image_projected'))
         if isinstance(image_projected, torch.Tensor):
             image_norms = image_projected.detach().float().norm(dim=-1).cpu()
             metrics['val/debug/eval_image_projected_norm_mean'] = float(image_norms.mean().item())
@@ -206,10 +238,7 @@ class Evaluator:
                     else:
                         text_features = model.encode_text_for_retrieval(caption)
             text_ids.append(pid.view(-1))
-            text_batches.append({
-                key: value.detach().cpu() if isinstance(value, torch.Tensor) else {sub_key: sub_value.detach().cpu() for sub_key, sub_value in value.items()}
-                for key, value in text_features.items()
-            })
+            text_batches.append(self._feature_to_cpu(text_features))
 
         for pid, image in self.img_loader:
             image = image.to(device)
@@ -217,7 +246,7 @@ class Evaluator:
                 with build_autocast_context(self.args, device):
                     image_features = model.encode_image_for_retrieval(image)
             image_ids.append(pid.view(-1))
-            image_batches.append({key: value.detach().cpu() for key, value in image_features.items()})
+            image_batches.append(self._feature_to_cpu(image_features))
 
         text_ids = torch.cat(text_ids, 0).cpu()
         image_ids = torch.cat(image_ids, 0).cpu()
@@ -229,11 +258,8 @@ class Evaluator:
         if self._feature_batch_size(image_features) != int(image_ids.numel()):
             raise ValueError('Image feature concatenation produced a batch size that does not match image_ids ordering.')
 
-        text_features = {
-            key: value.to(device) if isinstance(value, torch.Tensor) else {sub_key: sub_value.to(device) for sub_key, sub_value in value.items()}
-            for key, value in text_features.items()
-        }
-        image_features = {key: value.to(device) for key, value in image_features.items()}
+        text_features = self._feature_to_device(text_features, device)
+        image_features = self._feature_to_device(image_features, device)
 
         with torch.no_grad():
             with build_autocast_context(self.args, device):

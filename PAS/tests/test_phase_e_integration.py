@@ -141,6 +141,7 @@ class PhaseEIntegrationTests(unittest.TestCase):
             model_name='PAS',
             model_variant='pas_test',
             training_mode='pas',
+            host_type='clip',
             image_backbone='dummy_visual',
             text_backbone='dummy_text',
             embedding_dim=8,
@@ -154,6 +155,20 @@ class PhaseEIntegrationTests(unittest.TestCase):
             prototype_precision='fp32',
             temperature=0.07,
             proxy_temperature=0.2,
+            use_host_loss=True,
+            lambda_host=1.0,
+            itself_loss_names='tal+cid',
+            itself_only_global=False,
+            itself_select_ratio=0.4,
+            itself_grab_embed_dim=16,
+            itself_score_weight_global=0.68,
+            itself_tau=0.015,
+            itself_margin=0.1,
+            itself_return_all=True,
+            itself_topk_type='mean',
+            itself_layer_index=-1,
+            itself_average_attn_weights=True,
+            itself_modify_k=False,
             lambda_proxy=1.0,
             lambda_proxy_image=1.0,
             lambda_proxy_text=1.0,
@@ -273,6 +288,40 @@ class PhaseEIntegrationTests(unittest.TestCase):
             use_diversity_loss=False,
             retrieval_scorer='exact',
         ))
+        self.assertTrue(torch.isfinite(torch.tensor(evaluator.eval(model.eval()))))
+
+    def test_itself_host_only_mode_runs_with_exact_eval(self):
+        args = self._build_args(
+            stage='stage1',
+            host_type='itself',
+            use_prototype_branch=False,
+            use_prototype_bank=False,
+            use_image_conditioned_pooling=False,
+            retrieval_scorer='exact',
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=False,
+            use_loss_support=False,
+            use_balancing_loss=False,
+            use_diversity_loss=False,
+        )
+        model = PASModel(args, num_classes=2)
+        outputs = model(self.batch, return_debug=False)
+        self.assertIn('loss_host', outputs)
+        self.assertEqual(tuple(outputs['alpha'].shape), (4, 0))
+        evaluator = Evaluator(self.img_loader, self.text_loader, args)
+        self.assertTrue(torch.isfinite(torch.tensor(evaluator.eval(model.eval()))))
+
+    def test_itself_host_plus_prototype_mode_runs_with_exact_eval(self):
+        args = self._build_args(stage='stage1', host_type='itself', retrieval_scorer='exact')
+        model = PASModel(args, num_classes=2)
+        outputs = model(self.batch, return_debug=False)
+        self.assertIn('loss_host', outputs)
+        self.assertIn('loss_proto_total', outputs)
+        self.assertEqual(tuple(outputs['alpha'].shape), (4, 4))
+        evaluator = Evaluator(self.img_loader, self.text_loader, args)
         self.assertTrue(torch.isfinite(torch.tensor(evaluator.eval(model.eval()))))
 
     def test_forward_returns_surrogate_retrieval_outputs(self):

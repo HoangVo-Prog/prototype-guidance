@@ -193,6 +193,90 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertEqual(args.token_policy, 'eos_only')
         self.assertEqual(args.retrieval_mode, 'clip_bidirectional')
 
+
+    def test_itself_host_only_surface_loads(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'training_mode': 'pas',
+                    'use_prototype_branch': False,
+                    'use_prototype_bank': False,
+                    'use_image_conditioned_pooling': False,
+                },
+                'host': {
+                    'type': 'itself',
+                    'itself_loss_names': 'tal+cid',
+                    'itself_return_all': True,
+                },
+                'loss': {
+                    'retrieval_mode': 'surrogate_i2t',
+                },
+                'evaluation': {
+                    'retrieval_scorer': 'exact',
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertEqual(args.host_type, 'itself')
+        self.assertFalse(args.use_prototype_branch)
+        self.assertFalse(args.use_prototype_bank)
+        self.assertFalse(args.use_image_conditioned_pooling)
+        self.assertTrue(args.itself_return_all)
+
+    def test_itself_host_plus_prototype_surface_loads(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'training_mode': 'pas',
+                    'use_prototype_branch': True,
+                    'use_prototype_bank': True,
+                    'use_image_conditioned_pooling': True,
+                },
+                'host': {
+                    'type': 'itself',
+                    'itself_loss_names': 'tal+cid',
+                    'itself_return_all': True,
+                },
+                'loss': {
+                    'retrieval_mode': 'surrogate_i2t',
+                },
+                'evaluation': {
+                    'retrieval_scorer': 'exact',
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertEqual(args.host_type, 'itself')
+        self.assertTrue(args.use_prototype_branch)
+        self.assertTrue(args.use_prototype_bank)
+        self.assertTrue(args.use_image_conditioned_pooling)
+
+    def test_vanilla_clip_rejects_itself_host(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'training_mode': 'vanilla_clip',
+                    'use_prototype_bank': False,
+                    'use_image_conditioned_pooling': False,
+                },
+                'host': {
+                    'type': 'itself',
+                },
+                'text_pooling': {
+                    'token_policy': 'eos_only',
+                },
+                'loss': {
+                    'use_loss_ret': True,
+                    'retrieval_mode': 'clip_bidirectional',
+                },
+                'evaluation': {
+                    'retrieval_scorer': 'exact',
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'requires host.type=clip'):
+            load_yaml_config(None, path)
+
     def test_prototype_bank_requires_image_conditioned_pooling(self):
         path = self._write_config(
             {

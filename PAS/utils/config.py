@@ -36,10 +36,23 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'use_prototype_branch'): 'use_prototype_branch',
     ('model', 'use_prototype_bank'): 'use_prototype_bank',
     ('model', 'use_image_conditioned_pooling'): 'use_image_conditioned_pooling',
+    ('host', 'type'): 'host_type',
     ('host', 'enabled'): 'use_host_loss',
     ('host', 'loss_weight'): 'lambda_host',
     ('host', 'use_custom_projector'): 'use_custom_projector',
     ('host', 'freeze_projectors'): 'freeze_host_projectors',
+    ('host', 'itself_loss_names'): 'itself_loss_names',
+    ('host', 'itself_only_global'): 'itself_only_global',
+    ('host', 'itself_select_ratio'): 'itself_select_ratio',
+    ('host', 'itself_grab_embed_dim'): 'itself_grab_embed_dim',
+    ('host', 'itself_score_weight_global'): 'itself_score_weight_global',
+    ('host', 'itself_tau'): 'itself_tau',
+    ('host', 'itself_margin'): 'itself_margin',
+    ('host', 'itself_return_all'): 'itself_return_all',
+    ('host', 'itself_topk_type'): 'itself_topk_type',
+    ('host', 'itself_layer_index'): 'itself_layer_index',
+    ('host', 'itself_average_attn_weights'): 'itself_average_attn_weights',
+    ('host', 'itself_modify_k'): 'itself_modify_k',
     ('model', 'return_debug_outputs'): 'return_debug_outputs',
 
     ('prototype', 'num_prototypes'): 'prototype_num_prototypes',
@@ -284,6 +297,8 @@ UNSUPPORTED_CONFIG_PATHS = {
 
 CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('model', 'training_mode'): ('pas', 'vanilla_clip'),
+    ('host', 'type'): ('clip', 'itself'),
+    ('host', 'itself_topk_type'): ('mean', 'std', 'layer_index', 'custom'),
     ('model', 'projector_type'): ('mlp2', 'linear'),
     ('model', 'backbone_precision'): tuple(BACKBONE_PRECISION_ALIASES.keys()),
     ('model', 'prototype_precision'): tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
@@ -313,6 +328,8 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
 
 RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'training_mode': ('pas', 'vanilla_clip'),
+    'host_type': ('clip', 'itself'),
+    'itself_topk_type': ('mean', 'std', 'layer_index', 'custom'),
     'projector_type': ('mlp2', 'linear'),
     'backbone_precision': tuple(BACKBONE_PRECISION_ALIASES.keys()),
     'prototype_precision': tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
@@ -438,8 +455,11 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
         _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
     training_mode = str(config_data.get('model', {}).get('training_mode', 'pas')).lower()
+    host_type = str(config_data.get('host', {}).get('type', 'clip')).lower()
     use_prototype_branch = bool(config_data.get('model', {}).get('use_prototype_branch', training_mode != 'vanilla_clip'))
     retrieval_mode = str(config_data.get('loss', {}).get('retrieval_mode', 'surrogate_i2t')).lower()
+    if training_mode == 'vanilla_clip' and host_type != 'clip':
+        raise ValueError('model.training_mode=vanilla_clip requires host.type=clip.')
     if training_mode == 'vanilla_clip':
         if bool(config_data.get('model', {}).get('use_prototype_bank', True)):
             raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_bank=false.')
@@ -482,6 +502,10 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
             'Prototype-routed training with text-only pooling is no longer supported.'
         )
 
+    training_stage = str(config_data.get('training', {}).get('stage', 'stage1')).lower()
+    if training_stage == 'stage0' and use_prototype_branch:
+        raise ValueError('training.stage=stage0 is reserved for host-only baselines and requires model.use_prototype_branch=false.')
+
 
 def load_yaml_config(default_path: Optional[str] = None, override_path: Optional[str] = None) -> Dict[str, Any]:
     config = {}
@@ -502,8 +526,11 @@ def validate_runtime_args_namespace(args) -> None:
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
     training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
+    host_type = str(getattr(args, 'host_type', 'clip')).lower()
     use_prototype_branch = bool(getattr(args, 'use_prototype_branch', training_mode != 'vanilla_clip'))
     retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
+    if training_mode == 'vanilla_clip' and host_type != 'clip':
+        raise ValueError('model.training_mode=vanilla_clip requires host.type=clip.')
     if training_mode == 'vanilla_clip':
         if use_prototype_branch:
             raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_branch=false.')
@@ -542,6 +569,9 @@ def validate_runtime_args_namespace(args) -> None:
             'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'
         )
+
+    if str(getattr(args, 'training_stage', 'stage1')).lower() == 'stage0' and use_prototype_branch:
+        raise ValueError('training.stage=stage0 is reserved for host-only baselines and requires model.use_prototype_branch=false.')
 
 
 def _normalize_value(dest: str, value: Any) -> Any:

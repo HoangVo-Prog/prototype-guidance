@@ -1,12 +1,12 @@
 experiment:
-  name: stage3_fusion_calibration
+  name: stage3_itself_fusion_calibration
   output_dir: runs
   seed: 11
   local_rank: 0
 
 model:
   name: PAS
-  variant: stage3_fusion_calibration
+  variant: stage3_itself_fusion_calibration
   training_mode: pas
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
@@ -31,10 +31,22 @@ model:
   return_debug_outputs: true
 
 host:
-  type: clip
+  type: itself
   enabled: true
   loss_weight: 1.0
   freeze_projectors: true
+  itself_loss_names: tal+cid
+  itself_only_global: false
+  itself_select_ratio: 0.4
+  itself_grab_embed_dim: 4096
+  itself_score_weight_global: 0.68
+  itself_tau: 0.015
+  itself_margin: 0.1
+  itself_return_all: true
+  itself_topk_type: mean
+  itself_layer_index: -1
+  itself_average_attn_weights: true
+  itself_modify_k: false
 
 prototype:
   num_prototypes: 32
@@ -58,6 +70,18 @@ fusion:
   enabled: true
   coefficient: 1.0
   coefficient_source: validation_tuned
+
+objectives:
+  use_host_loss: true
+  lambda_host: 1.0
+  use_proto_loss_ret: true
+  lambda_proto_ret: 1.0
+  use_diag_fidelity: true
+  lambda_diag: 1.0
+  use_diversity: true
+  lambda_diversity: 0.01
+  use_balance: true
+  lambda_balance: 0.01
 
 loss:
   use_diversity_loss: true
@@ -100,7 +124,7 @@ training:
   save_interval: 1
   resume: false
   resume_ckpt_file: ''
-  finetune: path/to/stage2_best.pth
+  finetune: path/to/stage2_itself_plus_proto_best.pth
   pretrain: ''
   img_aug: false
   txt_aug: false
@@ -157,16 +181,16 @@ logging:
   project: PAS
   entity: null
   run_name: null
-  group: stage3_fusion_calibration
+  group: stage3_itself_fusion_calibration
   mode: online
-  tags: [pas, stage3, fusion, calibration]
-  notes: Validation-time fusion sweep config. Load a trained checkpoint, tune fusion.coefficient on val, then report the chosen lambda on test.
+  tags: [pas, itself, stage3, fusion]
+  notes: Validation-time fusion sweep for the ITSELF host plus prototype model.
   log_interval: 50
   log_code: false
   log_debug_metrics: true
 
 evaluation:
-  checkpoint_path: path/to/stage2_best.pth
+  checkpoint_path: path/to/stage2_itself_plus_proto_best.pth
   device: cuda
   cross_domain_generalization: false
   target_domain: RSTPReid
