@@ -9,6 +9,12 @@
 # - Some fields accept arbitrary strings/paths because they are only used for naming or file locations.
 # - Phase E runtime constraints are called out inline when a key exists but only a subset is currently supported.
 # - CLI annotations use the format: `# CLI: --flag_name (type)`.
+# - Canonical staged configs currently live at:
+#   - configs/stage0/stage0_host_only_reproduction.yaml
+#   - configs/stage1/stage1_retrieval_from_start.yaml
+#   - configs/stage2/stage2_backbone_optimization.yaml
+#   - configs/stage3/stage3_fusion_calibration.yaml
+#   - configs/baselines/vanilla_clip.yaml mirrors the stage0 host-only baseline.
 
 experiment:
   # Any experiment/run name string. Used in output directory naming and logs.
@@ -133,21 +139,38 @@ model:
   # CLI: --vocab_size (int)
   vocab_size: 49408
 
-  # Enables PAS prototype routing branch.
+  # Master on/off switch for the entire additive non-host branch.
+  # - false -> host-only path. Prototype modules, prototype fusion, and surrogate text construction are disabled.
+  # - true  -> enable the non-host branch, then refine its behavior with use_prototype_bank and
+  #            use_image_conditioned_pooling below.
+  # In practice stage0 / vanilla_clip sets this false, while stage1 / stage2 / stage3 set it true.
+  # CLI: --use_prototype_branch (bool)
+  use_prototype_branch: true
+
+  # Sub-switch inside the prototype branch.
+  # - false -> branch remains enabled, but the discrete prototype bank is disabled
+  #            so you can run direct image-conditioned pooling ablations without learned prototypes.
+  # - true  -> full prototype-routed branch with bank/context/routing/basis construction.
+  # If use_prototype_branch=false, runtime finalization forces this false.
   # CLI: --use_prototype_bank (bool)
   use_prototype_bank: true
 
-  # Enables image-conditioned text pooling.
+  # Enables image-conditioned text pooling / surrogate-text construction on the non-host branch.
+  # If use_prototype_branch=false, runtime finalization forces this false.
+  # If use_prototype_bank=true, this must also be true.
   # CLI: --use_image_conditioned_pooling (bool)
   use_image_conditioned_pooling: true
 
-# | use_prototype_bank | use_image_conditioned_pooling | Meaning                                                               |
-# | ------------------ | ----------------------------- | --------------------------------------------------------------------- |
-# | False              | False                         | Direct text-only pooling baseline (no prototype, non-image-conditioned) |
-# | False              | True                          | Image-conditioned pooling **direct** (no prototype)                   |
-# | True               | True                          | **Full method (paper)**                                               |
+# | use_prototype_branch | use_prototype_bank | use_image_conditioned_pooling | Meaning                                              |
+# | -------------------- | ------------------ | ----------------------------- | ---------------------------------------------------- |
+# | False                | False              | False                         | Host-only baseline path                              |
+# | True                 | False              | False                         | Branch enabled but degenerate / not useful in practice |
+# | True                 | False              | True                          | Direct image-conditioned pooling ablation            |
+# | True                 | True               | True                          | Full prototype-routed method                         |
 #
 # Invalid combination:
+# - use_prototype_branch: false with use_prototype_bank: true
+#   is normalized back to false by runtime finalization.
 # - use_prototype_bank: true with use_image_conditioned_pooling: false
 #   raises an error because prototype-routed text-only pooling is no longer supported.
 
@@ -313,7 +336,12 @@ loss:
   # CLI: --support_min (float)
   support_min: 2.0
 
-  # Stage definition: stage1 trains prototype-side modules, stage2 trains backbone-side modules, joint trains both.
+  # Stage definition for the staged host+prototype schedule.
+  # - stage0: host-only reproduction
+  # - stage1: frozen-host prototype training
+  # - stage2: light host-projector co-adaptation with frozen CLIP trunks
+  # - stage3: fusion calibration / evaluation-time checkpoint loading
+  # - joint:  train everything in one run (secondary ablation path)
   # CLI: --stage or --training_stage (str); runtime key is training.stage
   stage: stage1
 

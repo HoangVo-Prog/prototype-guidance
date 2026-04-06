@@ -153,7 +153,7 @@ dataset:
 
 logging:
   use_wandb: true
-  project: PAS
+  project: stage0_host_only_reproduction
   entity: null
   run_name: null
   group: stage0_host_only
