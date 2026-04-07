@@ -551,7 +551,7 @@ class ITSELFHostHead(nn.Module):
         text_logits = id_classifier(text_features.float())
         cid_id = compute_id(image_logits, pids) + compute_id(text_logits, pids)
         
-        return cid_pair
+        return cid_pair + cid_id
 
     def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None):
         image_features = self.encode_image_branch(image_output, return_debug=return_debug, current_step=current_step, total_steps=total_steps)
