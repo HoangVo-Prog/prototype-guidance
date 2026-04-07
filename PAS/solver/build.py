@@ -88,10 +88,10 @@ def _itself_stage0_group_spec(name: str, base_lr: float, base_weight_decay: floa
         lr = base_lr * lr_factor
         label = 'classifier_bias' if 'bias' in name else 'classifier'
     if 'visul_emb_layer' in name or 'visual_embedding_layer' in name:
-        lr = 1e-3
+        lr = base_lr * lr_factor
         label = 'visual_embedding_bias' if 'bias' in name else 'visual_embedding'
     if 'texual_emb_layer' in name or 'textual_embedding_layer' in name:
-        lr = 1e-3
+        lr = base_lr * lr_factor
         label = 'textual_embedding_bias' if 'bias' in name else 'textual_embedding'
 
     return label, lr, weight_decay
