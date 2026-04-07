@@ -160,12 +160,12 @@ def compute_tal_components(
         - (alpha_i2t * scores).sum(1)
         + tau * (exp_i2t * mask).sum(1).clamp(max=1e36).log()
         + margin
-    ).clamp(min=0).mean()
+    ).clamp(min=0).sum()
     loss_t2i = (
         - (alpha_t2i * scores.t()).sum(1)
         + tau * (exp_t2i * mask).sum(1).clamp(max=1e36).log()
         + margin
-    ).clamp(min=0).mean()
+    ).clamp(min=0).sum()
     return loss_i2t + loss_t2i, loss_i2t, loss_t2i
 
 
@@ -544,10 +544,9 @@ class ITSELFHostHead(nn.Module):
         cross_modal_logits1 = pair_classifier(z_feats1.float())
         cross_modal_logits2 = pair_classifier(z_feats2.float())
         cid_pair = compute_cid(cross_modal_logits1, cross_modal_logits2, nlabels.to(cross_modal_logits1.device))
-        image_logits = id_classifier(image_features.float())
-        text_logits = id_classifier(text_features.float())
-        cid_id = compute_id(image_logits, pids) + compute_id(text_logits, pids)
-        return cid_pair + cid_id
+        # remove id classifier
+        
+        return cid_pair
 
     def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None):
         image_features = self.encode_image_branch(image_output, return_debug=return_debug, current_step=current_step, total_steps=total_steps)
