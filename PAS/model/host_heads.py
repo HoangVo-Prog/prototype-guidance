@@ -536,27 +536,97 @@ class ITSELFHostHead(nn.Module):
             'debug_metrics': {},
         }
 
-    def _compute_cid_loss(self, image_features: torch.Tensor, text_features: torch.Tensor, pids: torch.Tensor, mlp: nn.Module, pair_classifier: nn.Module, id_classifier: nn.Module) -> torch.Tensor:
-        max_supported_label = int(pair_classifier.out_features) - 2
-        batch_min_label = int(pids.min().item())
-        batch_max_label = int(pids.max().item())
+    # def _compute_cid_loss(self, image_features: torch.Tensor, text_features: torch.Tensor, pids: torch.Tensor, mlp: nn.Module, pair_classifier: nn.Module, id_classifier: nn.Module) -> torch.Tensor:
+    #     max_supported_label = int(pair_classifier.out_features) - 2
+    #     batch_min_label = int(pids.min().item())
+    #     batch_max_label = int(pids.max().item())
 
+    #     similarity = cid_similarity_matrix(image_features, text_features)
+    #     hard_negatives = sample_hard_negatives(similarity, pids)
+    #     max_label = int(pids.max().item())
+    #     new_labels = update_labels_for_negatives(pids, hard_negatives, max_label)
+    #     ni_feats, nt_feats, nlabels = create_sample_pairs(image_features, text_features, hard_negatives, new_labels, pids)
+    #     z_feats1 = mlp(torch.cat([ni_feats.float(), nt_feats.float()], dim=1))
+    #     z_feats2 = mlp(torch.cat([nt_feats.float(), ni_feats.float()], dim=1))
+    #     cross_modal_logits1 = pair_classifier(z_feats1.float())
+    #     cross_modal_logits2 = pair_classifier(z_feats2.float())
+    #     cid_pair = compute_cid(cross_modal_logits1, cross_modal_logits2, nlabels.to(cross_modal_logits1.device))
+        
+    #     image_logits = id_classifier(image_features.float())
+    #     text_logits = id_classifier(text_features.float())
+    #     cid_id = compute_id(image_logits, pids) + compute_id(text_logits, pids)
+        
+    #     return cid_pair + cid_id
+    
+    def _compute_cid_loss_components(
+        self,
+        image_features: torch.Tensor,
+        text_features: torch.Tensor,
+        pids: torch.Tensor,
+        mlp: nn.Module,
+        classifier: nn.Module,
+        classifier_id: nn.Module,
+    ):
         similarity = cid_similarity_matrix(image_features, text_features)
         hard_negatives = sample_hard_negatives(similarity, pids)
-        max_label = int(pids.max().item())
-        new_labels = update_labels_for_negatives(pids, hard_negatives, max_label)
-        ni_feats, nt_feats, nlabels = create_sample_pairs(image_features, text_features, hard_negatives, new_labels, pids)
-        z_feats1 = mlp(torch.cat([ni_feats.float(), nt_feats.float()], dim=1))
-        z_feats2 = mlp(torch.cat([nt_feats.float(), ni_feats.float()], dim=1))
-        cross_modal_logits1 = pair_classifier(z_feats1.float())
-        cross_modal_logits2 = pair_classifier(z_feats2.float())
-        cid_pair = compute_cid(cross_modal_logits1, cross_modal_logits2, nlabels.to(cross_modal_logits1.device))
+
+        if not hard_negatives:
+            zero = image_features.sum() * 0.0
+            return {
+                'total': zero,
+                'pair': zero,
+                'id_image': zero,
+                'id_text': zero,
+            }
+
+        all_visual, all_textual, all_labels = create_sample_pairs(
+            image_features, text_features, hard_negatives
+        )
+
+        cid_features = mlp(torch.cat((all_visual, all_textual), dim=1))
+        cid_logits = classifier(cid_features)
+
+        image_logits = classifier_id(image_features)
+        text_logits = classifier_id(text_features)
+
+        cid_pair = compute_id(cid_logits, all_labels)
+        cid_id_image = compute_id(image_logits, pids)
+        cid_id_text = compute_id(text_logits, pids)
+        cid_total = cid_pair + cid_id_image + cid_id_text
         
-        image_logits = id_classifier(image_features.float())
-        text_logits = id_classifier(text_features.float())
-        cid_id = compute_id(image_logits, pids) + compute_id(text_logits, pids)
+        with torch.no_grad():
+            pair_acc = (cid_logits.argmax(dim=1) == all_labels).float().mean()
+            id_image_acc = (image_logits.argmax(dim=1) == pids).float().mean()
+            id_text_acc = (text_logits.argmax(dim=1) == pids).float().mean()
+
+        return {
+            'total': cid_total,
+            'pair': cid_pair,
+            'id_image': cid_id_image,
+            'id_text': cid_id_text,
+            'pair_acc': pair_acc,
+            'id_image_acc': id_image_acc,
+            'id_text_acc': id_text_acc,
+        }
         
-        return cid_pair + cid_id
+    def _compute_cid_loss(
+        self,
+        image_features,
+        text_features,
+        pids,
+        mlp,
+        classifier,
+        classifier_id,
+    ):
+        parts = self._compute_cid_loss_components(
+            image_features,
+            text_features,
+            pids,
+            mlp,
+            classifier,
+            classifier_id,
+        )
+        return parts['total']
 
     def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None):
         image_features = self.encode_image_branch(image_output, return_debug=return_debug, current_step=current_step, total_steps=total_steps)
@@ -640,7 +710,7 @@ class ITSELFHostHead(nn.Module):
                 tal_loss_t2i = tal_loss_t2i + tal_t2i_grab
 
         if compute_cid:
-            cid_loss = self._compute_cid_loss(
+            cid_global = self._compute_cid_loss_components(
                 image_features['global_image_embedding'],
                 text_features['global_text_embedding'],
                 pids,
@@ -648,8 +718,20 @@ class ITSELFHostHead(nn.Module):
                 self.classifier_global,
                 self.classifier_id_global,
             )
-            if not self.only_global and self.classifier_grab is not None and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
-                cid_loss = cid_loss + self._compute_cid_loss(
+
+            cid_loss = cid_global['total']
+
+            outputs['loss_host_cid_pair_global'] = cid_global['pair'].detach()
+            outputs['loss_host_cid_id_image_global'] = cid_global['id_image'].detach()
+            outputs['loss_host_cid_id_text_global'] = cid_global['id_text'].detach()
+
+            if (
+                not self.only_global
+                and self.classifier_grab is not None
+                and image_features.get('grab_image_embedding') is not None
+                and text_features.get('grab_text_embedding') is not None
+            ):
+                cid_grab = self._compute_cid_loss_components(
                     image_features['grab_image_embedding'],
                     text_features['grab_text_embedding'],
                     pids,
@@ -657,7 +739,19 @@ class ITSELFHostHead(nn.Module):
                     self.classifier_grab,
                     self.classifier_id_grab,
                 )
-                
+
+                cid_loss = cid_loss + cid_grab['total']
+
+                outputs['loss_host_cid_pair_grab'] = cid_grab['pair'].detach()
+                outputs['loss_host_cid_id_image_grab'] = cid_grab['id_image'].detach()
+                outputs['loss_host_cid_id_text_grab'] = cid_grab['id_text'].detach()
+                outputs['loss_host_cid'] = cid_loss
+                outputs['loss_host_cid_global'] = cid_global['total'].detach()
+                outputs['loss_host_cid_grab'] = cid_grab['total'].detach()
+                outputs['pair_acc'] = pair_acc
+                outputs['id_image_acc'] = id_image_acc
+                outputs['id_text_acc'] = id_text_acc
+
         # === End of New ===
         
         loss_total = tal_loss + cid_loss
