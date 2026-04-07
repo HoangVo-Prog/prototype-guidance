@@ -111,6 +111,7 @@ class VisualEmbeddingLayer(nn.Module):
         features: torch.Tensor,
         attention: torch.Tensor,
         current_step: Optional[int] = None,
+        total_steps: Optional[int] = None,
     ) -> torch.Tensor:
         sequence_length = attention.size(1)
         if current_step is not None:
