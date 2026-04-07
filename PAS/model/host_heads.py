@@ -546,7 +546,10 @@ class ITSELFHostHead(nn.Module):
         cross_modal_logits1 = pair_classifier(z_feats1.float())
         cross_modal_logits2 = pair_classifier(z_feats2.float())
         cid_pair = compute_cid(cross_modal_logits1, cross_modal_logits2, nlabels.to(cross_modal_logits1.device))
-        # remove id classifier
+        
+        image_logits = id_classifier(image_features.float())
+        text_logits = id_classifier(text_features.float())
+        cid_id = compute_id(image_logits, pids) + compute_id(text_logits, pids)
         
         return cid_pair
 
