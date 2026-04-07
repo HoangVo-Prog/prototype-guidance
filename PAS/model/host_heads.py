@@ -652,68 +652,68 @@ class ITSELFHostHead(nn.Module):
         )
         return parts["total"]
 
-    def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None):
-        image_features = self.encode_image_branch(image_output, return_debug=return_debug, current_step=current_step, total_steps=total_steps)
-        text_features = self.encode_text_branch(text_output, token_ids, return_debug=return_debug, current_step=current_step, total_steps=total_steps)
-        similarity = self.compute_similarity_matrix(image_features, text_features)
-        losses = self._empty_loss_outputs(image_features['global_image_embedding'])
-        tal_loss = image_features['global_image_embedding'].new_zeros(())
-        tal_loss_i2t = image_features['global_image_embedding'].new_zeros(())
-        tal_loss_t2i = image_features['global_image_embedding'].new_zeros(())
-        cid_loss = image_features['global_image_embedding'].new_zeros(())
-        
-        # if self.use_host_loss and pids is not None:
-        #     if 'tal' in self.loss_names:
-        #         tal_total_global, tal_i2t_global, tal_t2i_global = compute_tal_components(
-        #             image_features['global_image_embedding'],
-        #             text_features['global_text_embedding'],
-        #             pids,
-        #             tau=self.tau,
-        #             margin=self.margin,
-        #         )
-        #         tal_loss = tal_total_global
-        #         tal_loss_i2t = tal_i2t_global
-        #         tal_loss_t2i = tal_t2i_global
-        #         if not self.only_global and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
-        #             tal_total_grab, tal_i2t_grab, tal_t2i_grab = compute_tal_components(
-        #                 image_features['grab_image_embedding'],
-        #                 text_features['grab_text_embedding'],
-        #                 pids,
-        #                 tau=self.tau,
-        #                 margin=self.margin,
-        #             )
-        #             tal_loss = tal_loss + tal_total_grab
-        #             tal_loss_i2t = tal_loss_i2t + tal_i2t_grab
-        #             tal_loss_t2i = tal_loss_t2i + tal_t2i_grab
-        #     if 'cid' in self.loss_names and self.classifier_global is not None:
-        #         cid_loss = self._compute_cid_loss(
-        #             image_features['global_image_embedding'],
-        #             text_features['global_text_embedding'],
-        #             pids,
-        #             self.mlp_global,
-        #             self.classifier_global,
-        #             self.classifier_id_global,
-        #         )
-        #         if not self.only_global and self.classifier_grab is not None and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
-        #             cid_loss = cid_loss + self._compute_cid_loss(
-        #                 image_features['grab_image_embedding'],
-        #                 text_features['grab_text_embedding'],
-        #                 pids,
-        #                 self.mlp_grab,
-        #                 self.classifier_grab,
-        #                 self.classifier_id_grab,
-        #             )
-        
-        # === New ===
-        
-        compute_host_losses = self.use_host_loss and pids is not None
-        compute_tal = compute_host_losses and ('tal' in self.loss_names)
-        compute_cid = compute_host_losses and self.training and ('cid' in self.loss_names) and (self.classifier_global is not None)
+    def forward(
+        self,
+        image_output,
+        text_output,
+        token_ids: torch.Tensor,
+        pids: Optional[torch.Tensor] = None,
+        return_debug: bool = False,
+        current_step: Optional[int] = None,
+        total_steps: Optional[int] = None,
+    ):
+        image_features = self.encode_image_branch(
+            image_output,
+            return_debug=return_debug,
+            current_step=current_step,
+            total_steps=total_steps,
+        )
+        text_features = self.encode_text_branch(
+            text_output,
+            token_ids,
+            return_debug=return_debug,
+            current_step=current_step,
+            total_steps=total_steps,
+        )
 
+        similarity = self.compute_similarity_matrix(image_features, text_features)
+
+        base_tensor = image_features["global_image_embedding"]
+        zero = base_tensor.new_zeros(())
+        losses = self._empty_loss_outputs(base_tensor)
+
+        tal_loss = zero
+        tal_loss_i2t = zero
+        tal_loss_t2i = zero
+        cid_loss = zero
+
+        compute_host_losses = self.use_host_loss and (pids is not None)
+        compute_tal = compute_host_losses and ("tal" in self.loss_names)
+        compute_cid = (
+            compute_host_losses
+            and self.training
+            and ("cid" in self.loss_names)
+            and (self.classifier_global is not None)
+        )
+
+        cid_log = {
+            "loss_host_cid_pair_global": zero.detach(),
+            "loss_host_cid_id_image_global": zero.detach(),
+            "loss_host_cid_id_text_global": zero.detach(),
+            "loss_host_cid_global": zero.detach(),
+            "loss_host_cid_pair_grab": zero.detach(),
+            "loss_host_cid_id_image_grab": zero.detach(),
+            "loss_host_cid_id_text_grab": zero.detach(),
+            "loss_host_cid_grab": zero.detach(),
+        }
+
+        cid_acc_log = {}
+
+        # TAL
         if compute_tal:
             tal_total_global, tal_i2t_global, tal_t2i_global = compute_tal_components(
-                image_features['global_image_embedding'],
-                text_features['global_text_embedding'],
+                image_features["global_image_embedding"],
+                text_features["global_text_embedding"],
                 pids,
                 tau=self.tau,
                 margin=self.margin,
@@ -721,10 +721,15 @@ class ITSELFHostHead(nn.Module):
             tal_loss = tal_total_global
             tal_loss_i2t = tal_i2t_global
             tal_loss_t2i = tal_t2i_global
-            if not self.only_global and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
+
+            if (
+                not self.only_global
+                and image_features.get("grab_image_embedding") is not None
+                and text_features.get("grab_text_embedding") is not None
+            ):
                 tal_total_grab, tal_i2t_grab, tal_t2i_grab = compute_tal_components(
-                    image_features['grab_image_embedding'],
-                    text_features['grab_text_embedding'],
+                    image_features["grab_image_embedding"],
+                    text_features["grab_text_embedding"],
                     pids,
                     tau=self.tau,
                     margin=self.margin,
@@ -733,99 +738,125 @@ class ITSELFHostHead(nn.Module):
                 tal_loss_i2t = tal_loss_i2t + tal_i2t_grab
                 tal_loss_t2i = tal_loss_t2i + tal_t2i_grab
 
+        # CID
         if compute_cid:
             cid_global = self._compute_cid_loss_components(
-                image_features['global_image_embedding'],
-                text_features['global_text_embedding'],
+                image_features["global_image_embedding"],
+                text_features["global_text_embedding"],
                 pids,
                 self.mlp_global,
                 self.classifier_global,
                 self.classifier_id_global,
             )
 
-            cid_loss = cid_global['total']
+            cid_loss = cid_loss + cid_global["total"]
 
-            outputs['loss_host_cid_pair_global'] = cid_global['pair'].detach()
-            outputs['loss_host_cid_id_image_global'] = cid_global['id_image'].detach()
-            outputs['loss_host_cid_id_text_global'] = cid_global['id_text'].detach()
+            cid_log["loss_host_cid_pair_global"] = cid_global["pair"].detach()
+            cid_log["loss_host_cid_id_image_global"] = cid_global["id_image"].detach()
+            cid_log["loss_host_cid_id_text_global"] = cid_global["id_text"].detach()
+            cid_log["loss_host_cid_global"] = cid_global["total"].detach()
+
+            if "pair_acc" in cid_global:
+                cid_acc_log["cid_pair_acc_global"] = cid_global["pair_acc"].detach()
+            if "id_image_acc" in cid_global:
+                cid_acc_log["cid_id_image_acc_global"] = cid_global["id_image_acc"].detach()
+            if "id_text_acc" in cid_global:
+                cid_acc_log["cid_id_text_acc_global"] = cid_global["id_text_acc"].detach()
 
             if (
                 not self.only_global
                 and self.classifier_grab is not None
-                and image_features.get('grab_image_embedding') is not None
-                and text_features.get('grab_text_embedding') is not None
+                and image_features.get("grab_image_embedding") is not None
+                and text_features.get("grab_text_embedding") is not None
             ):
                 cid_grab = self._compute_cid_loss_components(
-                    image_features['grab_image_embedding'],
-                    text_features['grab_text_embedding'],
+                    image_features["grab_image_embedding"],
+                    text_features["grab_text_embedding"],
                     pids,
                     self.mlp_grab,
                     self.classifier_grab,
                     self.classifier_id_grab,
                 )
 
-                cid_loss = cid_loss + cid_grab['total']
+                cid_loss = cid_loss + cid_grab["total"]
 
-                outputs['loss_host_cid_pair_grab'] = cid_grab['pair'].detach()
-                outputs['loss_host_cid_id_image_grab'] = cid_grab['id_image'].detach()
-                outputs['loss_host_cid_id_text_grab'] = cid_grab['id_text'].detach()
-                outputs['loss_host_cid'] = cid_loss
-                outputs['loss_host_cid_global'] = cid_global['total'].detach()
-                outputs['loss_host_cid_grab'] = cid_grab['total'].detach()
-                outputs['pair_acc'] = pair_acc
-                outputs['id_image_acc'] = id_image_acc
-                outputs['id_text_acc'] = id_text_acc
+                cid_log["loss_host_cid_pair_grab"] = cid_grab["pair"].detach()
+                cid_log["loss_host_cid_id_image_grab"] = cid_grab["id_image"].detach()
+                cid_log["loss_host_cid_id_text_grab"] = cid_grab["id_text"].detach()
+                cid_log["loss_host_cid_grab"] = cid_grab["total"].detach()
 
-        # === End of New ===
-        
+                if "pair_acc" in cid_grab:
+                    cid_acc_log["cid_pair_acc_grab"] = cid_grab["pair_acc"].detach()
+                if "id_image_acc" in cid_grab:
+                    cid_acc_log["cid_id_image_acc_grab"] = cid_grab["id_image_acc"].detach()
+                if "id_text_acc" in cid_grab:
+                    cid_acc_log["cid_id_text_acc_grab"] = cid_grab["id_text_acc"].detach()
+
         loss_total = tal_loss + cid_loss
-        losses.update(
-            {
-                'loss_total': loss_total,
-                'loss_ret': tal_loss,
-                'loss_ret_weighted': tal_loss,
-                'loss_ret_i2t': tal_loss_i2t,
-                'loss_ret_t2i': tal_loss_t2i,
-                'loss_cid': cid_loss,
-                'use_loss_ret': tal_loss.new_tensor(float('tal' in self.loss_names and self.use_host_loss)),
-                'lambda_ret': tal_loss.new_tensor(1.0),
-                'debug_metrics': {
-                    'itself_score_weight_global': similarity.new_tensor(self.score_weight_global).detach(),
-                    'itself_score_weight_grab': similarity.new_tensor(1.0 - self.score_weight_global).detach(),
-                    'itself_loss_tal': tal_loss.detach(),
-                    'itself_loss_cid': cid_loss.detach(),
-                    'itself_global_similarity_mean': cosine_similarity_matrix(
-                        image_features['global_image_embedding'],
-                        text_features['global_text_embedding'],
-                    ).mean().detach(),
-                },
-            }
-        )
-        if not self.only_global and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
-            losses['debug_metrics']['itself_grab_similarity_mean'] = cosine_similarity_matrix(
-                image_features['grab_image_embedding'],
-                text_features['grab_text_embedding'],
-            ).mean().detach()
-        return {
-            'routing_weights': image_features['routing_weights'],
-            'summary': image_features['summary'],
-            'image_projected': image_features['global_image_embedding'],
-            'image_projected_raw': image_features['global_image_embedding'],
-            'surrogate_text_projected': text_features['global_text_embedding'],
-            'surrogate_text_projected_raw': text_features['global_text_embedding'],
-            'exact_text_projected': text_features['global_text_embedding'],
-            'exact_text_projected_raw': text_features['global_text_embedding'],
-            'losses': losses,
-            'metrics': dict(losses['debug_metrics']),
-            'debug': dict(losses['debug_metrics']),
-            'surrogate_pairwise_logits': similarity,
-            'host_similarity_logits': similarity,
-            'global_image_embedding': image_features['global_image_embedding'],
-            'global_text_embedding': text_features['global_text_embedding'],
-            'grab_image_embedding': image_features.get('grab_image_embedding'),
-            'grab_text_embedding': text_features.get('grab_text_embedding'),
+
+        debug_metrics = {
+            "itself_score_weight_global": similarity.new_tensor(self.score_weight_global).detach(),
+            "itself_score_weight_grab": similarity.new_tensor(1.0 - self.score_weight_global).detach(),
+            "itself_loss_tal": tal_loss.detach(),
+            "itself_loss_cid": cid_loss.detach(),
+            "itself_global_similarity_mean": cosine_similarity_matrix(
+                image_features["global_image_embedding"],
+                text_features["global_text_embedding"],
+            ).mean().detach(),
         }
 
+        if (
+            not self.only_global
+            and image_features.get("grab_image_embedding") is not None
+            and text_features.get("grab_text_embedding") is not None
+        ):
+            debug_metrics["itself_grab_similarity_mean"] = cosine_similarity_matrix(
+                image_features["grab_image_embedding"],
+                text_features["grab_text_embedding"],
+            ).mean().detach()
+
+        debug_metrics.update(cid_log)
+        debug_metrics.update(cid_acc_log)
+
+        losses.update(
+            {
+                "loss_total": loss_total,
+                "loss_ret": tal_loss,
+                "loss_ret_weighted": tal_loss,
+                "loss_ret_i2t": tal_loss_i2t,
+                "loss_ret_t2i": tal_loss_t2i,
+                "loss_cid": cid_loss,
+                "loss_host_cid": cid_loss,
+                "use_loss_ret": tal_loss.new_tensor(float("tal" in self.loss_names and self.use_host_loss)),
+                "lambda_ret": tal_loss.new_tensor(1.0),
+                "debug_metrics": debug_metrics,
+            }
+        )
+
+        # nếu logger của bạn đọc scalar trực tiếp từ losses,
+        # thêm breakdown CID vào losses luôn cho chắc
+        losses.update(cid_log)
+        losses.update(cid_acc_log)
+
+        return {
+            "routing_weights": image_features["routing_weights"],
+            "summary": image_features["summary"],
+            "image_projected": image_features["global_image_embedding"],
+            "image_projected_raw": image_features["global_image_embedding"],
+            "surrogate_text_projected": text_features["global_text_embedding"],
+            "surrogate_text_projected_raw": text_features["global_text_embedding"],
+            "exact_text_projected": text_features["global_text_embedding"],
+            "exact_text_projected_raw": text_features["global_text_embedding"],
+            "losses": losses,
+            "metrics": dict(debug_metrics),
+            "debug": dict(debug_metrics),
+            "surrogate_pairwise_logits": similarity,
+            "host_similarity_logits": similarity,
+            "global_image_embedding": image_features["global_image_embedding"],
+            "global_text_embedding": text_features["global_text_embedding"],
+            "grab_image_embedding": image_features.get("grab_image_embedding"),
+            "grab_text_embedding": text_features.get("grab_text_embedding"),
+        }
 
 def build_host_head(args, input_dim: int, num_classes: int):
     host_type = str(getattr(args, 'host_type', 'clip')).lower()
