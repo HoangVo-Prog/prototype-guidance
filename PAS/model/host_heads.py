@@ -807,10 +807,10 @@ class ITSELFHostHead(nn.Module):
                 image_features["global_image_embedding"],
                 text_features["global_text_embedding"],
             ).mean().detach(),
-            "min_pids": cid_grabs["min_pids"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
-            "max_pids": cid_grabs["max_pids"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
-            "num_unique_pids": cid_grabs["num_unique_pids"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
-            "num_classes": cid_grabs["num_classes"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
+            "min_pids": cid_grab["min_pids"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
+            "max_pids": cid_grab["max_pids"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
+            "num_unique_pids": cid_grab["num_unique_pids"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
+            "num_classes": cid_grab["num_classes"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
         }
 
         if (
