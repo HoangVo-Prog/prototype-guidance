@@ -567,47 +567,99 @@ class ITSELFHostHead(nn.Module):
         tal_loss_i2t = image_features['global_image_embedding'].new_zeros(())
         tal_loss_t2i = image_features['global_image_embedding'].new_zeros(())
         cid_loss = image_features['global_image_embedding'].new_zeros(())
-        if self.use_host_loss and pids is not None:
-            if 'tal' in self.loss_names:
-                tal_total_global, tal_i2t_global, tal_t2i_global = compute_tal_components(
-                    image_features['global_image_embedding'],
-                    text_features['global_text_embedding'],
+        
+        # if self.use_host_loss and pids is not None:
+        #     if 'tal' in self.loss_names:
+        #         tal_total_global, tal_i2t_global, tal_t2i_global = compute_tal_components(
+        #             image_features['global_image_embedding'],
+        #             text_features['global_text_embedding'],
+        #             pids,
+        #             tau=self.tau,
+        #             margin=self.margin,
+        #         )
+        #         tal_loss = tal_total_global
+        #         tal_loss_i2t = tal_i2t_global
+        #         tal_loss_t2i = tal_t2i_global
+        #         if not self.only_global and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
+        #             tal_total_grab, tal_i2t_grab, tal_t2i_grab = compute_tal_components(
+        #                 image_features['grab_image_embedding'],
+        #                 text_features['grab_text_embedding'],
+        #                 pids,
+        #                 tau=self.tau,
+        #                 margin=self.margin,
+        #             )
+        #             tal_loss = tal_loss + tal_total_grab
+        #             tal_loss_i2t = tal_loss_i2t + tal_i2t_grab
+        #             tal_loss_t2i = tal_loss_t2i + tal_t2i_grab
+        #     if 'cid' in self.loss_names and self.classifier_global is not None:
+        #         cid_loss = self._compute_cid_loss(
+        #             image_features['global_image_embedding'],
+        #             text_features['global_text_embedding'],
+        #             pids,
+        #             self.mlp_global,
+        #             self.classifier_global,
+        #             self.classifier_id_global,
+        #         )
+        #         if not self.only_global and self.classifier_grab is not None and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
+        #             cid_loss = cid_loss + self._compute_cid_loss(
+        #                 image_features['grab_image_embedding'],
+        #                 text_features['grab_text_embedding'],
+        #                 pids,
+        #                 self.mlp_grab,
+        #                 self.classifier_grab,
+        #                 self.classifier_id_grab,
+        #             )
+        
+        # === New ===
+        
+        compute_host_losses = self.use_host_loss and pids is not None
+        compute_tal = compute_host_losses and ('tal' in self.loss_names)
+        compute_cid = compute_host_losses and self.training and ('cid' in self.loss_names) and (self.classifier_global is not None)
+
+        if compute_tal:
+            tal_total_global, tal_i2t_global, tal_t2i_global = compute_tal_components(
+                image_features['global_image_embedding'],
+                text_features['global_text_embedding'],
+                pids,
+                tau=self.tau,
+                margin=self.margin,
+            )
+            tal_loss = tal_total_global
+            tal_loss_i2t = tal_i2t_global
+            tal_loss_t2i = tal_t2i_global
+            if not self.only_global and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
+                tal_total_grab, tal_i2t_grab, tal_t2i_grab = compute_tal_components(
+                    image_features['grab_image_embedding'],
+                    text_features['grab_text_embedding'],
                     pids,
                     tau=self.tau,
                     margin=self.margin,
                 )
-                tal_loss = tal_total_global
-                tal_loss_i2t = tal_i2t_global
-                tal_loss_t2i = tal_t2i_global
-                if not self.only_global and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
-                    tal_total_grab, tal_i2t_grab, tal_t2i_grab = compute_tal_components(
-                        image_features['grab_image_embedding'],
-                        text_features['grab_text_embedding'],
-                        pids,
-                        tau=self.tau,
-                        margin=self.margin,
-                    )
-                    tal_loss = tal_loss + tal_total_grab
-                    tal_loss_i2t = tal_loss_i2t + tal_i2t_grab
-                    tal_loss_t2i = tal_loss_t2i + tal_t2i_grab
-            if 'cid' in self.loss_names and self.classifier_global is not None:
-                cid_loss = self._compute_cid_loss(
-                    image_features['global_image_embedding'],
-                    text_features['global_text_embedding'],
+                tal_loss = tal_loss + tal_total_grab
+                tal_loss_i2t = tal_loss_i2t + tal_i2t_grab
+                tal_loss_t2i = tal_loss_t2i + tal_t2i_grab
+
+        if compute_cid:
+            cid_loss = self._compute_cid_loss(
+                image_features['global_image_embedding'],
+                text_features['global_text_embedding'],
+                pids,
+                self.mlp_global,
+                self.classifier_global,
+                self.classifier_id_global,
+            )
+            if not self.only_global and self.classifier_grab is not None and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
+                cid_loss = cid_loss + self._compute_cid_loss(
+                    image_features['grab_image_embedding'],
+                    text_features['grab_text_embedding'],
                     pids,
-                    self.mlp_global,
-                    self.classifier_global,
-                    self.classifier_id_global,
+                    self.mlp_grab,
+                    self.classifier_grab,
+                    self.classifier_id_grab,
                 )
-                if not self.only_global and self.classifier_grab is not None and image_features.get('grab_image_embedding') is not None and text_features.get('grab_text_embedding') is not None:
-                    cid_loss = cid_loss + self._compute_cid_loss(
-                        image_features['grab_image_embedding'],
-                        text_features['grab_text_embedding'],
-                        pids,
-                        self.mlp_grab,
-                        self.classifier_grab,
-                        self.classifier_id_grab,
-                    )
+                
+        # === End of New ===
+        
         loss_total = tal_loss + cid_loss
         losses.update(
             {
