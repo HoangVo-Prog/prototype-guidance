@@ -150,7 +150,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
             batch = {key: value.to(device) for key, value in batch.items()}
             optimizer.zero_grad(set_to_none=True)
             with build_autocast_context(args, device):
-                outputs = model(batch)
+                outputs = model(batch, current_step=current_steps)
                 total_loss = outputs['loss_total']
 
             if scaler.is_enabled():

@@ -67,9 +67,9 @@ class TextualEmbeddingLayer(nn.Module):
         if current_step is not None:
             ratio_start = 0.65
             ratio_end = 0.5
-            total_steps = 10 * 145
-            current_step = min(max(int(current_step), 1), total_steps)
-            ratio = current_step / float(total_steps)
+            effective_total_steps = total_steps if total_steps is not None else (10 * 145)
+            current_step = min(max(int(current_step), 1), effective_total_steps)
+            ratio = current_step / float(effective_total_steps)
             k = int((sequence_length - 2) * ratio_start * ((ratio_end / ratio_start) ** ratio))
         else:
             k = int((sequence_length - 2) * self.ratio)
@@ -116,9 +116,9 @@ class VisualEmbeddingLayer(nn.Module):
         if current_step is not None:
             ratio_start = 0.65
             ratio_end = 0.5
-            total_steps = 10 * 145
-            current_step = min(max(int(current_step), 1), total_steps)
-            ratio = current_step / float(total_steps)
+            effective_total_steps = total_steps if total_steps is not None else (10 * 145)
+            current_step = min(max(int(current_step), 1), effective_total_steps)
+            ratio = current_step / float(effective_total_steps)
             k = int((sequence_length - 1) * ratio_start * ((ratio_end / ratio_start) ** ratio))
         else:
             k = int((sequence_length - 1) * self.ratio)
@@ -160,12 +160,12 @@ def compute_tal_components(
         - (alpha_i2t * scores).sum(1)
         + tau * (exp_i2t * mask).sum(1).clamp(max=1e36).log()
         + margin
-    ).clamp(min=0).sum()
+    ).clamp(min=0).mean()
     loss_t2i = (
         - (alpha_t2i * scores.t()).sum(1)
         + tau * (exp_t2i * mask).sum(1).clamp(max=1e36).log()
         + margin
-    ).clamp(min=0).sum()
+    ).clamp(min=0).mean()
     return loss_i2t + loss_t2i, loss_i2t, loss_t2i
 
 
@@ -252,16 +252,16 @@ class CLIPHostAdapter(nn.Module):
             for parameter in module.parameters():
                 parameter.requires_grad = False
 
-    def encode_image_branch(self, image_output, return_debug: bool = False, current_step: Optional[int] = None) -> Dict[str, object]:
-        del current_step
+    def encode_image_branch(self, image_output, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None) -> Dict[str, object]:
+        del current_step, total_steps
         outputs = self.core.encode_image_branch(image_output.projected_pooled, return_debug=return_debug)
         outputs['global_image_embedding'] = image_output.projected_pooled.float()
         outputs['grab_image_embedding'] = None
         outputs['host_similarity_logits'] = None
         return outputs
 
-    def encode_text_branch(self, text_output, token_ids: torch.Tensor, return_debug: bool = False, current_step: Optional[int] = None) -> Dict[str, object]:
-        del token_ids, current_step
+    def encode_text_branch(self, text_output, token_ids: torch.Tensor, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None) -> Dict[str, object]:
+        del token_ids, current_step, total_steps
         outputs = self.core.encode_text_branch(text_output.projected_pooled, return_debug=return_debug)
         outputs['global_text_embedding'] = text_output.projected_pooled.float()
         outputs['grab_text_embedding'] = None
@@ -270,8 +270,8 @@ class CLIPHostAdapter(nn.Module):
     def compute_similarity_matrix(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
         return self.core.compute_similarity_matrix(image_features.get('image_projected'), text_features.get('text_projected'))
 
-    def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None):
-        del pids, token_ids, current_step
+    def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None):
+        del pids, token_ids, current_step, total_steps
         outputs = self.core(
             image_embeddings=image_output.projected_pooled,
             text_embeddings=text_output.projected_pooled,
@@ -407,7 +407,7 @@ class ITSELFHostHead(nn.Module):
             reduced = reduced.mean(dim=1)
         return self._normalize_attention(reduced, batch_size, num_tokens, device, dtype)
 
-    def encode_image_branch(self, image_output, return_debug: bool = False, current_step: Optional[int] = None) -> Dict[str, object]:
+    def encode_image_branch(self, image_output, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None) -> Dict[str, object]:    
         global_embedding = image_output.projected_pooled.float()
         outputs = {
             'image_embedding': global_embedding,
@@ -441,7 +441,7 @@ class ITSELFHostHead(nn.Module):
             }
         return outputs
 
-    def encode_text_branch(self, text_output, token_ids: torch.Tensor, return_debug: bool = False, current_step: Optional[int] = None) -> Dict[str, object]:
+    def encode_text_branch(self, text_output, token_ids: torch.Tensor, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None) -> Dict[str, object]:
         global_embedding = text_output.projected_pooled.float()
         outputs = {
             'text_embedding': global_embedding,
@@ -549,9 +549,9 @@ class ITSELFHostHead(nn.Module):
         cid_id = compute_id(image_logits, pids) + compute_id(text_logits, pids)
         return cid_pair + cid_id
 
-    def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None):
-        image_features = self.encode_image_branch(image_output, return_debug=return_debug, current_step=current_step)
-        text_features = self.encode_text_branch(text_output, token_ids, return_debug=return_debug, current_step=current_step)
+    def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None):
+        image_features = self.encode_image_branch(image_output, return_debug=return_debug, current_step=current_step, total_steps=total_steps)
+        text_features = self.encode_text_branch(text_output, token_ids, return_debug=return_debug, current_step=current_step, total_steps=total_steps)
         similarity = self.compute_similarity_matrix(image_features, text_features)
         losses = self._empty_loss_outputs(image_features['global_image_embedding'])
         tal_loss = image_features['global_image_embedding'].new_zeros(())
