@@ -60,6 +60,7 @@ class TextualEmbeddingLayer(nn.Module):
         text: torch.Tensor,
         attention: torch.Tensor,
         current_step: Optional[int] = None,
+        total_steps: Optional[int] = None,
     ) -> torch.Tensor:
         mask = (text != 0).to(dtype=features.dtype)
         lengths = mask.sum(dim=1) - 2
