@@ -176,10 +176,10 @@ def cid_similarity_matrix(image_features: torch.Tensor, text_features: torch.Ten
     return image_norm @ text_norm.t()   # image x text, match ITSELF
 
 
-# def cosine_similarity_matrix(image_features: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
-#     image_norm = F.normalize(image_features, p=2, dim=1)
-#     text_norm = F.normalize(text_features, p=2, dim=1)
-#     return text_norm @ image_norm.t()
+def cosine_similarity_matrix(image_features: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
+    image_norm = F.normalize(image_features, p=2, dim=1)
+    text_norm = F.normalize(text_features, p=2, dim=1)
+    return text_norm @ image_norm.t()
 
 
 def sample_hard_negatives(similarity: torch.Tensor, labels: torch.Tensor) -> Dict[str, list]:
