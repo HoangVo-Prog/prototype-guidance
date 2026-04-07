@@ -630,6 +630,10 @@ class ITSELFHostHead(nn.Module):
             "pair_acc": pair_acc,
             "id_image_acc": id_image_acc,
             "id_text_acc": id_text_acc,
+            "min_pids": pids.min(),
+            "max_pids": pids.max(),
+            "num_unique_pids": pids.unique().numel(),
+            "num_classes": self.num_classes
         }
 
 
@@ -803,6 +807,10 @@ class ITSELFHostHead(nn.Module):
                 image_features["global_image_embedding"],
                 text_features["global_text_embedding"],
             ).mean().detach(),
+            "min_pids": cid_grabs["min_pids"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
+            "max_pids": cid_grabs["max_pids"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
+            "num_unique_pids": cid_grabs["num_unique_pids"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
+            "num_classes": cid_grabs["num_classes"].detach() if compute_cid and not self.only_global and self.classifier_grab is not None else zero.detach(),
         }
 
         if (
