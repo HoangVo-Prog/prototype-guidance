@@ -567,48 +567,72 @@ class ITSELFHostHead(nn.Module):
         classifier: nn.Module,
         classifier_id: nn.Module,
     ):
+        max_supported_label = int(classifier.out_features) - 2
+        batch_min_label = int(pids.min().item())
+        batch_max_label = int(pids.max().item())
+
         similarity = cid_similarity_matrix(image_features, text_features)
         hard_negatives = sample_hard_negatives(similarity, pids)
 
         if not hard_negatives:
             zero = image_features.sum() * 0.0
             return {
-                'total': zero,
-                'pair': zero,
-                'id_image': zero,
-                'id_text': zero,
+                "total": zero,
+                "pair": zero,
+                "id_image": zero,
+                "id_text": zero,
+                "pair_acc": zero,
+                "id_image_acc": zero,
+                "id_text_acc": zero,
             }
 
-        all_visual, all_textual, all_labels = create_sample_pairs(
-            image_features, text_features, hard_negatives
+        max_label = int(pids.max().item())
+        new_labels = update_labels_for_negatives(pids, hard_negatives, max_label)
+
+        ni_feats, nt_feats, nlabels = create_sample_pairs(
+            image_features, text_features, hard_negatives, new_labels, pids
         )
 
-        cid_features = mlp(torch.cat((all_visual, all_textual), dim=1))
-        cid_logits = classifier(cid_features)
+        z_feats1 = mlp(torch.cat([ni_feats.float(), nt_feats.float()], dim=1))
+        z_feats2 = mlp(torch.cat([nt_feats.float(), ni_feats.float()], dim=1))
 
-        image_logits = classifier_id(image_features)
-        text_logits = classifier_id(text_features)
+        cross_modal_logits1 = classifier(z_feats1.float())
+        cross_modal_logits2 = classifier(z_feats2.float())
 
-        cid_pair = compute_id(cid_logits, all_labels)
+        cid_pair = compute_cid(
+            cross_modal_logits1,
+            cross_modal_logits2,
+            nlabels.to(cross_modal_logits1.device),
+        )
+
+        image_logits = classifier_id(image_features.float())
+        text_logits = classifier_id(text_features.float())
+
         cid_id_image = compute_id(image_logits, pids)
         cid_id_text = compute_id(text_logits, pids)
         cid_total = cid_pair + cid_id_image + cid_id_text
-        
+
         with torch.no_grad():
-            pair_acc = (cid_logits.argmax(dim=1) == all_labels).float().mean()
+            pair_pred1 = cross_modal_logits1.argmax(dim=1)
+            pair_pred2 = cross_modal_logits2.argmax(dim=1)
+            pair_acc1 = (pair_pred1 == nlabels.to(pair_pred1.device)).float().mean()
+            pair_acc2 = (pair_pred2 == nlabels.to(pair_pred2.device)).float().mean()
+            pair_acc = 0.5 * (pair_acc1 + pair_acc2)
+
             id_image_acc = (image_logits.argmax(dim=1) == pids).float().mean()
             id_text_acc = (text_logits.argmax(dim=1) == pids).float().mean()
 
         return {
-            'total': cid_total,
-            'pair': cid_pair,
-            'id_image': cid_id_image,
-            'id_text': cid_id_text,
-            'pair_acc': pair_acc,
-            'id_image_acc': id_image_acc,
-            'id_text_acc': id_text_acc,
+            "total": cid_total,
+            "pair": cid_pair,
+            "id_image": cid_id_image,
+            "id_text": cid_id_text,
+            "pair_acc": pair_acc,
+            "id_image_acc": id_image_acc,
+            "id_text_acc": id_text_acc,
         }
-        
+
+
     def _compute_cid_loss(
         self,
         image_features,
@@ -626,7 +650,7 @@ class ITSELFHostHead(nn.Module):
             classifier,
             classifier_id,
         )
-        return parts['total']
+        return parts["total"]
 
     def forward(self, image_output, text_output, token_ids: torch.Tensor, pids: Optional[torch.Tensor] = None, return_debug: bool = False, current_step: Optional[int] = None, total_steps: Optional[int] = None):
         image_features = self.encode_image_branch(image_output, return_debug=return_debug, current_step=current_step, total_steps=total_steps)
