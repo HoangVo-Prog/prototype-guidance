@@ -170,11 +170,16 @@ def compute_tal_components(
     ).clamp(min=0).sum()
     return loss_i2t + loss_t2i, loss_i2t, loss_t2i
 
-
-def cosine_similarity_matrix(image_features: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
+def cid_similarity_matrix(image_features: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
     image_norm = F.normalize(image_features, p=2, dim=1)
     text_norm = F.normalize(text_features, p=2, dim=1)
-    return text_norm @ image_norm.t()
+    return image_norm @ text_norm.t()   # image x text, match ITSELF
+
+
+# def cosine_similarity_matrix(image_features: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
+#     image_norm = F.normalize(image_features, p=2, dim=1)
+#     text_norm = F.normalize(text_features, p=2, dim=1)
+#     return text_norm @ image_norm.t()
 
 
 def sample_hard_negatives(similarity: torch.Tensor, labels: torch.Tensor) -> Dict[str, list]:
@@ -312,6 +317,8 @@ class ITSELFHostHead(nn.Module):
         else:
             self.visual_embedding_layer = None
             self.textual_embedding_layer = None
+            
+        self.logit_scale = torch.ones([]) * (1 / args.temperature)
 
         if 'cid' in self.loss_names:
             effective_classes = self.num_classes + 1
@@ -534,7 +541,7 @@ class ITSELFHostHead(nn.Module):
         batch_min_label = int(pids.min().item())
         batch_max_label = int(pids.max().item())
 
-        similarity = cosine_similarity_matrix(image_features, text_features)
+        similarity = cid_similarity_matrix(image_features, text_features)
         hard_negatives = sample_hard_negatives(similarity, pids)
         max_label = int(pids.max().item())
         new_labels = update_labels_for_negatives(pids, hard_negatives, max_label)

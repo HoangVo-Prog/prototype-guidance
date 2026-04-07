@@ -276,8 +276,6 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
 def do_inference(model, test_img_loader, test_txt_loader, args):
     logger = logging.getLogger('pas.eval')
     logger.info('Enter inferencing')
-    if bool(getattr(args, 'amp', False)) and not is_cuda_device(getattr(args, 'device', 'cuda')):
-        raise ValueError('training.amp=true requires a CUDA device.')
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
