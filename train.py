@@ -14,8 +14,6 @@ from model import build_model
 from utils.metrics import Evaluator
 from utils.options import get_args
 from utils.comm import get_rank, synchronize
-from utils.env import load_runtime_environment
-from utils.launch import  build_nohup_log_path, build_run_name, get_effective_wandb_run_name, launch_with_nohup
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -27,38 +25,11 @@ def set_seed(seed=1):
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = True
-    
-def _count_parameters(parameters):
-    total = 0
-    trainable = 0
-    for parameter in parameters:
-        count = parameter.numel()
-        total += count
-        if parameter.requires_grad:
-            trainable += count
-    return total, trainable
-
 
 if __name__ == '__main__':
-    env = load_runtime_environment()
     args = get_args()
-    args.run_name = build_run_name(args)
-    if not args.wandb_run_name:
-        args.wandb_run_name = args.run_name
-        
-    if args.nohup:
-        log_path = build_nohup_log_path(args)
-        pid = launch_with_nohup(
-            sys.argv,
-            log_path,
-            run_name_override=args.run_name,
-            cwd=os.getcwd(),
-        )
-        print(f'Launched PAS training in background with PID {pid}. Log: {log_path}')
-        raise SystemExit(0)
-    
-    set_seed(args.seed + get_rank())
-    name = "noname"
+    set_seed(1+get_rank())
+    name = "ITSELF"
 
     num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
     args.distributed = num_gpus > 1
@@ -68,22 +39,20 @@ if __name__ == '__main__':
         torch.distributed.init_process_group(backend="nccl", init_method="env://")
         synchronize()
     
-    device = args.device
-    args.output_dir = op.join(args.output_dir, args.dataset_name, args.run_name)
-
-    logger = setup_logger('pas', save_dir=args.output_dir, if_train=args.training, distributed_rank=get_rank())
-    logger.info('Using %s GPUs', num_gpus)
-    logger.info('W&B/log run name: %s', get_effective_wandb_run_name(args))
+    device = "cuda"
+    cur_time = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    args.output_dir = op.join(args.output_dir, args.dataset_name, f'{cur_time}_{name}_{args.loss_names}')
+    logger = setup_logger('ITSELF', save_dir=args.output_dir, if_train=args.training, distributed_rank=get_rank())
+    logger.info("Using {} GPUs".format(num_gpus))
     logger.info(str(args).replace(',', '\n'))
-
     save_train_configs(args.output_dir, args)
-    os.makedirs(op.join(args.output_dir, 'img'), exist_ok=True)
+    if not os.path.isdir(args.output_dir+'/img'):
+        os.makedirs(args.output_dir+'/img')
 
         
     train_loader, val_img_loader, val_txt_loader, num_classes = build_dataloader(args)
     model = build_model(args, num_classes)
     logger.info('Total params: %2.fM' % (sum(p.numel() for p in model.parameters()) / 1000000.0))
-
     model.to(device)
     if args.finetune:
         logger.info("loading {} model".format(args.finetune))
