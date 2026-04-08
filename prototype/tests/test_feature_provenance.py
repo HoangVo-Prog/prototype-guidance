@@ -11,6 +11,7 @@ from prototype.integration.feature_surface import (
     ITSELFHostScoreSurface,
 )
 from prototype.integration.host_runtime import HostRuntime, HostRuntimeConfig
+from prototype.prototype_branch import PrototypeBasisBuilder, PrototypeRouter
 
 
 class _DummyBaseModel:
@@ -93,6 +94,13 @@ def test_itself_feature_surface_provenance_and_shapes() -> None:
     assert features.v_i_local.shape == (2, 6)
     assert features.t_j_local.shape == (2, 6)
     assert "base_model.encode_text" in features.h_j_tokens_source
+    assert "encode_image" in features.v_i_global_source
+    assert "retrieval" in features.z_i_retrieval_source
+
+    # Routing input provenance must come from active host global image feature.
+    router = PrototypeRouter()
+    routed = router.route(features.v_i_global, torch.randn(3, 4))
+    assert routed.alpha.shape == (2, 3)
 
     score_surface = runtime.compute_host_score_surface(features)
     assert isinstance(score_surface, ITSELFHostScoreSurface)
@@ -116,6 +124,8 @@ def test_clip_feature_surface_provenance_and_shapes() -> None:
     assert features.h_j_tokens.shape == (2, 5, 4)
     assert features.t_j_global.shape == (2, 4)
     assert "clip.encode_text" in features.h_j_tokens_source
+    assert not hasattr(features, "v_i_local")
+    assert not hasattr(features, "t_j_local")
 
     score_surface = runtime.compute_host_score_surface(features)
     assert isinstance(score_surface, CLIPHostScoreSurface)
@@ -132,3 +142,15 @@ def test_mode_binding_guards_for_lambda_s() -> None:
         pass
     else:
         raise AssertionError("clip mode must reject lambda_s")
+
+
+def test_basis_builder_rejects_pooled_text_for_token_basis_substrate() -> None:
+    builder = PrototypeBasisBuilder()
+    pooled_text = torch.randn(2, 4)
+    prototypes = torch.randn(3, 4)
+    try:
+        _ = builder.build_basis(h_j_tokens=pooled_text, contextualized_prototypes=prototypes)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Basis builder must reject pooled text `[B, D]` as token substrate")

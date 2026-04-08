@@ -304,6 +304,10 @@ def test_stage2_initialization_precedence_and_joint_loss_routing() -> None:
 
     output = runtime.training_step(_batch(), optimizer=optimizer)
 
+    assert runtime.policy.stage == "stage2"
+    assert runtime.policy.host_loss_enabled is True
+    assert runtime.policy.prototype_enabled is True
+    assert runtime.policy.calibration_only is False
     assert calls == ["clip_backbone", "stage1_prototype", "host_checkpoint"]
     assert output.initialized_stage2 is True
     assert "host_loss_clip" in output.losses.active_loss_names

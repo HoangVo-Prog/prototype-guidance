@@ -32,6 +32,8 @@ def test_router_row_sum_behavior() -> None:
     out = router.route(v_i_global=v_i_global, contextualized_prototypes=prototypes)
     assert out.alpha.shape == (3, 5)
     assert out.q_summary.shape == (3, 8)
+    assert torch.isfinite(out.alpha).all()
+    assert torch.isfinite(out.routing_logits).all()
     row_sum = out.alpha.sum(dim=-1)
     assert torch.allclose(row_sum, torch.ones_like(row_sum), atol=1e-6)
 
