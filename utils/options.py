@@ -1,4 +1,6 @@
 import argparse
+from prototype.utils.options import get_prototype_cli
+
 def get_args():
     parser = argparse.ArgumentParser(description="ITSELF Args")
     parser.add_argument("--tau", default=0.015, type=float)
@@ -76,6 +78,8 @@ def get_args():
     parser.add_argument("--layer_index", type=int, default=-1, help='which layer attention to use: [0, 11]')
     parser.add_argument("--average_attn_weights", type=bool, default=True)
     parser.add_argument("--modify_k", action='store_true')
+    
+    parser = get_prototype_cli(parser)
     
     args = parser.parse_args()
     return args
