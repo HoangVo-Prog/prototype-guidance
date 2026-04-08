@@ -471,15 +471,20 @@ Leave the repository in a state that is runnable and reviewable.
 This phase is complete only if a reviewer can identify how to launch each supported phase without reading the full codebase.
 
 ### Checklist
-- [ ] Add minimal run recipe for Stage 0 ITSELF baseline
-- [ ] Add minimal run recipe for Stage 0 CLIP baseline
-- [ ] Add minimal run recipe for Stage 1 prototype stabilization
-- [ ] Add minimal run recipe for Stage 2 prototype-enabled retraining
-- [ ] Add minimal run recipe for Stage 3 fusion calibration
-- [ ] Add final handoff summary
+- [x] Add minimal run recipe for Stage 0 ITSELF baseline
+- [x] Add minimal run recipe for Stage 0 CLIP baseline
+- [x] Add minimal run recipe for Stage 1 prototype stabilization
+- [x] Add minimal run recipe for Stage 2 prototype-enabled retraining
+- [x] Add minimal run recipe for Stage 3 fusion calibration
+- [x] Add final handoff summary
 
 ### Completion note
-- Not completed yet.
+- Completed on 2026-04-08.
+- Files added: root `train.py`; `configs/base.yaml`; `configs/stage0_itself.yaml`; `configs/stage0_clip.yaml`; `configs/stage1_itself.yaml`; `configs/stage1_clip.yaml`; `configs/stage2_itself.yaml`; `configs/stage2_clip.yaml`; `configs/stage3_itself.yaml`; `configs/stage3_clip.yaml`; `prototype/RUN_RECIPES.md`; `prototype/HANDOFF_NOTES.md`; `prototype/integration/synthetic_host_runtime.py`.
+- Files edited: `prototype/integration/__init__.py`; `prototype/RUN_RECIPES.md`; `prototype/HANDOFF_NOTES.md`.
+- Major decisions: canonical launcher is now `python train.py --config configs/<stage_mode>.yaml`; stage/mode recipe docs no longer rely on test selectors or helper one-liners.
+- Checks run: config/launcher path existence checks, launcher/module compile checks, stage/mode naming consistency checks, no-touch host diff check (clean), and launcher invocation attempt.
+- Known limitations: this environment is missing `pyyaml`, `torch`, and `pytest`; Phase F/G certification remains unresolved here.
 
 ---
 
@@ -494,7 +499,7 @@ Codex MUST tick these only when the corresponding phase gate is satisfied.
 - [x] Phase E complete
 - [ ] Phase F complete
 - [ ] Phase G complete
-- [ ] Phase H complete
+- [x] Phase H complete
 
 ---
 

@@ -1,0 +1,65 @@
+train_mode: itself
+
+prototype:
+  enabled: true
+  num_prototypes: 64
+  dim: 8
+  contextualization:
+    enabled: true
+    type: self_attention
+  temperatures:
+    routing: 0.07
+    basis: 0.07
+    teacher: 0.07
+    retrieval: 0.07
+  regularization:
+    diversity:
+      enabled: false
+      weight: 0.0
+    balance:
+      enabled: false
+      weight: 0.0
+
+fusion:
+  enabled: true
+  lambda_f: 0.2
+
+host:
+  lambda_s: 0.5
+
+training:
+  stage: stage3
+  calibration_only: true
+  freeze:
+    host: true
+    prototype: true
+    host_allowlist: []
+    prototype_policy: freeze_all
+  initialization:
+    clip_backbone_source: null
+    stage1_prototype_checkpoint: null
+    host_checkpoint: null
+    host_checkpoint_compatible: false
+
+loss:
+  host_enabled: false
+  prototype_ret_enabled: false
+  prototype_diag_enabled: false
+  prototype_div_enabled: false
+  prototype_bal_enabled: false
+
+runtime:
+  host_runtime: synthetic
+  steps: 1
+  batch:
+    batch_size: 4
+    seq_len: 6
+  synthetic:
+    feature_dim: 8
+  optimizer:
+    host_lr: 0.0001
+    prototype_lr: 0.0001
+  output:
+    log_dir: outputs/stage3_itself/logs
+    checkpoint_dir: outputs/stage3_itself/checkpoints
+

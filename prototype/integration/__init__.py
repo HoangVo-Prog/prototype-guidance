@@ -11,6 +11,11 @@ from .feature_surface import (
 from .host_runtime import HostRuntime, HostRuntimeConfig
 from .model_runtime import IntegratedRuntimeConfig, IntegratedScoringRuntime
 from .stage_controller import StageConfig, StageController, StagePolicy
+from .synthetic_host_runtime import (
+    SyntheticHostRuntime,
+    SyntheticHostRuntimeConfig,
+    build_synthetic_batch,
+)
 from .training_runtime import (
     IntegratedTrainingRuntime,
     PrototypeBranchRuntime,
@@ -33,5 +38,8 @@ __all__ = [
     "StageConfig",
     "StageController",
     "StagePolicy",
+    "SyntheticHostRuntime",
+    "SyntheticHostRuntimeConfig",
     "TrainingRuntimeHooks",
+    "build_synthetic_batch",
 ]
