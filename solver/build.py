@@ -67,7 +67,6 @@ def _use_original_itself_stage0_optimizer(args, model) -> bool:
     del model
     return (
         str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
-        and str(getattr(args, 'training_stage', 'joint')).lower() == 'stage0'
         and not bool(getattr(args, 'use_prototype_branch', False))
     )
 

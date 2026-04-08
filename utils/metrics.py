@@ -84,7 +84,7 @@ class Evaluator:
                 f'Unsupported evaluation.retrieval_scorer={self.retrieval_scorer!r}. '
                 f'Allowed values: {list(SUPPORTED_RETRIEVAL_SCORERS)}'
             )
-        if (not bool(getattr(args, 'use_prototype_branch', getattr(args, 'training_mode', 'pas') != 'vanilla_clip')) or not bool(getattr(args, 'use_prototype_bank', True))) and self.retrieval_scorer == 'approximate':
+        if (not bool(getattr(args, 'use_prototype_branch', False)) or not bool(getattr(args, 'use_prototype_bank', True))) and self.retrieval_scorer == 'approximate':
             self.logger.warning(
                 'evaluation.retrieval_scorer=approximate requires an active prototype bank; falling back to exact retrieval scoring.'
             )

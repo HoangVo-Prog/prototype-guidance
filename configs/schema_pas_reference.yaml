@@ -1,845 +1,281 @@
-﻿# PAS commented config schema reference.
+# Canonical PAS/ITSELF config schema reference (current).
 #
-# This file is a copy/edit template, not the only valid config.
-# It documents the active YAML keys consumed by utils/config.py and utils/options.py.
+# Routing policy:
+# - model family routing is by host.type only: clip | itself
+# - model.training_mode is removed
+# - training.stage is removed
+# - objectives + loss are unified into:
+#     objectives.objectives
+#     objectives.lambda
 #
-# Notes:
-# - Values shown below are examples.
-# - Comments list supported values where the code validates them.
-# - Some fields accept arbitrary strings/paths because they are only used for naming or file locations.
-# - Phase E runtime constraints are called out inline when a key exists but only a subset is currently supported.
-# - CLI annotations use the format: `# CLI: --flag_name (type)`.
-# - Canonical staged configs currently live at:
-#   - CLIP host path:
-#     - configs/stage0/stage0_host_only_reproduction.yaml
-#     - configs/stage1/stage1_retrieval_from_start.yaml
-#     - configs/stage2/stage2_backbone_optimization.yaml
-#     - configs/stage3/stage3_fusion_calibration.yaml
-#     - configs/baselines/vanilla_clip.yaml mirrors the stage0 CLIP host-only baseline.
-#   - ITSELF host path:
-#     - configs/stage0/stage0_itself_host_only.yaml
-#     - configs/stage1/stage1_itself_host_plus_prototype.yaml
-#     - configs/stage2/stage2_itself_host_plus_prototype.yaml
-#     - configs/stage3/stage3_itself_fusion_calibration.yaml
-#     - configs/baselines/itself_host_only.yaml mirrors the stage0 ITSELF host-only baseline.
+# Marker legend:
+# - [CANONICAL]        actively used in configs/base.yaml
+# - [ALIAS_ONLY]       still accepted by utils/config.py for backward compatibility
+# - [REMOVED]          rejected by validator with guidance
 
 experiment:
-  # Any experiment/run name string. Used in output directory naming and logs.
-  # CLI: --name (str)
-  name: example_pas_run
-
-  # Any writable output root. train.py creates <output_dir>/<dataset>/<timestamp>_<name>.
-  # CLI: --output_dir (str/path)
-  output_dir: runs
-
-  # Any integer random seed.
-  # CLI: --seed (int)
-  seed: 1
-
-  # Integer local GPU rank. Usually set by torch.distributed launcher; keep 0 for single-GPU runs.
-  # CLI: --local_rank (int)
-  local_rank: 0
+  name: example_run            # [CANONICAL]
+  output_dir: runs             # [CANONICAL]
+  seed: 1                      # [CANONICAL]
+  local_rank: 0                # [CANONICAL]
 
 model:
-  # Active model family name. Practical active value: PAS.
-  # CLI: --model_name (str)
-  name: PAS
+  name: ITSELF                 # [CANONICAL]
+  variant: itself_base         # [CANONICAL]
+  pretrain_choice: ViT-B/16    # [CANONICAL]
+  image_backbone: clip_visual  # [CANONICAL]
+  text_backbone: clip_text_transformer  # [CANONICAL]
+  embedding_dim: 512           # [CANONICAL]
+  projection_dim: 256          # [CANONICAL]
+  projector_hidden_dim: 512    # [CANONICAL]
+  projector_dropout: 0.0       # [CANONICAL]
+  projector_type: mlp2         # [CANONICAL]
+  normalize_projector_outputs: true     # [CANONICAL]
+  use_custom_projector: true            # [CANONICAL]
+  backbone_precision: fp32     # [CANONICAL], {fp16, fp32}
+  prototype_precision: fp32    # [CANONICAL], {fp16, fp32}
+  temperature: 0.02            # [CANONICAL]
+  img_size: [384, 128]         # [CANONICAL]
+  stride_size: 16              # [CANONICAL]
+  text_length: 77              # [CANONICAL]
+  vocab_size: 49408            # [CANONICAL]
+  use_prototype_branch: false  # [CANONICAL]
+  use_prototype_bank: false    # [CANONICAL]
+  use_image_conditioned_pooling: false  # [CANONICAL]
+  return_debug_outputs: false  # [CANONICAL]
 
-  # Free-form variant tag used for naming/logging.
-  # CLI: --model_variant (str)
-  variant: pas_v1
-
-  # High-level compatibility mode.
-  # Supported values: pas | vanilla_clip
-  # - vanilla_clip is the strict legacy CLIP-only baseline mode.
-  # - pas is the general PAS runtime and now covers:
-  #   - host.type=clip with or without the prototype branch
-  #   - host.type=itself with or without the prototype branch
-  # CLI: --training_mode (str)
-  training_mode: pas
-
-  # CLIP checkpoint name passed into build_CLIP_from_openai_pretrained(...).
-  # PAS runtime currently supports only ViT backbones whose text hidden width matches embed_dim:
-  # - ViT-B/16
-  # - ViT-B/32
-  # - ViT-L/14
-  # CLI: --pretrain_choice (str)
-  pretrain_choice: ViT-B/16
-
-  # Logical image-backbone name for logging/metadata.
-  # Active implementation value: clip_visual.
-  # CLI: --image_backbone (str)
-  image_backbone: clip_visual
-
-  # Logical text-backbone name for logging/metadata.
-  # Active implementation value: clip_text_transformer.
-  # CLI: --text_backbone (str)
-  text_backbone: clip_text_transformer
-
-  # Backbone feature dimension before PAS projectors.
-  # For the shipped ViT-B/16 setup this is typically 512.
-  # CLI: --embedding_dim (int)
-  embedding_dim: 512
-
-  # Output dimension of image/text projectors.
-  # Any positive integer is accepted.
-  # CLI: --projector_output_dim or --projection_dim (int)
-  projection_dim: 256
-
-  # Authoritative projector/output similarity family switch.
-  # If true, projector outputs are L2-normalized for both training contrastive scores and inference retrieval scores.
-  # If false, both paths use raw projector outputs.
-  # CLI: --normalize_projector_outputs (bool)
-  normalize_projector_outputs: true
-
-  # If false in vanilla_clip mode, bypasses the repo custom projector head and uses CLIP global embeddings directly.
-  # Ignored by PAS prototype/direct modes.
-  # CLI: --use_custom_projector (bool)
-  use_custom_projector: true
-
-  # Hidden dimension inside the projector MLPs.
-  # Any positive integer is accepted.
-  # CLI: --projector_hidden_dim (int)
-  projector_hidden_dim: 512
-
-  # Projector dropout probability. Typical range: 0.0 to 0.5.
-  # CLI: --projector_dropout (float)
-  projector_dropout: 0.0
-
-  # Supported projector variants:
-  # - mlp2
-  # - linear
-  # CLI: --projector_type (str)
-  projector_type: mlp2
-
-  # Precision used when storing CLIP backbone parameters.
-  # Supported values:
-  # - fp16
-  # - fp32
-  # If you unfreeze an fp16 backbone for training, enable training.amp=true.
-  # CLI: --backbone_precision (str)
-  backbone_precision: fp32
-
-  # Precision used when storing prototype-bank, routing, pooling, projector, and loss-module parameters.
-  # Supported values:
-  # - fp16
-  # - fp32
-  # If you train with prototype_precision=fp16, enable training.amp=true.
-  # CLI: --prototype_precision (str)
-  prototype_precision: fp32
-
-  # Fixed temperature used by the exact retrieval scorers. Must be positive.
-  # CLI: --temperature (float)
-  temperature: 0.07
-
-  # Fixed temperature used by exact and approximate retrieval scoring helpers.
-
-  # Input image size as [height, width]. Any positive integer pair is accepted.
-  # CLI: --img_size HEIGHT WIDTH (2 ints)
-  img_size: [384, 128]
-
-  # Vision patch stride. Positive integer.
-  # CLI: --stride_size (int)
-  stride_size: 16
-
-  # Maximum token sequence length for text inputs.
-  # CLI: --text_length (int)
-  text_length: 77
-
-  # Tokenizer vocabulary size. Keep aligned with the tokenizer/BPE file.
-  # CLI: --vocab_size (int)
-  vocab_size: 49408
-
-  # Master on/off switch for the entire additive non-host branch.
-  # - false -> host-only path. Prototype modules, prototype fusion, and surrogate text construction are disabled.
-  # - true  -> enable the non-host branch, then refine its behavior with use_prototype_bank and
-  #            use_image_conditioned_pooling below.
-  # In practice stage0 / vanilla_clip sets this false, while stage1 / stage2 / stage3 set it true.
-  # CLI: --use_prototype_branch (bool)
-  use_prototype_branch: true
-
-  # Sub-switch inside the prototype branch.
-  # - false -> branch remains enabled, but the discrete prototype bank is disabled
-  #            so you can run direct image-conditioned pooling ablations without learned prototypes.
-  # - true  -> full prototype-routed branch with bank/context/routing/basis construction.
-  # If use_prototype_branch=false, runtime finalization forces this false.
-  # CLI: --use_prototype_bank (bool)
-  use_prototype_bank: true
-
-  # Enables image-conditioned text pooling / surrogate-text construction on the non-host branch.
-  # If use_prototype_branch=false, runtime finalization forces this false.
-  # If use_prototype_bank=true, this must also be true.
-  # CLI: --use_image_conditioned_pooling (bool)
-  use_image_conditioned_pooling: true
-
-# | use_prototype_branch | use_prototype_bank | use_image_conditioned_pooling | Meaning                                              |
-# | -------------------- | ------------------ | ----------------------------- | ---------------------------------------------------- |
-# | False                | False              | False                         | Host-only baseline path                              |
-# | True                 | False              | False                         | Branch enabled but degenerate / not useful in practice |
-# | True                 | False              | True                          | Direct image-conditioned pooling ablation            |
-# | True                 | True               | True                          | Full prototype-routed method                         |
-#
-# Invalid combination:
-# - use_prototype_branch: false with use_prototype_bank: true
-#   is normalized back to false by runtime finalization.
-# - use_prototype_bank: true with use_image_conditioned_pooling: false
-#   raises an error because prototype-routed text-only pooling is no longer supported.
-
-
-  # If true, forward(...) may return larger debug tensors.
-  # true/false.
-  # CLI: --return_debug_outputs (bool)
-  return_debug_outputs: false
-
-
-itself_reference:
-  # Optional metadata-driven loader for ITSELF host settings.
-  # PAS resolves this at config/runtime load time, not from checkpoints.
-  # When enabled, PAS reads configs/itself_dataset_reference.yaml and applies the
-  # shared ITSELF host defaults plus the dataset-specific host blend weight.
-  # Dataset selection always comes from dataset.dataset_name after CLI/config resolution.
-  enabled: true
-  path: ../itself_dataset_reference.yaml
+  # [REMOVED]
+  # training_mode: pas
 
 host:
-  # Host family switch.
-  # Supported values: clip | itself
-  # - clip   -> CLIP-centered host scoring path
-  # - itself -> ITSELF-style host scoring path with global plus GRAB features and TAL/CID training
-  # CLI: --host_type (str)
-  type: clip
+  type: itself                 # [CANONICAL], {clip, itself}
+  freeze_projectors: false     # [CANONICAL]
 
-  # Master enable/disable flag for host-side losses.
-  # In practice this should remain true for all real experiments.
-  # CLI: --use_host_loss (bool)
-  enabled: true
+  itself_loss_names: tal+cid   # [CANONICAL]
+  itself_only_global: false    # [CANONICAL]
+  itself_select_ratio: 0.4     # [CANONICAL]
+  itself_grab_embed_dim: 4096  # [CANONICAL]
+  itself_score_weight_global: 0.32  # [CANONICAL]
+  itself_tau: 0.015            # [CANONICAL]
+  itself_margin: 0.1           # [CANONICAL]
+  itself_return_all: false     # [CANONICAL]
+  itself_topk_type: mean       # [CANONICAL], {mean, std, layer_index, custom}
+  itself_layer_index: -1       # [CANONICAL]
+  itself_average_attn_weights: true  # [CANONICAL]
+  itself_modify_k: false       # [CANONICAL]
+  itself_lambda1_weight: 0.5   # [CANONICAL]
+  itself_lambda2_weight: 3.5   # [CANONICAL]
 
-  # Weight applied to the host loss contribution inside the total objective.
-  # CLI: --lambda_host (float)
-  loss_weight: 1.0
-
-  # Freezes the trainable host-side head modules.
-  # For host.type=clip this means the host projectors.
-  # For host.type=itself this freezes the ITSELF host head modules such as GRAB layers and CID classifiers.
-  # CLI: --freeze_host_projectors (bool)
-  freeze_projectors: false
-
-  # ITSELF-host-specific options.
-  # These are ignored when host.type=clip.
-  # CLI: --itself_loss_names (str)
-  itself_loss_names: tal+cid
-
-  # If true, run the ITSELF host in global-only mode and disable the GRAB branch.
-  # CLI: --itself_only_global (bool)
-  itself_only_global: false
-
-  # Fraction of non-special tokens / non-CLS image patches selected by the GRAB layers.
-  # CLI: --itself_select_ratio (float)
-  itself_select_ratio: 0.4
-
-  # Output width of the ITSELF GRAB embeddings.
-  # CLI: --itself_grab_embed_dim (int)
-  itself_grab_embed_dim: 4096
-
-  # Weight of the global branch in the fused ITSELF host score.
-  # Final ITSELF host score is approximately:
-  #   itself_score_weight_global * global_score + (1 - itself_score_weight_global) * grab_score
-  # CLI: --itself_score_weight_global (float)
-  itself_score_weight_global: 0.68
-
-  # TAL temperature.
-  # CLI: --itself_tau (float)
-  itself_tau: 0.015
-
-  # TAL margin.
-  # CLI: --itself_margin (float)
-  itself_margin: 0.1
-
-  # If true, ask the CLIP backbone for the per-layer attention stack so ITSELF top-k selection can use
-  # averaged/std/custom attention aggregation instead of a fallback uniform attention.
-  # CLI: --itself_return_all (bool)
-  itself_return_all: true
-
-  # Supported values: mean | std | layer_index | custom
-  # CLI: --itself_topk_type (str)
-  itself_topk_type: mean
-
-  # Used only when itself_topk_type=layer_index.
-  # CLI: --itself_layer_index (int)
-  itself_layer_index: -1
-
-  # Passed through to the backbone attention aggregation helper.
-  # CLI: --itself_average_attn_weights (bool)
-  itself_average_attn_weights: true
-
-  # If true, shrink the GRAB top-k selection during training.
-  # CLI: --itself_modify_k (bool)
-  itself_modify_k: false
+  # [ALIAS_ONLY] accepted in code, intentionally not in base.yaml
+  # enabled: true
+  # loss_weight: 1.0
+  # loss_names: tal+cid
+  # only_global: false
+  # select_ratio: 0.4
+  # tau: 0.015
+  # margin: 0.1
+  # return_all: false
+  # topk_type: mean
+  # layer_index: -1
+  # average_attn_weights: true
+  # modify_k: false
+  # lambda1_weight: 0.5
+  # lambda2_weight: 3.5
 
 prototype:
-  # Number of learnable prototypes. Positive integer.
-  # CLI: --prototype_num_prototypes (int)
-  num_prototypes: 32
+  num_prototypes: 0            # [CANONICAL]
+  prototype_dim: 512           # [CANONICAL]
+  prototype_init: normalized_random  # [CANONICAL]
+  prototype_init_path: null    # [CANONICAL]
+  prototype_init_hybrid_ratio: 0.5  # [CANONICAL]
+  prototype_init_max_iters: 50 # [CANONICAL]
+  prototype_init_tol: 1.0e-4   # [CANONICAL]
+  prototype_init_seed: null    # [CANONICAL]
+  routing_type: cosine         # [CANONICAL], {cosine, dot}
+  routing_temperature: 0.07    # [CANONICAL]
+  contextualization_enabled: false  # [CANONICAL]
+  contextualization_type: none # [CANONICAL], {self_attention, dense_self_attention, none}
+  contextualization_residual: false  # [CANONICAL]
+  normalize_for_self_interaction: true  # [CANONICAL]
+  normalize_for_routing: true  # [CANONICAL]
+  dead_prototype_threshold: 0.005  # [CANONICAL]
 
-  # Prototype feature dimension.
-  # Any positive integer is accepted; adapters bridge backbone and prototype dimensions when needed.
-  # CLI: --prototype_dim (int)
-  prototype_dim: 512
+fusion:
+  enabled: false               # [CANONICAL]
+  coefficient: 0.0             # [CANONICAL]
+  coefficient_source: fixed    # [CANONICAL]
 
-  # Supported init values:
-  # - normalized_random       -> random Gaussian then row-normalized
-  # - sampled_image_embeddings -> load from prototype_init_path
-  # - kmeans_centroids         -> load from prototype_init_path
-  # - orthogonal_normalized_random -> QR-based semi-orthogonal rows then row-normalized
-  # - spherical_kmeans_centroids   -> spherical k-means over normalized features from prototype_init_path
-  # - hybrid_spherical_kmeans_random -> spherical centers plus orthogonal random rows
-  # CLI: --prototype_init (str)
-  prototype_init: normalized_random
+objectives:
+  objectives:                  # [CANONICAL]
+    use_host_loss: true
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: false
+    use_loss_diag: false
+    use_loss_ret: false
+    retrieval_mode: surrogate_i2t    # {surrogate_i2t, clip_bidirectional}
+    use_loss_support: false
+    support_min: 2.0
+    use_balancing_loss: false
+    use_diversity_loss: false
 
-  # null or path to a .pt/.pth tensor/checkpoint used by sampled_image_embeddings, kmeans_centroids,
-  # spherical_kmeans_centroids, or hybrid_spherical_kmeans_random.
-  # CLI: --prototype_init_path (str/path)
-  prototype_init_path: null
+  lambda:                      # [CANONICAL]
+    host: 1.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.0
+    diag: 0.0
+    ret: 0.0
+    support: 0.0
+    balance: 0.0
+    diversity: 0.0
 
-  # Ratio used only by hybrid_spherical_kmeans_random.
-  # K_data = round(num_prototypes * prototype_init_hybrid_ratio), K_rand = K - K_data.
-  # CLI: --prototype_init_hybrid_ratio (float)
-  prototype_init_hybrid_ratio: 0.5
+  # [ALIAS_ONLY] accepted in code, intentionally not in base.yaml
+  # use_host_loss: true
+  # lambda_host: 1.0
+  # use_proto_loss_ret: false
+  # lambda_proto_ret: 0.0
+  # use_diag_fidelity: false
+  # lambda_diag: 0.0
+  # use_diversity: false
+  # lambda_diversity: 0.0
+  # use_balance: false
+  # lambda_balance: 0.0
 
-  # Maximum spherical k-means iterations used only by spherical/hybrid init modes.
-  # CLI: --prototype_init_max_iters (int)
-  prototype_init_max_iters: 50
-
-  # Spherical k-means convergence tolerance used only by spherical/hybrid init modes.
-  # CLI: --prototype_init_tol (float)
-  prototype_init_tol: 1.0e-4
-
-  # Optional deterministic seed for new prototype init modes.
-  # null falls back to experiment.seed.
-  # CLI: --prototype_init_seed (int)
-  prototype_init_seed: null
-
-  # Supported routing values:
-  # - cosine
-  # - dot
-  # Accepted aliases:
-  # - normalized_dot -> cosine
-  # - softmax        -> cosine
-  # CLI: --routing_similarity or --prototype_routing_type (str)
-  routing_type: cosine
-
-  # Routing temperature. Must be positive.
-  # CLI: --tau_p or --prototype_temperature (float)
-  routing_temperature: 0.07
-
-  # Authoritative prototype contextualization enable/disable flag.
-  # true/false.
-  # Legacy alias model.use_prototype_contextualization is still accepted for backward compatibility
-  # when this key is omitted, but this key takes precedence.
-  # When false, contextualization_type and contextualization_residual are ignored and the prototype bank is used as-is.
-  # CLI: --prototype_contextualization_enabled (bool); legacy alias --use_prototype_contextualization
-  contextualization_enabled: true
-
-  # Supported contextualization values:
-  # - self_attention       -> legacy similarity weights with raw prototype values
-  # - dense_self_attention -> parameter-free dense self-attention
-  # - none
-  # Accepted aliases:
-  # - off                   -> none
-  # - similarity            -> self_attention
-  # - similarity_residual   -> self_attention
-  # - transformer           -> self_attention
-  # Ignored when contextualization_enabled=false.
-  # CLI: --prototype_contextualization_type (str)
-  contextualization_type: self_attention
-
-  # Residual update applied after either contextualization mode.
-  # For dense_self_attention: A^p = softmax((W_q Theta)(W_k Theta)^T / sqrt(D)), Theta_tilde = Theta + A^p (W_v Theta).
-  # Ignored when contextualization_enabled=false.
-  # CLI: --prototype_contextualization_residual (bool)
-  contextualization_residual: true
-
-  # If true, normalize prototypes before prototype self-interaction. This affects both legacy self_attention
-  # similarity logits and dense_self_attention Q/K/V inputs.
-  # CLI: --normalize_for_self_interaction (bool)
-  normalize_for_self_interaction: true
-
-  # If true, normalize image/prototype features before routing similarity.
-  # CLI: --normalize_for_routing (bool)
-  normalize_for_routing: true
-
-  # Threshold used by debug metrics for counting low-usage prototypes.
-  # CLI: --prototype_dead_threshold (float)
-  dead_prototype_threshold: 0.005
-
-loss:
-  # Proxy weights for each branch.
-  # CLI: --lambda_proxy_image (float); falls back to --lambda_proxy when omitted
-  lambda_proxy_image: 1.0
-  # CLI: --lambda_proxy_text (float); falls back to --lambda_proxy when omitted
-  lambda_proxy_text: 1.0
-  # CLI: --lambda_proxy_text_exact (float); falls back to --lambda_proxy when omitted
-  lambda_proxy_text_exact: 1.0
-
-  # Whether to include each proxy branch inside the surrogate objective.
-  # CLI: --use_loss_proxy_image (bool)
-  use_loss_proxy_image: true
-  # CLI: --use_loss_proxy_text (bool)
-  use_loss_proxy_text: true
-  # CLI: --use_loss_proxy_text_exact (bool)
-  use_loss_proxy_text_exact: true
-
-  # Explicit toggle for the image-vs-surrogate alignment term.
-  # CLI: --use_loss_align (bool)
-  use_loss_align: true
-
-  # Image / surrogate-text cosine alignment weight.
-  # CLI: --lambda_align (float)
-  lambda_align: 1.0
-
-  # Explicit toggle for the surrogate-vs-exact diagonal fidelity term.
-  # CLI: --use_loss_diag (bool)
-  use_loss_diag: true
-
-  # Diagonal surrogate-vs-exact fidelity weight.
-  # CLI: --lambda_diag (float)
-  lambda_diag: 1.0
-
-  # Enables retrieval supervision.
-  # CLI: --use_loss_ret (bool)
-  use_loss_ret: true
-
-  # Retrieval objective family.
-  # Supported values: surrogate_i2t | clip_bidirectional
-  # - clip_bidirectional is only valid for model.training_mode=vanilla_clip with host.type=clip.
-  # - surrogate_i2t is the prototype-branch retrieval loss mode and is also the placeholder value used by
-  #   ITSELF-host configs, where the actual host loss comes from host.itself_loss_names rather than this field.
-  # CLI: --retrieval_mode (str)
-  retrieval_mode: surrogate_i2t
-
-  # Retrieval weight for the active retrieval objective.
-  # CLI: --lambda_ret (float)
-  lambda_ret: 1.0
-
-  # Enables the optional low-support routing penalty.
-  # CLI: --use_loss_support (bool)
-  use_loss_support: false
-
-  # Support loss coefficient. Non-negative float.
-  # Must be positive when use_loss_support=true and 0.0 otherwise.
-  # CLI: --lambda_support (float)
-  lambda_support: 0.0
-
-  # Minimum inverse-participation-ratio support before the penalty activates.
-  # CLI: --support_min (float)
-  support_min: 2.0
-
-  # Stage definition for the staged host+prototype schedule.
-  # - stage0: host-only reproduction and checkpoint creation for the selected host family
-  # - stage1: frozen-host prototype training; should load the Stage 0 checkpoint in training.finetune
-  # - stage2: light host-projector co-adaptation; should load the Stage 1 checkpoint in training.finetune
-  # - stage3: fusion calibration / evaluation-time checkpoint loading; should load the Stage 2 checkpoint
-  # - joint:  train everything in one run (secondary ablation path)
-  # CLI: --stage or --training_stage (str); runtime key is training.stage
-  stage: stage1
-
-  # Stage-controlled backbone freeze knobs.
-  # CLI: --freeze_image_backbone (bool); runtime key is training.freeze_image_backbone
-  freeze_image_backbone: true
-  # CLI: --freeze_text_backbone (bool); runtime key is training.freeze_text_backbone
-  freeze_text_backbone: true
-
-  # Stage-controlled prototype-side freeze knob.
-  # CLI: --freeze_prototype_side (bool); runtime key is training.freeze_prototype_side
-  freeze_prototype_side: false
-
-  # Enables the optional prototype balancing loss.
-  # CLI: --use_balancing_loss (bool)
-  use_balancing_loss: false
-
-  # Balance loss coefficient. Non-negative float.
-  # Must be positive when use_balancing_loss=true and 0.0 otherwise.
-  # CLI: --lambda_bal or --prototype_balance_loss_weight (float)
-  balance_loss_weight: 0.0
-
-  # Enables prototype diversity regularization.
-  # CLI: --use_diversity_loss (bool)
-  use_diversity_loss: true
-
-  # Diversity loss coefficient. Non-negative float.
-  # CLI: --lambda_div or --diversity_loss_weight (float)
-  diversity_loss_weight: 0.01
+# [ALIAS_ONLY] legacy section accepted in code, intentionally not in base.yaml
+# loss:
+#   lambda_proxy: 0.0
+#   lambda_proxy_image: 0.0
+#   lambda_proxy_text: 0.0
+#   lambda_proxy_text_exact: 0.0
+#   use_loss_proxy_image: false
+#   use_loss_proxy_text: false
+#   use_loss_proxy_text_exact: false
+#   use_loss_align: false
+#   lambda_align: 0.0
+#   use_loss_diag: false
+#   lambda_diag: 0.0
+#   use_loss_ret: false
+#   retrieval_mode: surrogate_i2t
+#   lambda_ret: 0.0
+#   use_loss_support: false
+#   lambda_support: 0.0
+#   support_min: 2.0
+#   use_balancing_loss: false
+#   balance_loss_weight: 0.0
+#   use_diversity_loss: false
+#   diversity_loss_weight: 0.0
 
 text_pooling:
-  # Supported token policies:
-  # - content_only
-  # - content_plus_special
-  # - eos_only
-  # Accepted aliases:
-  # - content, non_special -> content_only
-  # - all                  -> content_plus_special
-  # CLI: --token_policy (str)
-  token_policy: content_only
-
-  # Supported token scoring values:
-  # - cosine
-  # - dot
-  # Accepted aliases:
-  # - normalized_dot       -> cosine
-  # - prototype_summary_dot -> dot
-  # CLI: --token_similarity or --token_scoring_type (str)
-  scoring_type: cosine
-
-  # If true, normalize summary/token features before token scoring.
-  # CLI: --normalize_for_token_scoring (bool)
-  normalize_for_token_scoring: true
-
-  # Token-scoring temperature. Must be positive.
-  # CLI: --tau_t or --token_pooling_temperature (float)
-  token_temperature: 0.07
-
-  # Explicit token ids used to build valid-token masks and special-token masks.
-  # Provide the ids that match the active tokenizer / preprocessing contract.
-  # CLI: no direct CLI flag; config-only mapping (dict[str, int])
-  special_token_ids:
-    # CLI: no direct CLI flag; config-only integer token id
+  token_policy: content_only   # [CANONICAL], {content_only, content_plus_special, eos_only}
+  scoring_type: cosine         # [CANONICAL], {cosine, dot}
+  normalize_for_token_scoring: true  # [CANONICAL]
+  token_temperature: 0.07      # [CANONICAL]
+  special_token_ids:           # [CANONICAL]
     bos_token_id: 49406
-    # CLI: no direct CLI flag; config-only integer token id
     eos_token_id: 49407
-    # CLI: no direct CLI flag; config-only integer token id
     pad_token_id: 0
-
-  # If true, raise when the token policy removes every candidate token in a sample.
-  # CLI: --error_on_empty_kept_tokens (bool)
-  error_on_empty_kept_tokens: true
+  error_on_empty_kept_tokens: true   # [CANONICAL]
 
 training:
-  # Train batch size per process. Positive integer.
-  # CLI: --batch_size (int)
-  batch_size: 32
+  batch_size: 256              # [CANONICAL]
+  epochs: 60                   # [CANONICAL]
+  log_period: 20               # [CANONICAL]
+  eval_frequency: 1            # [CANONICAL]
+  save_interval: 1             # [CANONICAL]
+  resume: false                # [CANONICAL]
+  resume_ckpt_file: ''         # [CANONICAL]
+  finetune: ''                 # [CANONICAL]
+  pretrain: ''                 # [CANONICAL]
+  img_aug: true                # [CANONICAL]
+  txt_aug: true                # [CANONICAL]
+  sampler: identity            # [CANONICAL]
+  num_instance: 2              # [CANONICAL]
+  num_workers: 4               # [CANONICAL]
+  training: true               # [CANONICAL]
+  freeze_image_backbone: false # [CANONICAL]
+  freeze_text_backbone: false  # [CANONICAL]
+  freeze_prototype_side: true  # [CANONICAL]
+  freeze_host_projectors: false  # [CANONICAL]
+  grad_clip: 0.0               # [CANONICAL]
+  amp: false                   # [CANONICAL]
+  amp_dtype: fp16              # [CANONICAL], {fp16, bf16}
+  proxy_temperature: 0.07      # [CANONICAL]
 
-  # Proxy-classifier temperature used by the amortized surrogate objective. Must be positive.
-  # CLI: --proxy_temperature (float)
-  proxy_temperature: 0.07
-
-  # Total number of epochs. Positive integer.
-  # CLI: --epochs or --num_epoch (int)
-  epochs: 60
-
-  # Console/TensorBoard logging period in training iterations. Positive integer.
-  # CLI: --log_period (int)
-  log_period: 20
-
-  # Validation frequency in epochs. Positive integer.
-  # CLI: --eval_frequency or --eval_period (int)
-  eval_frequency: 1
-
-  # Checkpoint save frequency in epochs. 0 disables periodic epoch_* checkpoints.
-  # CLI: --save_interval (int)
-  save_interval: 1
-
-  # Resume flag. true/false.
-  # CLI: --resume (bool)
-  resume: false
-
-  # Path to checkpoint used when resume=true.
-  # CLI: --resume_ckpt_file (str/path)
-  resume_ckpt_file: ''
-
-  # Optional finetune checkpoint path loaded into model weights before optimizer creation.
-  # In staged runs this should usually point to the previous stage checkpoint:
-  # - stage1 -> Stage 0 checkpoint for the selected host family
-  # - stage2 -> Stage 1 checkpoint
-  # - stage3 -> Stage 2 checkpoint
-  # CLI: --finetune (str/path)
-  finetune: ''
-
-  # Optional pretrain checkpoint path hook retained in schema.
-  # CLI: --pretrain (str/path)
-  pretrain: ''
-
-  # Image augmentation flag for training transforms.
-  # CLI: --img_aug (bool)
-  img_aug: true
-
-  # Text augmentation flag retained in schema.
-  # CLI: --txt_aug (bool)
-  txt_aug: true
-
-  # Supported sampler values:
-  # - identity
-  # - random
-  # CLI: --sampler (str)
-  sampler: identity
-
-  # Instances per identity for identity sampler. Positive integer.
-  # CLI: --num_instance (int)
-  num_instance: 2
-
-  # DataLoader worker count. Non-negative integer.
-  # CLI: --num_workers (int)
-  num_workers: 4
-
-  # true for training mode, false for evaluation-mode config usage.
-  # CLI: --test flips this to false; there is no direct --training flag (bool)
-  training: true
-
-  # Freeze CLIP visual backbone parameters. true/false.
-  # CLI: --freeze_image_backbone (bool)
-  freeze_image_backbone: true
-
-  # Freeze CLIP text backbone parameters. true/false.
-  # CLI: --freeze_text_backbone (bool)
-  freeze_text_backbone: true
-
-  # Gradient clipping norm. 0.0 disables clipping.
-  # CLI: --grad_clip (float)
-  grad_clip: 1.0
-
-  # Enable AMP autocast plus gradient scaling during training/evaluation on CUDA.
-  # CLI: --amp (bool)
-  amp: false
-
-  # Supported AMP compute dtypes:
-  # - fp16
-  # - bf16
-  # fp16 backbones may only be trained with amp_dtype=fp16.
-  # CLI: --amp_dtype (str)
-  amp_dtype: fp16
+  # [REMOVED]
+  # stage: stage0
 
 optimizer:
-  # Supported optimizers:
-  # - SGD
-  # - Adam
-  # - AdamW
-  # CLI: --optimizer_type or --optimizer (str)
-  type: AdamW
-
-  # Base/default learning rate for any params not overridden by group-specific lr values.
-  # CLI: --lr (float)
-  lr: 0.001
-
-  # Learning rate for prototype bank params.
-  # CLI: --lr_prototype_bank (float)
-  lr_prototype_bank: 0.001
-
-  # Learning rate for image/text projector params.
-  # CLI: --lr_projectors (float)
-  lr_projectors: 0.001
-
-  # Learning rate for prototype routing params.
-  # CLI: --lr_prototype_routing (float)
-  lr_prototype_routing: 0.001
-
-  # Learning rate for prototype pooling params such as text_pool_query.
-  # CLI: --lr_prototype_pooling (float)
-  lr_prototype_pooling: 0.001
-
-  # Learning rate for prototype contextualization params.
-  # CLI: --lr_prototype_contextualization (float)
-  lr_prototype_contextualization: 0.001
-
-  # Optional class-proxy learning rate override. null falls back to optimizer.lr.
-  # CLI: --lr_class_proxies (float)
-  lr_class_proxies: null
-
-  # Learning rate for image backbone params.
-  # 0.0 is common when freeze_image_backbone=true.
-  # CLI: --lr_image_backbone (float)
-  lr_image_backbone: 0.0
-
-  # Learning rate for text backbone params.
-  # 0.0 is common when freeze_text_backbone=true.
-  # CLI: --lr_text_backbone (float)
-  lr_text_backbone: 0.0
-
-  # Default weight decay for params without group-specific override.
-  # CLI: --weight_decay (float)
-  weight_decay: 0.01
-
-  # Weight decay overrides per parameter group.
-  # CLI: --weight_decay_prototype_bank (float)
-  weight_decay_prototype_bank: 0.01
-  # CLI: --weight_decay_projectors (float)
-  weight_decay_projectors: 0.05
-  # CLI: --weight_decay_prototype_routing (float)
-  weight_decay_prototype_routing: 0.05
-  # CLI: --weight_decay_prototype_pooling (float)
-  weight_decay_prototype_pooling: 0.05
-  # CLI: --weight_decay_prototype_contextualization (float)
-  weight_decay_prototype_contextualization: 0.05
-
-  # Optional class-proxy weight decay override. null falls back to optimizer.weight_decay.
-  # CLI: --weight_decay_class_proxies (float)
-  weight_decay_class_proxies: null
-  # CLI: --weight_decay_image_backbone (float)
-  weight_decay_image_backbone: 0.0
-  # CLI: --weight_decay_text_backbone (float)
-  weight_decay_text_backbone: 0.0
-
-  # SGD momentum when optimizer=SGD.
-  # CLI: --momentum (float)
+  type: Adam                   # [CANONICAL], {SGD, Adam, AdamW}
+  lr: 1.0e-5
+  lr_prototype_bank: 0.0
+  lr_projectors: 0.0
+  lr_prototype_routing: 0.0
+  lr_prototype_pooling: 0.0
+  lr_prototype_contextualization: 0.0
+  lr_host_projectors: 1.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
+  weight_decay: 4.0e-5
+  weight_decay_prototype_bank: 0.0
+  weight_decay_projectors: 0.0
+  weight_decay_prototype_routing: 0.0
+  weight_decay_prototype_pooling: 0.0
+  weight_decay_prototype_contextualization: 0.0
+  weight_decay_host_projectors: 4.0e-5
+  lr_class_proxies: 0.0
+  weight_decay_class_proxies: 0.0
+  weight_decay_image_backbone: 4.0e-5
+  weight_decay_text_backbone: 4.0e-5
   momentum: 0.9
-
-  # First Adam/AdamW beta term.
-  # CLI: --alpha (float)
   alpha: 0.9
-
-  # Second Adam/AdamW beta term.
-  # CLI: --beta (float)
   beta: 0.999
-
-  # Epoch milestones for step scheduler. Sorted integer list.
-  # CLI: --milestones N [N ...] (list[int])
-  milestones: [40, 50]
-
-  # Scheduler decay factor used by step/exp modes.
-  # CLI: --gamma (float)
+  lr_factor: 5.0
+  bias_lr_factor: 2.0
+  weight_decay_bias: 0.0
+  optimizer_eps: 1.0e-3
+  milestones: [45, 50]
   gamma: 0.1
-
-  # Warmup multiplier start factor.
-  # CLI: --warmup_factor (float)
   warmup_factor: 0.1
-
-  # Number of warmup epochs. Non-negative integer.
-  # CLI: --warmup_epochs (int)
   warmup_epochs: 5
-
-  # Supported warmup methods:
-  # - linear
-  # - constant
-  # CLI: --warmup_method (str)
   warmup_method: linear
-
-  # Supported scheduler modes:
-  # - step
-  # - exp
-  # - poly
-  # - cosine
-  # - linear
-  # CLI: --lr_scheduler or --lrscheduler (str)
-  scheduler: cosine
-
-  # Target learning rate used by cosine/poly/linear-style schedules.
-  # CLI: --target_lr (float)
+  scheduler: cosine            # {step, exp, poly, cosine, linear}
   target_lr: 0.0
-
-  # Power/exponent used by exp/poly schedules.
-  # CLI: --power (float)
   power: 0.9
 
 dataset:
-  # Supported dataset names in the current factory:
-  # - CUHK-PEDES
-  # - ICFG-PEDES
-  # - RSTPReid
-  # CLI: --dataset_name (str)
-  dataset_name: RSTPReid
-
-  # Dataset root directory. The loader expects dataset subfolders under this path.
-  # CLI: --root_dir (str/path)
-  root_dir: data
-
-  # Validation split selection during training.
-  # Supported values in current dataloader:
-  # - val
-  # - test
-  # CLI: --val_dataset (str)
-  val_dataset: test
-
-  # Dataset worker count copied into args.num_workers by config mapping.
-  # Keep aligned with training.num_workers unless you have a reason to separate them.
-  # CLI: --num_workers (int)
-  num_workers: 4
+  dataset_name: CUHK-PEDES     # [CANONICAL], {CUHK-PEDES, ICFG-PEDES, RSTPReid}
+  root_dir: data               # [CANONICAL]
+  val_dataset: test            # [CANONICAL], {val, test}
+  num_workers: 4               # [CANONICAL]
 
 logging:
-  # Enable Weights & Biases logging. true/false.
-  # CLI: --use_wandb (bool)
-  use_wandb: false
-
-  # wandb project name string.
-  # CLI: --wandb_project (str)
-  project: PAS
-
-  # wandb entity/team name or null.
-  # CLI: --wandb_entity (str)
-  entity: null
-
-  # Explicit wandb run name or null to let train.py/use output dir naming handle it.
-  # CLI: --wandb_run_name (str)
-  run_name: null
-
-  # Optional wandb group label or null.
-  # CLI: --wandb_group (str)
-  group: null
-
-  # wandb mode passed through to wandb.init(...).
-  # Common values: online, offline, disabled.
-  # CLI: --wandb_mode (str)
-  mode: online
-
-  # List of wandb tags.
-  # CLI: --wandb_tags [TAG ...] (list[str])
-  tags: []
-
-  # Optional notes string or null.
-  # CLI: --wandb_notes (str)
-  notes: null
-
-  # Train-side wandb logging interval in iterations.
-  # CLI: --wandb_log_interval (int)
-  log_interval: 50
-
-  # If true, try to upload source code snapshot to wandb.
-  # CLI: --wandb_log_code (bool)
-  log_code: false
-
-  # If true, include PAS debug scalars in logging payloads.
-  # CLI: --log_debug_metrics (bool)
-  log_debug_metrics: true
+  use_wandb: false             # [CANONICAL]
+  project: ITSELF              # [CANONICAL]
+  entity: null                 # [CANONICAL]
+  run_name: null               # [CANONICAL]
+  group: itself_base           # [CANONICAL]
+  mode: online                 # [CANONICAL]
+  tags: [itself, canonical_base]  # [CANONICAL]
+  notes: Single source config centered on ITSELF hyperparameters and shared training-process controls.
+  log_interval: 50             # [CANONICAL]
+  log_code: false              # [CANONICAL]
+  log_debug_metrics: false     # [CANONICAL]
 
 evaluation:
-  # Optional checkpoint path for standalone test.py evaluation.
-  # For stage3 fusion-calibration configs this should point to the same trained Stage 2 checkpoint
-  # referenced by training.finetune.
-  # CLI: --checkpoint_path or --checkpoint (str/path)
-  checkpoint_path: ''
+  checkpoint_path: ''          # [CANONICAL]
+  device: cuda                 # [CANONICAL]
+  cross_domain_generalization: false  # [CANONICAL]
+  target_domain: CUHK-PEDES    # [CANONICAL]
+  retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]  # [CANONICAL]
+  batch_size: 512              # [CANONICAL]
+  prototype_image_chunk_size: 32   # [CANONICAL]
+  prototype_text_chunk_size: 128   # [CANONICAL]
+  retrieval_scorer: exact      # [CANONICAL], {exact, approximate}
 
-  # Torch device string. Examples: cuda, cpu.
-  # CLI: --device (str)
-  device: cuda
-
-  # If true, test.py switches dataset_name to target_domain during cross-domain evaluation.
-  # CLI: --cross_domain_generalization (bool)
-  cross_domain_generalization: false
-
-  # Cross-domain target dataset name.
-  # In practice use one of: CUHK-PEDES, ICFG-PEDES, RSTPReid.
-  # CLI: --target_domain (str)
-  target_domain: RSTPReid
-
-  # Retrieval metric names to keep/report.
-  # Current evaluator computes/logs: R1, R5, R10, mAP, mINP, rSum.
-  # CLI: --retrieval_metrics METRIC [METRIC ...] (list[str])
-  retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
-
-  # Evaluation batch size for image/text retrieval loaders. Positive integer.
-  # CLI: --test_batch_size (int)
-  batch_size: 512
-
-  # Chunk size used by PAS blockwise image-side retrieval similarity computation.
-  # CLI: --prototype_eval_image_chunk_size (int)
-  prototype_image_chunk_size: 32
-
-  # Chunk size used by PAS blockwise text-side retrieval similarity computation.
-  # CLI: --prototype_eval_text_chunk_size (int)
-  prototype_text_chunk_size: 128
-
-  # Retrieval scorer used by Evaluator. Supported values: exact | approximate.
-  # Default exact preserves deployed pairwise pooling.
-  # CLI: --retrieval_scorer (str)
-  retrieval_scorer: exact
-
-
-
-
+itself_reference:              # [CANONICAL OPTIONAL]
+  enabled: true
+  path: itself_dataset_reference.yaml

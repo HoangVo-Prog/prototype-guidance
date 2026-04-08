@@ -6,7 +6,7 @@ from utils.config import apply_config_to_args, flatten_config_dict, load_itself_
 
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs')
-DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, 'default.yaml')
+DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, 'base.yaml')
 DEFAULT_RETRIEVAL_METRICS = ['R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum']
 LEGACY_RETRIEVAL_FLAGS = {
     '--use_loss_ret_exact': 'Legacy exact retrieval training is removed. Use --use_loss_ret for row-wise surrogate image-to-text retrieval.',
@@ -77,7 +77,6 @@ def build_parser():
 
     parser.add_argument('--model_name', default='PAS')
     parser.add_argument('--model_variant', default='pas_v1')
-    parser.add_argument('--training_mode', type=str, default='pas')
     parser.add_argument('--pretrain_choice', default='ViT-B/16')
     parser.add_argument('--image_backbone', default='clip_visual')
     parser.add_argument('--text_backbone', default='clip_text_transformer')
@@ -96,17 +95,29 @@ def build_parser():
     parser.add_argument('--use_host_loss', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_host', type=float, default=1.0)
     parser.add_argument('--itself_loss_names', type=str, default='tal+cid')
+    parser.add_argument('--loss_names', dest='itself_loss_names', type=str)
     parser.add_argument('--itself_only_global', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--only_global', dest='itself_only_global', action='store_true')
     parser.add_argument('--itself_select_ratio', type=float, default=0.4)
+    parser.add_argument('--select_ratio', dest='itself_select_ratio', type=float)
     parser.add_argument('--itself_grab_embed_dim', type=int, default=4096)
     parser.add_argument('--itself_score_weight_global', type=float, default=0.68)
     parser.add_argument('--itself_tau', type=float, default=0.015)
+    parser.add_argument('--tau', dest='itself_tau', type=float)
     parser.add_argument('--itself_margin', type=float, default=0.1)
+    parser.add_argument('--margin', dest='itself_margin', type=float)
     parser.add_argument('--itself_return_all', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--return_all', dest='itself_return_all', action='store_true')
     parser.add_argument('--itself_topk_type', type=str, default='mean')
+    parser.add_argument('--topk_type', dest='itself_topk_type', type=str)
     parser.add_argument('--itself_layer_index', type=int, default=-1)
+    parser.add_argument('--layer_index', dest='itself_layer_index', type=int)
     parser.add_argument('--itself_average_attn_weights', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--average_attn_weights', dest='itself_average_attn_weights', type=_str2bool, nargs='?', const=True)
     parser.add_argument('--itself_modify_k', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--modify_k', dest='itself_modify_k', action='store_true')
+    parser.add_argument('--lambda1_weight', type=float, default=0.5)
+    parser.add_argument('--lambda2_weight', type=float, default=3.5)
     parser.add_argument('--lambda_proxy', type=float, default=1.0)
     parser.add_argument('--lambda_proxy_image', type=float, default=None)
     parser.add_argument('--lambda_proxy_text', type=float, default=None)
@@ -181,7 +192,6 @@ def build_parser():
     parser.add_argument('--sampler', default='identity', help='choose sampler from [identity, random]')
     parser.add_argument('--num_instance', type=int, default=2)
     parser.add_argument('--num_workers', type=int, default=4)
-    parser.add_argument('--stage', '--training_stage', dest='training_stage', type=str, default='stage1')
     parser.add_argument('--freeze_host_projectors', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--freeze_image_backbone', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--freeze_text_backbone', type=_str2bool, nargs='?', const=True, default=True)
@@ -265,32 +275,22 @@ def _finalize_args(args):
         args.prototype_init_path = None
     if not args.retrieval_metrics:
         args.retrieval_metrics = list(DEFAULT_RETRIEVAL_METRICS)
-    args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
     args.host_type = str(getattr(args, 'host_type', 'clip')).lower()
     args = _apply_itself_reference(args)
     args.host_type = str(getattr(args, 'host_type', 'clip')).lower()
     override_config_data = getattr(args, 'override_config_data', {}) or {}
     model_config = override_config_data.get('model', {}) if isinstance(override_config_data.get('model', {}), dict) else {}
     cli_dests = getattr(args, 'cli_dests', set())
-    prototype_branch_explicit = 'use_prototype_branch' in cli_dests or 'use_prototype_branch' in model_config
     if args.use_prototype_branch is None:
-        args.use_prototype_branch = args.training_mode != 'vanilla_clip'
-    args.use_prototype_branch = bool(args.use_prototype_branch)
-    if args.training_mode == 'vanilla_clip' and not prototype_branch_explicit:
         args.use_prototype_branch = False
+    args.use_prototype_branch = bool(args.use_prototype_branch)
     args.use_prototype_bank = bool(args.use_prototype_bank) if args.use_prototype_branch else False
     args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling) if args.use_prototype_branch else False
     args.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
-    args.training_stage = str(getattr(args, 'training_stage', 'stage1')).lower()
     args.retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
     if args.fusion_enabled is None:
         args.fusion_enabled = args.use_prototype_branch
     args.fusion_enabled = bool(args.fusion_enabled) and args.use_prototype_branch
-    if args.training_stage == 'stage0':
-        args.use_prototype_branch = False
-        args.use_prototype_bank = False
-        args.use_image_conditioned_pooling = False
-        args.fusion_enabled = False
 
     legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)
     authoritative_contextualization = getattr(args, 'prototype_contextualization_enabled', None)
@@ -340,3 +340,4 @@ def get_args(argv=None):
     args = _finalize_args(args)
     validate_runtime_args_namespace(args)
     return args
+

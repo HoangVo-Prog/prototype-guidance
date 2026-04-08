@@ -15,7 +15,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 
     ('model', 'name'): 'model_name',
     ('model', 'variant'): 'model_variant',
-    ('model', 'training_mode'): 'training_mode',
     ('model', 'pretrain_choice'): 'pretrain_choice',
     ('model', 'image_backbone'): 'image_backbone',
     ('model', 'text_backbone'): 'text_backbone',
@@ -36,10 +35,9 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'use_prototype_branch'): 'use_prototype_branch',
     ('model', 'use_prototype_bank'): 'use_prototype_bank',
     ('model', 'use_image_conditioned_pooling'): 'use_image_conditioned_pooling',
+    ('model', 'return_debug_outputs'): 'return_debug_outputs',
+
     ('host', 'type'): 'host_type',
-    ('host', 'enabled'): 'use_host_loss',
-    ('host', 'loss_weight'): 'lambda_host',
-    ('host', 'use_custom_projector'): 'use_custom_projector',
     ('host', 'freeze_projectors'): 'freeze_host_projectors',
     ('host', 'itself_loss_names'): 'itself_loss_names',
     ('host', 'itself_only_global'): 'itself_only_global',
@@ -53,7 +51,8 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('host', 'itself_layer_index'): 'itself_layer_index',
     ('host', 'itself_average_attn_weights'): 'itself_average_attn_weights',
     ('host', 'itself_modify_k'): 'itself_modify_k',
-    ('model', 'return_debug_outputs'): 'return_debug_outputs',
+    ('host', 'itself_lambda1_weight'): 'lambda1_weight',
+    ('host', 'itself_lambda2_weight'): 'lambda2_weight',
 
     ('prototype', 'num_prototypes'): 'prototype_num_prototypes',
     ('prototype', 'prototype_dim'): 'prototype_dim',
@@ -71,41 +70,35 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'normalize_for_self_interaction'): 'normalize_for_self_interaction',
     ('prototype', 'normalize_for_routing'): 'normalize_for_routing',
     ('prototype', 'dead_prototype_threshold'): 'prototype_dead_threshold',
+
     ('fusion', 'enabled'): 'fusion_enabled',
     ('fusion', 'coefficient'): 'fusion_coefficient',
     ('fusion', 'coefficient_source'): 'fusion_coefficient_source',
-    ('objectives', 'use_host_loss'): 'use_host_loss',
-    ('objectives', 'lambda_host'): 'lambda_host',
-    ('objectives', 'use_proto_loss_ret'): 'use_loss_ret',
-    ('objectives', 'lambda_proto_ret'): 'lambda_ret',
-    ('objectives', 'use_diag_fidelity'): 'use_loss_diag',
-    ('objectives', 'lambda_diag'): 'lambda_diag',
-    ('objectives', 'use_diversity'): 'use_diversity_loss',
-    ('objectives', 'lambda_diversity'): 'diversity_loss_weight',
-    ('objectives', 'use_balance'): 'use_balancing_loss',
-    ('objectives', 'lambda_balance'): 'prototype_balance_loss_weight',
 
-    ('loss', 'lambda_proxy'): 'lambda_proxy',
-    ('loss', 'lambda_proxy_image'): 'lambda_proxy_image',
-    ('loss', 'lambda_proxy_text'): 'lambda_proxy_text',
-    ('loss', 'lambda_proxy_text_exact'): 'lambda_proxy_text_exact',
-    ('loss', 'use_loss_proxy_image'): 'use_loss_proxy_image',
-    ('loss', 'use_loss_proxy_text'): 'use_loss_proxy_text',
-    ('loss', 'use_loss_proxy_text_exact'): 'use_loss_proxy_text_exact',
-    ('loss', 'use_loss_align'): 'use_loss_align',
-    ('loss', 'lambda_align'): 'lambda_align',
-    ('loss', 'use_loss_diag'): 'use_loss_diag',
-    ('loss', 'lambda_diag'): 'lambda_diag',
-    ('loss', 'use_loss_ret'): 'use_loss_ret',
-    ('loss', 'retrieval_mode'): 'retrieval_mode',
-    ('loss', 'lambda_ret'): 'lambda_ret',
-    ('loss', 'use_loss_support'): 'use_loss_support',
-    ('loss', 'lambda_support'): 'lambda_support',
-    ('loss', 'support_min'): 'support_min',
-    ('loss', 'use_balancing_loss'): 'use_balancing_loss',
-    ('loss', 'balance_loss_weight'): 'prototype_balance_loss_weight',
-    ('loss', 'use_diversity_loss'): 'use_diversity_loss',
-    ('loss', 'diversity_loss_weight'): 'diversity_loss_weight',
+    ('objectives', 'objectives', 'use_host_loss'): 'use_host_loss',
+    ('objectives', 'objectives', 'use_loss_proxy_image'): 'use_loss_proxy_image',
+    ('objectives', 'objectives', 'use_loss_proxy_text'): 'use_loss_proxy_text',
+    ('objectives', 'objectives', 'use_loss_proxy_text_exact'): 'use_loss_proxy_text_exact',
+    ('objectives', 'objectives', 'use_loss_align'): 'use_loss_align',
+    ('objectives', 'objectives', 'use_loss_diag'): 'use_loss_diag',
+    ('objectives', 'objectives', 'use_loss_ret'): 'use_loss_ret',
+    ('objectives', 'objectives', 'retrieval_mode'): 'retrieval_mode',
+    ('objectives', 'objectives', 'use_loss_support'): 'use_loss_support',
+    ('objectives', 'objectives', 'support_min'): 'support_min',
+    ('objectives', 'objectives', 'use_balancing_loss'): 'use_balancing_loss',
+    ('objectives', 'objectives', 'use_diversity_loss'): 'use_diversity_loss',
+
+    ('objectives', 'lambda', 'host'): 'lambda_host',
+    ('objectives', 'lambda', 'proxy'): 'lambda_proxy',
+    ('objectives', 'lambda', 'proxy_image'): 'lambda_proxy_image',
+    ('objectives', 'lambda', 'proxy_text'): 'lambda_proxy_text',
+    ('objectives', 'lambda', 'proxy_text_exact'): 'lambda_proxy_text_exact',
+    ('objectives', 'lambda', 'align'): 'lambda_align',
+    ('objectives', 'lambda', 'diag'): 'lambda_diag',
+    ('objectives', 'lambda', 'ret'): 'lambda_ret',
+    ('objectives', 'lambda', 'support'): 'lambda_support',
+    ('objectives', 'lambda', 'balance'): 'prototype_balance_loss_weight',
+    ('objectives', 'lambda', 'diversity'): 'diversity_loss_weight',
 
     ('text_pooling', 'token_policy'): 'token_policy',
     ('text_pooling', 'scoring_type'): 'token_scoring_type',
@@ -129,7 +122,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'num_instance'): 'num_instance',
     ('training', 'num_workers'): 'num_workers',
     ('training', 'training'): 'training',
-    ('training', 'stage'): 'training_stage',
     ('training', 'freeze_image_backbone'): 'freeze_image_backbone',
     ('training', 'freeze_text_backbone'): 'freeze_text_backbone',
     ('training', 'freeze_prototype_side'): 'freeze_prototype_side',
@@ -204,7 +196,8 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('evaluation', 'retrieval_scorer'): 'retrieval_scorer',
 }
 
-
+# Backward-compatible alias paths (accepted by parser/loader) that are intentionally
+# not part of canonical configs/base.yaml.
 READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'num_epoch'): 'num_epoch',
     ('training', 'eval_period'): 'eval_period',
@@ -222,6 +215,40 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'diversity_loss_weight'): 'diversity_loss_weight',
     ('prototype', 'lambda_bal'): 'prototype_balance_loss_weight',
     ('prototype', 'lambda_div'): 'diversity_loss_weight',
+
+    ('objectives', 'use_host_loss'): 'use_host_loss',
+    ('objectives', 'lambda_host'): 'lambda_host',
+    ('objectives', 'use_proto_loss_ret'): 'use_loss_ret',
+    ('objectives', 'lambda_proto_ret'): 'lambda_ret',
+    ('objectives', 'use_diag_fidelity'): 'use_loss_diag',
+    ('objectives', 'lambda_diag'): 'lambda_diag',
+    ('objectives', 'use_diversity'): 'use_diversity_loss',
+    ('objectives', 'lambda_diversity'): 'diversity_loss_weight',
+    ('objectives', 'use_balance'): 'use_balancing_loss',
+    ('objectives', 'lambda_balance'): 'prototype_balance_loss_weight',
+
+    ('loss', 'lambda_proxy'): 'lambda_proxy',
+    ('loss', 'lambda_proxy_image'): 'lambda_proxy_image',
+    ('loss', 'lambda_proxy_text'): 'lambda_proxy_text',
+    ('loss', 'lambda_proxy_text_exact'): 'lambda_proxy_text_exact',
+    ('loss', 'use_loss_proxy_image'): 'use_loss_proxy_image',
+    ('loss', 'use_loss_proxy_text'): 'use_loss_proxy_text',
+    ('loss', 'use_loss_proxy_text_exact'): 'use_loss_proxy_text_exact',
+    ('loss', 'use_loss_align'): 'use_loss_align',
+    ('loss', 'lambda_align'): 'lambda_align',
+    ('loss', 'use_loss_diag'): 'use_loss_diag',
+    ('loss', 'lambda_diag'): 'lambda_diag',
+    ('loss', 'use_loss_ret'): 'use_loss_ret',
+    ('loss', 'retrieval_mode'): 'retrieval_mode',
+    ('loss', 'lambda_ret'): 'lambda_ret',
+    ('loss', 'use_loss_support'): 'use_loss_support',
+    ('loss', 'lambda_support'): 'lambda_support',
+    ('loss', 'support_min'): 'support_min',
+    ('loss', 'use_balancing_loss'): 'use_balancing_loss',
+    ('loss', 'balance_loss_weight'): 'prototype_balance_loss_weight',
+    ('loss', 'use_diversity_loss'): 'use_diversity_loss',
+    ('loss', 'diversity_loss_weight'): 'diversity_loss_weight',
+
     ('training', 'lambda_proxy'): 'lambda_proxy',
     ('training', 'lambda_proxy_image'): 'lambda_proxy_image',
     ('training', 'lambda_proxy_text'): 'lambda_proxy_text',
@@ -235,11 +262,27 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'lambda_diag'): 'lambda_diag',
     ('training', 'use_loss_ret'): 'use_loss_ret',
     ('training', 'lambda_ret'): 'lambda_ret',
+
     ('text_pooling', 'token_similarity'): 'token_scoring_type',
     ('text_pooling', 'tau_t'): 'token_pooling_temperature',
     ('optimizer', 'weight_decay_prototypes'): 'weight_decay_prototype_bank',
+    ('host', 'loss_names'): 'itself_loss_names',
+    ('host', 'only_global'): 'itself_only_global',
+    ('host', 'select_ratio'): 'itself_select_ratio',
+    ('host', 'tau'): 'itself_tau',
+    ('host', 'margin'): 'itself_margin',
+    ('host', 'return_all'): 'itself_return_all',
+    ('host', 'topk_type'): 'itself_topk_type',
+    ('host', 'layer_index'): 'itself_layer_index',
+    ('host', 'average_attn_weights'): 'itself_average_attn_weights',
+    ('host', 'modify_k'): 'itself_modify_k',
+    ('host', 'lambda1_weight'): 'lambda1_weight',
+    ('host', 'lambda2_weight'): 'lambda2_weight',
+    ('host', 'use_custom_projector'): 'use_custom_projector',
+    ('host', 'enabled'): 'use_host_loss',
+    ('host', 'loss_weight'): 'lambda_host',
+    ('training', 'val_dataset'): 'val_dataset',
 }
-
 
 SECTION_TEMPLATE = {
     'experiment': {},
@@ -247,8 +290,10 @@ SECTION_TEMPLATE = {
     'host': {},
     'prototype': {},
     'fusion': {},
-    'objectives': {},
-    'loss': {},
+    'objectives': {
+        'objectives': {},
+        'lambda': {},
+    },
     'text_pooling': {},
     'training': {},
     'optimizer': {},
@@ -258,9 +303,11 @@ SECTION_TEMPLATE = {
 }
 
 
-AUXILIARY_SECTION_KEYS = {'itself_reference'}
+# `loss` is retained as an alias-only section for backward compatibility.
+AUXILIARY_SECTION_KEYS = {'itself_reference', 'loss'}
 SECTION_KEYS = set(SECTION_TEMPLATE.keys()) | AUXILIARY_SECTION_KEYS
 ITSELF_REFERENCE_SECTION_KEYS = {'enabled', 'path'}
+OBJECTIVES_NESTED_SECTION_KEYS = {'objectives', 'lambda'}
 SUPPORTED_SPECIAL_TOKEN_ID_KEYS = {
     'bos_token_id',
     'cls_token_id',
@@ -268,6 +315,8 @@ SUPPORTED_SPECIAL_TOKEN_ID_KEYS = {
     'pad_token_id',
 }
 UNSUPPORTED_CONFIG_PATHS = {
+    ('model', 'training_mode'): 'model.training_mode was removed. Route model family via host.type (clip | itself).',
+    ('training', 'stage'): 'training.stage was removed. Control host/prototype behavior with host.type plus model.use_prototype_branch.',
     ('model', 'pooling_mode'): 'model.pooling_mode was removed because PAS only supports image-conditioned pooling.',
     ('text_pooling', 'exclude_special_tokens'): 'text_pooling.exclude_special_tokens was removed. Use text_pooling.token_policy.',
     ('text_pooling', 'eos_as_only_token'): 'text_pooling.eos_as_only_token was removed. Use text_pooling.token_policy.',
@@ -308,7 +357,6 @@ UNSUPPORTED_CONFIG_PATHS = {
 
 
 CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
-    ('model', 'training_mode'): ('pas', 'vanilla_clip'),
     ('host', 'type'): ('clip', 'itself'),
     ('host', 'itself_topk_type'): ('mean', 'std', 'layer_index', 'custom'),
     ('model', 'projector_type'): ('mlp2', 'linear'),
@@ -326,8 +374,8 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('prototype', 'contextualization_type'): ('self_attention', 'dense_self_attention', 'none'),
     ('text_pooling', 'token_policy'): ('content_only', 'content_plus_special', 'eos_only'),
     ('text_pooling', 'scoring_type'): ('cosine', 'dot'),
+    ('objectives', 'objectives', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
     ('loss', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
-    ('training', 'stage'): ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     ('training', 'amp_dtype'): tuple(AMP_DTYPE_ALIASES.keys()),
     ('optimizer', 'type'): ('SGD', 'Adam', 'AdamW'),
     ('optimizer', 'scheduler'): ('step', 'exp', 'poly', 'cosine', 'linear'),
@@ -337,9 +385,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('evaluation', 'retrieval_scorer'): ('exact', 'approximate'),
 }
 
-
 RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
-    'training_mode': ('pas', 'vanilla_clip'),
     'host_type': ('clip', 'itself'),
     'itself_topk_type': ('mean', 'std', 'layer_index', 'custom'),
     'projector_type': ('mlp2', 'linear'),
@@ -358,7 +404,6 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'token_policy': ('content_only', 'content_plus_special', 'eos_only'),
     'token_scoring_type': ('cosine', 'dot'),
     'retrieval_mode': ('surrogate_i2t', 'clip_bidirectional'),
-    'training_stage': ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     'amp_dtype': tuple(AMP_DTYPE_ALIASES.keys()),
     'optimizer': ('SGD', 'Adam', 'AdamW'),
     'lrscheduler': ('step', 'exp', 'poly', 'cosine', 'linear'),
@@ -367,7 +412,6 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'target_domain': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
     'retrieval_scorer': ('exact', 'approximate'),
 }
-
 
 def _format_allowed_values(allowed_values: Tuple[str, ...]) -> str:
     return '[' + ', '.join(repr(value) for value in allowed_values) + ']'
@@ -472,6 +516,8 @@ def load_itself_reference_runtime_overrides(
         ('host', 'itself_layer_index'): 'layer_index',
         ('host', 'itself_average_attn_weights'): 'average_attn_weights',
         ('host', 'itself_modify_k'): 'modify_k',
+        ('host', 'itself_lambda1_weight'): 'lambda1_weight',
+        ('host', 'itself_lambda2_weight'): 'lambda2_weight',
     }
     for (section, key), source_key in shared_to_pas.items():
         _set(section, key, shared_args.get(source_key))
@@ -517,8 +563,10 @@ def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
                 if isinstance(value, dict):
                     raise ValueError(f'Unsupported nested config mapping at `itself_reference.{key}`.')
             continue
+
         for key, value in section_value.items():
             path = (section_name, key)
+
             if path == ('text_pooling', 'special_token_ids'):
                 if not isinstance(value, dict):
                     raise ValueError('text_pooling.special_token_ids must be a mapping of token names to ids.')
@@ -529,10 +577,23 @@ def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
                         f'{unknown_keys}. Supported keys: {sorted(SUPPORTED_SPECIAL_TOKEN_ID_KEYS)}'
                     )
                 continue
+
+            if section_name == 'objectives' and key in OBJECTIVES_NESTED_SECTION_KEYS:
+                if not isinstance(value, dict):
+                    raise ValueError(f'objectives.{key} must be a mapping.')
+                for nested_key, nested_value in value.items():
+                    nested_path = (section_name, key, nested_key)
+                    if isinstance(nested_value, dict):
+                        raise ValueError(f'Unsupported nested config mapping at `objectives.{key}.{nested_key}`.')
+                    if nested_path not in supported_paths and nested_path not in UNSUPPORTED_CONFIG_PATHS:
+                        raise ValueError(f'Unknown config key `objectives.{key}.{nested_key}`.')
+                continue
+
             if isinstance(value, dict):
                 raise ValueError(f'Unsupported nested config mapping at `{section_name}.{key}`.')
             if path not in supported_leafs and path not in UNSUPPORTED_CONFIG_PATHS:
                 raise ValueError(f'Unknown config key `{section_name}.{key}`.')
+
 
 
 def validate_config_data(config_data: Dict[str, Any]) -> None:
@@ -552,57 +613,57 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         _validate_enum_value('.'.join(path), current, allowed_values)
     if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
         _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
-    training_mode = str(config_data.get('model', {}).get('training_mode', 'pas')).lower()
-    host_type = str(config_data.get('host', {}).get('type', 'clip')).lower()
-    use_prototype_branch = bool(config_data.get('model', {}).get('use_prototype_branch', training_mode != 'vanilla_clip'))
-    retrieval_mode = str(config_data.get('loss', {}).get('retrieval_mode', 'surrogate_i2t')).lower()
-    if training_mode == 'vanilla_clip' and host_type != 'clip':
-        raise ValueError('model.training_mode=vanilla_clip requires host.type=clip.')
-    if training_mode == 'vanilla_clip':
-        if bool(config_data.get('model', {}).get('use_prototype_bank', True)):
-            raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_bank=false.')
-        if bool(config_data.get('model', {}).get('use_image_conditioned_pooling', True)):
-            raise ValueError('model.training_mode=vanilla_clip requires model.use_image_conditioned_pooling=false.')
-        if str(config_data.get('text_pooling', {}).get('token_policy', 'eos_only')).lower() != 'eos_only':
-            raise ValueError('model.training_mode=vanilla_clip requires text_pooling.token_policy=eos_only.')
+
+    flat = flatten_config_dict(config_data)
+    host_type = str(flat.get('host_type', 'clip')).lower()
+    use_prototype_branch = bool(flat.get('use_prototype_branch', False))
+    use_prototype_bank = bool(flat.get('use_prototype_bank', use_prototype_branch))
+    use_image_conditioned_pooling = bool(flat.get('use_image_conditioned_pooling', use_prototype_branch))
+    retrieval_mode = str(flat.get('retrieval_mode', 'surrogate_i2t')).lower()
+
+    if not use_prototype_branch:
+        if use_prototype_bank:
+            raise ValueError('model.use_prototype_branch=false requires model.use_prototype_bank=false.')
+        if use_image_conditioned_pooling:
+            raise ValueError('model.use_prototype_branch=false requires model.use_image_conditioned_pooling=false.')
+
+    if host_type == 'clip' and not use_prototype_branch:
+        if str(flat.get('token_policy', 'eos_only')).lower() != 'eos_only':
+            raise ValueError('host.type=clip with model.use_prototype_branch=false requires text_pooling.token_policy=eos_only.')
         if retrieval_mode != 'clip_bidirectional':
-            raise ValueError('model.training_mode=vanilla_clip requires loss.retrieval_mode=clip_bidirectional.')
-        if not bool(config_data.get('loss', {}).get('use_loss_ret', True)):
-            raise ValueError('model.training_mode=vanilla_clip requires loss.use_loss_ret=true.')
-        if str(config_data.get('evaluation', {}).get('retrieval_scorer', 'exact')).lower() != 'exact':
-            raise ValueError('model.training_mode=vanilla_clip requires evaluation.retrieval_scorer=exact.')
+            raise ValueError('host.type=clip with model.use_prototype_branch=false requires objectives.objectives.retrieval_mode=clip_bidirectional.')
+        if not bool(flat.get('use_loss_ret', True)):
+            raise ValueError('host.type=clip with model.use_prototype_branch=false requires objectives.objectives.use_loss_ret=true.')
+        if str(flat.get('retrieval_scorer', 'exact')).lower() != 'exact':
+            raise ValueError('host.type=clip with model.use_prototype_branch=false requires evaluation.retrieval_scorer=exact.')
         incompatible_flags = {
-            'loss.use_loss_proxy_image': bool(config_data.get('loss', {}).get('use_loss_proxy_image', False)),
-            'loss.use_loss_proxy_text': bool(config_data.get('loss', {}).get('use_loss_proxy_text', False)),
-            'loss.use_loss_proxy_text_exact': bool(config_data.get('loss', {}).get('use_loss_proxy_text_exact', False)),
-            'loss.use_loss_align': bool(config_data.get('loss', {}).get('use_loss_align', False)),
-            'loss.use_loss_diag': bool(config_data.get('loss', {}).get('use_loss_diag', False)),
-            'loss.use_loss_support': bool(config_data.get('loss', {}).get('use_loss_support', False)),
-            'loss.use_balancing_loss': bool(config_data.get('loss', {}).get('use_balancing_loss', False)),
-            'loss.use_diversity_loss': bool(config_data.get('loss', {}).get('use_diversity_loss', False)),
+            'objectives.objectives.use_loss_proxy_image': bool(flat.get('use_loss_proxy_image', False)),
+            'objectives.objectives.use_loss_proxy_text': bool(flat.get('use_loss_proxy_text', False)),
+            'objectives.objectives.use_loss_proxy_text_exact': bool(flat.get('use_loss_proxy_text_exact', False)),
+            'objectives.objectives.use_loss_align': bool(flat.get('use_loss_align', False)),
+            'objectives.objectives.use_loss_diag': bool(flat.get('use_loss_diag', False)),
+            'objectives.objectives.use_loss_support': bool(flat.get('use_loss_support', False)),
+            'objectives.objectives.use_balancing_loss': bool(flat.get('use_balancing_loss', False)),
+            'objectives.objectives.use_diversity_loss': bool(flat.get('use_diversity_loss', False)),
         }
         enabled_incompatible = sorted(name for name, enabled in incompatible_flags.items() if enabled)
         if enabled_incompatible:
             raise ValueError(
-                'model.training_mode=vanilla_clip does not support prototype/auxiliary losses. '
+                'host.type=clip with model.use_prototype_branch=false does not support prototype/auxiliary losses. '
                 f'Disable: {enabled_incompatible}.'
             )
     elif retrieval_mode == 'clip_bidirectional':
-        raise ValueError('loss.retrieval_mode=clip_bidirectional is only supported when model.training_mode=vanilla_clip.')
-    if (
-        training_mode != 'vanilla_clip'
-        and use_prototype_branch
-        and bool(config_data.get('model', {}).get('use_prototype_bank', True))
-        and not bool(config_data.get('model', {}).get('use_image_conditioned_pooling', True))
-    ):
+        raise ValueError(
+            'objectives.objectives.retrieval_mode=clip_bidirectional is only supported when '
+            'host.type=clip and model.use_prototype_branch=false.'
+        )
+
+    if use_prototype_branch and use_prototype_bank and not use_image_conditioned_pooling:
         raise ValueError(
             'model.use_prototype_bank=true requires model.use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'
         )
 
-    training_stage = str(config_data.get('training', {}).get('stage', 'stage1')).lower()
-    if training_stage == 'stage0' and use_prototype_branch:
-        raise ValueError('training.stage=stage0 is reserved for host-only baselines and requires model.use_prototype_branch=false.')
 
 
 def load_yaml_config(default_path: Optional[str] = None, override_path: Optional[str] = None) -> Dict[str, Any]:
@@ -623,53 +684,56 @@ def validate_runtime_args_namespace(args) -> None:
     retrieval_metrics = getattr(args, 'retrieval_metrics', None)
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
-    training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
+
     host_type = str(getattr(args, 'host_type', 'clip')).lower()
-    use_prototype_branch = bool(getattr(args, 'use_prototype_branch', training_mode != 'vanilla_clip'))
+    use_prototype_branch = bool(getattr(args, 'use_prototype_branch', False))
+    use_prototype_bank = bool(getattr(args, 'use_prototype_bank', use_prototype_branch))
+    use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', use_prototype_branch))
     retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
-    if training_mode == 'vanilla_clip' and host_type != 'clip':
-        raise ValueError('model.training_mode=vanilla_clip requires host.type=clip.')
-    if training_mode == 'vanilla_clip':
-        if use_prototype_branch:
-            raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_branch=false.')
-        if bool(getattr(args, 'use_prototype_bank', True)):
-            raise ValueError('model.training_mode=vanilla_clip requires model.use_prototype_bank=false.')
-        if bool(getattr(args, 'use_image_conditioned_pooling', True)):
-            raise ValueError('model.training_mode=vanilla_clip requires model.use_image_conditioned_pooling=false.')
+
+    if not use_prototype_branch:
+        if use_prototype_bank:
+            raise ValueError('use_prototype_branch=false requires use_prototype_bank=false.')
+        if use_image_conditioned_pooling:
+            raise ValueError('use_prototype_branch=false requires use_image_conditioned_pooling=false.')
+
+    if host_type == 'clip' and not use_prototype_branch:
         if str(getattr(args, 'token_policy', 'eos_only')).lower() != 'eos_only':
-            raise ValueError('model.training_mode=vanilla_clip requires text_pooling.token_policy=eos_only.')
+            raise ValueError('host_type=clip with use_prototype_branch=false requires token_policy=eos_only.')
         if retrieval_mode != 'clip_bidirectional':
-            raise ValueError('model.training_mode=vanilla_clip requires loss.retrieval_mode=clip_bidirectional.')
+            raise ValueError('host_type=clip with use_prototype_branch=false requires retrieval_mode=clip_bidirectional.')
         if not bool(getattr(args, 'use_loss_ret', True)):
-            raise ValueError('model.training_mode=vanilla_clip requires loss.use_loss_ret=true.')
+            raise ValueError('host_type=clip with use_prototype_branch=false requires use_loss_ret=true.')
         if str(getattr(args, 'retrieval_scorer', 'exact')).lower() != 'exact':
-            raise ValueError('model.training_mode=vanilla_clip requires evaluation.retrieval_scorer=exact.')
+            raise ValueError('host_type=clip with use_prototype_branch=false requires retrieval_scorer=exact.')
         incompatible_flags = {
-            'loss.use_loss_proxy_image': bool(getattr(args, 'use_loss_proxy_image', False)),
-            'loss.use_loss_proxy_text': bool(getattr(args, 'use_loss_proxy_text', False)),
-            'loss.use_loss_proxy_text_exact': bool(getattr(args, 'use_loss_proxy_text_exact', False)),
-            'loss.use_loss_align': bool(getattr(args, 'use_loss_align', False)),
-            'loss.use_loss_diag': bool(getattr(args, 'use_loss_diag', False)),
-            'loss.use_loss_support': bool(getattr(args, 'use_loss_support', False)),
-            'loss.use_balancing_loss': bool(getattr(args, 'use_balancing_loss', False)),
-            'loss.use_diversity_loss': bool(getattr(args, 'use_diversity_loss', False)),
+            'use_loss_proxy_image': bool(getattr(args, 'use_loss_proxy_image', False)),
+            'use_loss_proxy_text': bool(getattr(args, 'use_loss_proxy_text', False)),
+            'use_loss_proxy_text_exact': bool(getattr(args, 'use_loss_proxy_text_exact', False)),
+            'use_loss_align': bool(getattr(args, 'use_loss_align', False)),
+            'use_loss_diag': bool(getattr(args, 'use_loss_diag', False)),
+            'use_loss_support': bool(getattr(args, 'use_loss_support', False)),
+            'use_balancing_loss': bool(getattr(args, 'use_balancing_loss', False)),
+            'use_diversity_loss': bool(getattr(args, 'use_diversity_loss', False)),
         }
         enabled_incompatible = sorted(name for name, enabled in incompatible_flags.items() if enabled)
         if enabled_incompatible:
             raise ValueError(
-                'model.training_mode=vanilla_clip does not support prototype/auxiliary losses. '
+                'host_type=clip with use_prototype_branch=false does not support prototype/auxiliary losses. '
                 f'Disable: {enabled_incompatible}.'
             )
     elif retrieval_mode == 'clip_bidirectional':
-        raise ValueError('loss.retrieval_mode=clip_bidirectional is only supported when model.training_mode=vanilla_clip.')
-    if training_mode != 'vanilla_clip' and use_prototype_branch and bool(getattr(args, 'use_prototype_bank', True)) and not bool(getattr(args, 'use_image_conditioned_pooling', True)):
+        raise ValueError(
+            'retrieval_mode=clip_bidirectional is only supported when '
+            'host_type=clip and use_prototype_branch=false.'
+        )
+
+    if use_prototype_branch and use_prototype_bank and not use_image_conditioned_pooling:
         raise ValueError(
             'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'
         )
 
-    if str(getattr(args, 'training_stage', 'stage1')).lower() == 'stage0' and use_prototype_branch:
-        raise ValueError('training.stage=stage0 is reserved for host-only baselines and requires model.use_prototype_branch=false.')
 
 
 def _normalize_value(dest: str, value: Any) -> Any:
@@ -772,5 +836,7 @@ def dump_yaml_config(path: str, config_data: Dict[str, Any]) -> None:
         os.makedirs(directory, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as handle:
         yaml.safe_dump(config_data, handle, default_flow_style=False, sort_keys=False)
+
+
 
 

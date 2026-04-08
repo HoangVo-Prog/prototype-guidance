@@ -78,8 +78,8 @@ def log_parameter_trainability(logger, model, args):
     class_proxies = getattr(getattr(model.prototype_head, 'losses', None), 'class_proxies', None)
     proxy_total, proxy_trainable = _count_parameters([class_proxies]) if class_proxies is not None else (0, 0)
     logger.info(
-        'Freeze status: stage=%s image_backbone=%s text_backbone=%s prototype_side=%s projectors=%s',
-        str(getattr(args, 'training_stage', 'stage1')),
+        'Freeze status: host_type=%s image_backbone=%s text_backbone=%s prototype_side=%s projectors=%s',
+        str(getattr(args, 'host_type', 'clip')),
         'frozen' if bool(getattr(args, 'freeze_image_backbone', True)) else 'trainable',
         'frozen' if bool(getattr(args, 'freeze_text_backbone', True)) else 'trainable',
         'frozen' if bool(getattr(args, 'freeze_prototype_side', False)) else 'trainable',

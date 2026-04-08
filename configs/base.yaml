@@ -1,13 +1,18 @@
+# Canonical single config file.
+# Decision policy:
+# - Keep: ITSELF hyperparameters from adapter/WACV2026-Oral-ITSELF/utils/options.py
+# - Keep: shared training-process/runtime controls from this repo (optimizer scheduler logging eval process)
+# - Remove from active use: legacy training_mode/stage routing and split loss section
+
 experiment:
-  name: stage0_itself_host_only
-  output_dir: runs
+  name: ITSELF
+  output_dir: run_logs
   seed: 1
   local_rank: 0
 
 model:
-  name: PAS
-  variant: stage0_itself_host_only
-  training_mode: pas
+  name: ITSELF
+  variant: itself_base
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
   text_backbone: clip_text_transformer
@@ -30,14 +35,8 @@ model:
   use_image_conditioned_pooling: false
   return_debug_outputs: false
 
-itself_reference:
-  enabled: true
-  path: ../itself_dataset_reference.yaml
-
 host:
   type: itself
-  enabled: true
-  loss_weight: 1.0
   freeze_projectors: false
   itself_loss_names: tal+cid
   itself_only_global: false
@@ -46,11 +45,13 @@ host:
   itself_score_weight_global: 0.32
   itself_tau: 0.015
   itself_margin: 0.1
-  itself_return_all: true
-  itself_topk_type: custom
+  itself_return_all: false
+  itself_topk_type: mean
   itself_layer_index: -1
   itself_average_attn_weights: true
-  itself_modify_k: true
+  itself_modify_k: false
+  itself_lambda1_weight: 0.5
+  itself_lambda2_weight: 3.5
 
 prototype:
   num_prototypes: 0
@@ -76,38 +77,31 @@ fusion:
   coefficient_source: fixed
 
 objectives:
-  use_host_loss: true
-  lambda_host: 1.0
-  use_proto_loss_ret: false
-  lambda_proto_ret: 0.0
-  use_diag_fidelity: false
-  lambda_diag: 0.0
-  use_diversity: false
-  lambda_diversity: 0.0
-  use_balance: false
-  lambda_balance: 0.0
-
-loss:
-  use_diversity_loss: false
-  diversity_loss_weight: 0.0
-  use_balancing_loss: false
-  balance_loss_weight: 0.0
-  use_loss_proxy_image: false
-  use_loss_proxy_text: false
-  use_loss_proxy_text_exact: false
-  lambda_proxy_image: 0.0
-  lambda_proxy_text: 0.0
-  lambda_proxy_text_exact: 0.0
-  use_loss_align: false
-  lambda_align: 0.0
-  use_loss_diag: false
-  lambda_diag: 0.0
-  use_loss_ret: false
-  retrieval_mode: surrogate_i2t
-  lambda_ret: 0.0
-  use_loss_support: false
-  lambda_support: 0.0
-  support_min: 2.0
+  objectives:
+    use_host_loss: true
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: false
+    use_loss_diag: false
+    use_loss_ret: false
+    retrieval_mode: surrogate_i2t
+    use_loss_support: false
+    support_min: 2.0
+    use_balancing_loss: false
+    use_diversity_loss: false
+  lambda:
+    host: 1.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.0
+    diag: 0.0
+    ret: 0.0
+    support: 0.0
+    balance: 0.0
+    diversity: 0.0
 
 text_pooling:
   token_policy: content_only
@@ -121,8 +115,8 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 128
-  epochs: 15
+  batch_size: 256
+  epochs: 60
   log_period: 20
   eval_frequency: 1
   save_interval: 1
@@ -136,7 +130,6 @@ training:
   num_instance: 2
   num_workers: 4
   training: true
-  stage: stage0
   freeze_image_backbone: false
   freeze_text_backbone: false
   freeze_prototype_side: true
@@ -164,8 +157,8 @@ optimizer:
   weight_decay_prototype_pooling: 0.0
   weight_decay_prototype_contextualization: 0.0
   weight_decay_host_projectors: 4.0e-5
-  lr_class_proxies: 0.0001
-  weight_decay_class_proxies: 4.0e-5
+  lr_class_proxies: 0.0
+  weight_decay_class_proxies: 0.0
   weight_decay_image_backbone: 4.0e-5
   weight_decay_text_backbone: 4.0e-5
   momentum: 0.9
@@ -175,7 +168,7 @@ optimizer:
   bias_lr_factor: 2.0
   weight_decay_bias: 0.0
   optimizer_eps: 1.0e-3
-  milestones: [40, 50]
+  milestones: [45, 50]
   gamma: 0.1
   warmup_factor: 0.1
   warmup_epochs: 5
@@ -185,29 +178,29 @@ optimizer:
   power: 0.9
 
 dataset:
-  dataset_name: RSTPReid
+  dataset_name: CUHK-PEDES
   root_dir: data
   val_dataset: test
   num_workers: 4
 
 logging:
-  use_wandb: true
-  project: PAS-Stage0
+  use_wandb: false
+  project: ITSELF
   entity: null
   run_name: null
-  group: stage0_itself_host_only
+  group: itself_base
   mode: online
-  tags: [pas, itself, stage0, host_only]
-  notes: Stage 0 creates the PAS ITSELF host-only checkpoint and is the reproduction run used to verify whether PAS matches the original ITSELF metrics before any prototype training.
+  tags: [itself, canonical_base]
+  notes: Single source config centered on ITSELF hyperparameters and shared training-process controls.
   log_interval: 50
   log_code: false
-  log_debug_metrics: true
+  log_debug_metrics: false
 
 evaluation:
   checkpoint_path: ''
   device: cuda
   cross_domain_generalization: false
-  target_domain: RSTPReid
+  target_domain: CUHK-PEDES
   retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
   batch_size: 512
   prototype_image_chunk_size: 32
