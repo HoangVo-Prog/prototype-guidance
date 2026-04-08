@@ -20,6 +20,22 @@ class PrototypeScorerConfig:
             raise ValueError("temperature must be > 0")
 
 
+@dataclass(frozen=True)
+class PrototypeScoreSurface:
+    """Prototype score surface with explicit `s_proto` naming."""
+
+    s_proto: torch.Tensor
+    score_orientation: str = "image_to_text"
+
+    def __post_init__(self) -> None:
+        if self.s_proto.ndim != 2:
+            raise ValueError(
+                f"s_proto must be rank-2 [B, B], got {tuple(self.s_proto.shape)}"
+            )
+        if self.s_proto.shape[0] != self.s_proto.shape[1]:
+            raise ValueError(f"s_proto must be square [B, B], got {tuple(self.s_proto.shape)}")
+
+
 class PrototypeScorer:
     """Compute prototype score matrix `[B_img, B_txt]`."""
 
@@ -110,3 +126,10 @@ class PrototypeScorer:
             images = F.normalize(images, p=2, dim=-1)
             texts = F.normalize(texts, p=2, dim=-1)
         return torch.sum(images * texts, dim=-1) / self.config.temperature
+
+    def build_score_surface(
+        self, z_i_retrieval: torch.Tensor, z_hat_text: torch.Tensor
+    ) -> PrototypeScoreSurface:
+        """Return typed prototype score surface for integration runtime."""
+        s_proto = self.score(z_i_retrieval=z_i_retrieval, z_hat_text=z_hat_text)
+        return PrototypeScoreSurface(s_proto=s_proto)
