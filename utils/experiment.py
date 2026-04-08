@@ -10,6 +10,18 @@ except ImportError:  # pragma: no cover - optional dependency
     wandb = None
 
 
+_WANDB_DEBUG_PREFIXES = ('debug/', 'debugs/')
+
+
+def _strip_debug_metrics(metrics: Dict[str, object]) -> Dict[str, object]:
+    sanitized = {}
+    for key, value in metrics.items():
+        if isinstance(key, str) and key.startswith(_WANDB_DEBUG_PREFIXES):
+            continue
+        sanitized[key] = value
+    return sanitized
+
+
 class ExperimentTracker:
     def __init__(self, args, output_dir: str, distributed_rank: int = 0):
         self.logger = logging.getLogger('pas.experiment')
@@ -78,7 +90,6 @@ class ExperimentTracker:
         try:
             wandb.define_metric('train/step')
             wandb.define_metric('train/*', step_metric='train/step')
-            wandb.define_metric('debug/*', step_metric='train/step')
             wandb.define_metric('val/epoch')
             wandb.define_metric('val/*', step_metric='val/epoch')
         except Exception as exc:  # pragma: no cover
@@ -87,10 +98,13 @@ class ExperimentTracker:
     def log(self, metrics: Dict[str, object], step: Optional[int] = None, commit: bool = True):
         if not self.enabled or self._run is None or not metrics:
             return
-        if step is None:
-            wandb.log(metrics, commit=commit)
+        filtered_metrics = _strip_debug_metrics(metrics)
+        if not filtered_metrics:
             return
-        wandb.log(metrics, step=step, commit=commit)
+        if step is None:
+            wandb.log(filtered_metrics, commit=commit)
+            return
+        wandb.log(filtered_metrics, step=step, commit=commit)
 
     def finish(self):
         if self.enabled and self._run is not None:
