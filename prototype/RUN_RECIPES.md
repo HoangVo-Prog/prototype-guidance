@@ -6,6 +6,18 @@ All stage/mode runs MUST use:
 python train.py --config configs/<stage_mode>.yaml
 ```
 
+## Training Loop Surface
+- `train.py` runs a full epoch loop with `torch.utils.data.DataLoader`.
+- Checkpoints are saved under `runtime.checkpoint.checkpoint_dir` every `runtime.checkpoint.save_every_epochs`.
+- Resume is config-driven via `runtime.checkpoint.resume_from`.
+- Each config under `configs/` is standalone and includes:
+  - `runtime.epochs`
+  - `runtime.batch.*`
+  - `runtime.data.*`
+  - `runtime.optimizer.*`
+  - `runtime.checkpoint.*`
+  - `runtime.output.log_dir`
+
 ## Preconditions
 - Install launcher dependencies: `pyyaml`, `torch`.
 - Do not modify `prototype/adapter/WACV2026-Oral-ITSELF/**`.
@@ -106,3 +118,5 @@ python train.py --config configs/stage3_clip.yaml
   - `s_total = s_host + lambda_f * s_proto`
 - `s_host` remains mode-bound (`s_host^itself` vs `s_host^clip`).
 - CLIP mode has no GRAB/local branch assumption.
+- To resume any stage, set:
+  - `runtime.checkpoint.resume_from: outputs/<stage_mode>/checkpoints/latest.pt`

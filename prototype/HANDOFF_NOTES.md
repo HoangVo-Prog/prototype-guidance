@@ -18,6 +18,10 @@ Core invariants restated:
 - Config directory: `configs/`
 - Canonical command pattern:
   - `python train.py --config configs/<stage_mode>.yaml`
+- Launcher behavior now includes:
+  - dataloader construction
+  - epoch-based training loop
+  - checkpoint save/resume via config
 - No test helper and no python one-liner is required for primary launch.
 
 ## Status Snapshot
@@ -109,8 +113,10 @@ Declared and implemented runtime matrix:
    - `python train.py --config configs/stage2_clip.yaml`
    - `python train.py --config configs/stage3_itself.yaml`
    - `python train.py --config configs/stage3_clip.yaml`
-3. After runtime dependencies are available, install `pytest` and run verification suite for Phase F/G certification.
-4. If verification passes, update milestone certification for Phase F and Phase G.
+3. Verify checkpoint resume with one stage by setting:
+   - `runtime.checkpoint.resume_from: outputs/<stage>/checkpoints/latest.pt`
+4. After runtime dependencies are available, install `pytest` and run verification suite for Phase F/G certification.
+5. If verification passes, update milestone certification for Phase F and Phase G.
 
 ## Run Entry References
 - Minimal phase launch recipes:

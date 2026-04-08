@@ -50,16 +50,26 @@ loss:
 
 runtime:
   host_runtime: synthetic
-  steps: 1
+  seed: 1337
+  epochs: 2
   batch:
     batch_size: 4
     seq_len: 6
+    image_shape: [3, 32, 16]
+  data:
+    dataset_size: 32
+    shuffle: true
+    num_workers: 0
+    pin_memory: false
+    drop_last: false
   synthetic:
     feature_dim: 8
   optimizer:
     host_lr: 0.0001
     prototype_lr: 0.0001
+  checkpoint:
+    checkpoint_dir: outputs/stage2_clip/checkpoints
+    save_every_epochs: 1
+    resume_from: null
   output:
     log_dir: outputs/stage2_clip/logs
-    checkpoint_dir: outputs/stage2_clip/checkpoints
-
