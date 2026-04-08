@@ -188,14 +188,18 @@ This phase is complete only if:
 - `s_host` is never used without mode binding in integration code
 
 ### Checklist
-- [ ] Implement host-mode aware runtime loader
-- [ ] Implement feature surface extraction for `train_mode = itself`
-- [ ] Implement feature surface extraction for `train_mode = clip`
-- [ ] Bind `s_host` explicitly to `s_host^itself` or `s_host^clip`
-- [ ] Add provenance assertions and shape checks
+- [x] Implement host-mode aware runtime loader
+- [x] Implement feature surface extraction for `train_mode = itself`
+- [x] Implement feature surface extraction for `train_mode = clip`
+- [x] Bind `s_host` explicitly to `s_host^itself` or `s_host^clip`
+- [x] Add provenance assertions and shape checks
 
 ### Completion note
-- Not completed yet.
+- Completed on 2026-04-08.
+- Files added/edited: `prototype/integration/feature_surface.py`, `prototype/integration/host_runtime.py`, `prototype/integration/model_runtime.py`, `prototype/integration/__init__.py`, `prototype/tests/test_feature_provenance.py`.
+- Major decisions: explicit mode-bound host score surfaces (`s_host^itself` and `s_host^clip`), strict tensor provenance naming, shape validation at extraction and score-surface boundaries.
+- Tests: local user validation confirmed `prototype/tests/test_feature_provenance.py` passes in runnable environment; no-touch host diff remains clean.
+- Known limitations: none blocking Phase C/D.
 
 ---
 
@@ -233,16 +237,20 @@ This phase is complete only if:
 - diagonal exact branch is isolated from off-diagonal leakage
 
 ### Checklist
-- [ ] Implement prototype bank
-- [ ] Implement optional contextualizer
-- [ ] Implement router with row-sum=1 guarantee
-- [ ] Implement basis builder from token states
-- [ ] Implement surrogate builder with row-wise semantics
-- [ ] Implement prototype projector
-- [ ] Implement prototype scorer returning `[B, B]`
+- [x] Implement prototype bank
+- [x] Implement optional contextualizer
+- [x] Implement router with row-sum=1 guarantee
+- [x] Implement basis builder from token states
+- [x] Implement surrogate builder with row-wise semantics
+- [x] Implement prototype projector
+- [x] Implement prototype scorer returning `[B, B]`
 
 ### Completion note
-- Not completed yet.
+- Completed on 2026-04-08.
+- Files added/edited: `prototype/prototype_branch/prototype_bank.py`, `prototype/prototype_branch/contextualizer.py`, `prototype/prototype_branch/router.py`, `prototype/prototype_branch/basis_builder.py`, `prototype/prototype_branch/surrogate_builder.py`, `prototype/prototype_branch/projector.py`, `prototype/prototype_branch/scorer.py`, `prototype/prototype_branch/__init__.py`, `prototype/tests/test_prototype_branch_phase_c.py`.
+- Major decisions: strict token-level basis contract, explicit row-wise pairwise surrogate semantics, separate diagonal helper primitives for future `L_diag` without loss implementation, typed outputs and shape assertions.
+- Tests: local user validation confirmed `prototype/tests/test_prototype_branch_phase_c.py` passes in runnable environment; no-touch host diff remains clean.
+- Known limitations: none blocking Phase D.
 
 ---
 
@@ -271,13 +279,17 @@ This phase is complete only if:
 - fusion works in both host modes
 
 ### Checklist
-- [ ] Implement residual fusion module
-- [ ] Enforce score-level-only fusion contract
-- [ ] Support both ITSELF-host and CLIP-host fusion surfaces
-- [ ] Add parity assertion path for `lambda_f = 0`
+- [x] Implement residual fusion module
+- [x] Enforce score-level-only fusion contract
+- [x] Support both ITSELF-host and CLIP-host fusion surfaces
+- [x] Add parity assertion path for `lambda_f = 0`
 
 ### Completion note
-- Not completed yet.
+- Completed on 2026-04-08.
+- Files added/edited: `prototype/fusion/residual_fusion.py`, `prototype/fusion/__init__.py`, `prototype/integration/model_runtime.py`, `prototype/prototype_branch/scorer.py`, `prototype/tests/test_fusion_contract.py`.
+- Major decisions: fusion restricted to score tensors `[B, B]` only, exact mode-bound host score names (`s_host_itself`, `s_host_clip`), explicit `lambda_f=0` parity path, hard rejection of shape/rank mismatch and accidental embedding-level fusion.
+- Tests: local user validation confirmed `prototype/tests/test_fusion_contract.py` passes in runnable environment; no-touch host diff remains clean.
+- Known limitations: none blocking Phase E.
 
 ---
 
@@ -474,9 +486,9 @@ This phase is complete only if a reviewer can identify how to launch each suppor
 Codex MUST tick these only when the corresponding phase gate is satisfied.
 
 - [x] Phase A complete
-- [ ] Phase B complete
-- [ ] Phase C complete
-- [ ] Phase D complete
+- [x] Phase B complete
+- [x] Phase C complete
+- [x] Phase D complete
 - [ ] Phase E complete
 - [ ] Phase F complete
 - [ ] Phase G complete
