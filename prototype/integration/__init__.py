@@ -11,6 +11,11 @@ from .feature_surface import (
 from .host_runtime import HostRuntime, HostRuntimeConfig
 from .model_runtime import IntegratedRuntimeConfig, IntegratedScoringRuntime
 from .stage_controller import StageConfig, StageController, StagePolicy
+from .training_runtime import (
+    IntegratedTrainingRuntime,
+    PrototypeBranchRuntime,
+    TrainingRuntimeHooks,
+)
 
 __all__ = [
     "CLIPHostFeatureSurface",
@@ -23,7 +28,10 @@ __all__ = [
     "IntegratedScoringRuntime",
     "ITSELFHostFeatureSurface",
     "ITSELFHostScoreSurface",
+    "IntegratedTrainingRuntime",
+    "PrototypeBranchRuntime",
     "StageConfig",
     "StageController",
     "StagePolicy",
+    "TrainingRuntimeHooks",
 ]

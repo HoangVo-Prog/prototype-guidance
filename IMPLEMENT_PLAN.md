@@ -346,16 +346,18 @@ This phase is complete only if:
 - all required config keys validate correctly
 
 ### Checklist
-- [ ] Implement config schema and defaults
-- [ ] Add `train_mode` and `training.stage` support
-- [ ] Implement Stage 0 behavior for both ITSELF and CLIP host-only runs
-- [ ] Implement Stage 1 frozen-host prototype stabilization
-- [ ] Implement Stage 2 unfrozen retraining from CLIP initialization
-- [ ] Implement Stage 3 calibration-only behavior
-- [ ] Validate mode-dependent use of `host.lambda_s`
+- [x] Implement config schema and defaults
+- [x] Add `train_mode` and `training.stage` support
+- [x] Implement Stage 0 behavior for both ITSELF and CLIP host-only runs
+- [x] Implement Stage 1 frozen-host prototype stabilization
+- [x] Implement Stage 2 unfrozen retraining from CLIP initialization
+- [x] Implement Stage 3 calibration-only behavior
+- [x] Validate mode-dependent use of `host.lambda_s`
 
 ### Completion note
-- Not completed yet.
+- Completed on 2026-04-08 (validated state preserved).
+- Validation basis: Phase E config/schema/stage-control code remained unchanged after user-confirmed local pytest success for Phase E coverage (`prototype/tests/test_config_stage_control_phase_e.py`).
+- Decision: Phase E gate is treated as satisfied under the validated unchanged state; no additional Phase E semantic changes were introduced in Phase F work.
 
 ---
 
@@ -489,7 +491,7 @@ Codex MUST tick these only when the corresponding phase gate is satisfied.
 - [x] Phase B complete
 - [x] Phase C complete
 - [x] Phase D complete
-- [ ] Phase E complete
+- [x] Phase E complete
 - [ ] Phase F complete
 - [ ] Phase G complete
 - [ ] Phase H complete
