@@ -345,3 +345,157 @@ This is:
 The host is the system.
 The prototype is an extension.
 
+## 9. Resolved Questions and Ambiguities
+
+### Q1. Host score definition for fusion
+
+**Resolution:**
+
+The host score used for fusion is **explicitly defined and fixed via configuration**, not selected by evaluator grid search.
+
+Specifically, we define:
+
+$$
+s_{ij}^{\text{host}}
+=
+
+\lambda_s \cdot s_{ij}^{\text{global,host}}
++
+(1-\lambda_s) \cdot s_{ij}^{\text{local,host}}
+$$
+
+where:
+
+* `lambda_s` is declared in config
+* no post-hoc weight search is allowed during evaluation for fusion
+
+**Implication:**
+
+* Fusion operates on a **single canonical host score surface**
+* The evaluator’s “best over weight grid” behavior is **not used for fusion definition**
+* This ensures:
+
+  * stable semantics
+  * measurable contribution of prototype branch
+  * reproducible host parity
+
+---
+
+### Q2. Token-state representation level for prototype branch
+
+**Status: Partially unresolved, but constrained**
+
+The prototype branch **must use token-level host text states**:
+
+$$
+H_j = [h_{j,1}, \dots, h_{j,L_j}]
+$$
+
+as defined in the method specification 
+
+However, the exact representation level (e.g., pre-projection vs post-projection, normalization stage) is not fully fixed.
+
+**Constraint (must be enforced):**
+
+The chosen tensor must satisfy:
+
+* Same representation level used by host **immediately before pooled text extraction**
+* Consistent with the space used by:
+
+  * host global text embedding
+  * prototype scoring
+
+**Forbidden:**
+
+* Using pooled text features (`[B, D]`)
+* Mixing different representation stages across modules
+
+**Implementation note:**
+
+This must be explicitly documented in `INTEGRATION_PLAN.md` as:
+
+> “Prototype branch consumes the exact token-state tensor produced by the host text encoder at the same semantic level used for host pooled embedding construction.”
+
+---
+
+### Q3. Stage-wise training policy (freeze / unfreeze)
+
+**Resolution:**
+
+Training stages must be implemented exactly as defined in the method specification :
+
+#### Stage 0: Host baseline reproduction
+
+* Train host only
+* No prototype branch
+
+#### Stage 1: Prototype learning (host frozen)
+
+* Host parameters frozen
+* Prototype parameters trainable
+* Host forward still executed for feature extraction
+
+#### Stage 2: Light co-adaptation (optional)
+
+* Prototype parameters trainable
+* Only limited host parameters trainable (e.g., projection layers)
+* Core CLIP + GRAB remain frozen
+
+#### Stage 3: Fusion calibration
+
+* All parameters frozen
+* Only `lambda_f` tuned on validation
+
+**Mandatory constraint:**
+
+* No gradient flow into host during Stage 1
+* Must be enforced via explicit parameter freezing + gradient checks
+
+---
+
+### Q4. Global + GRAB weighting ambiguity
+
+**Resolution:**
+
+Same as Q1.
+
+The host score is defined using **fixed config weights**:
+
+* `lambda_s` for global vs local
+* no evaluator-time search
+
+This definition is **shared across training, validation, and inference**
+
+---
+
+### Q5. Method document equation corruption
+
+**Resolution:**
+
+Equations must be interpreted based on the semantic intent described in the document .
+
+When ambiguity exists:
+
+Priority order:
+
+1. Verbal description in method doc
+2. Consistency with host feature space
+3. Simplicity and alignment with prototype formulation
+
+No legacy implementation should be used to resolve equation ambiguity.
+
+---
+
+### Q6. Adapter `test.py` environment issues
+
+**Resolution:**
+
+Ignored for integration.
+
+The integration must define its own:
+
+* feature extraction contract
+* scoring pipeline
+* evaluation entrypoint
+
+Host `test.py` is not treated as authoritative runtime interface.
