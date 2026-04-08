@@ -284,9 +284,9 @@ class ITSELF(nn.Module):
                 ret.update({'cid_loss': closs1+closs3})
 
         if 'tal' in self.current_task:
-            TAL_global_loss = objectives.compute_TAL(i_feats, t_feats,batch['pids'],margin=self.args.margin,tau=self.args.tau)
+            TAL_global_loss = objectives.compute_TAL(i_feats, t_feats,batch['pids'],margin=self.args.margin,tau=self.args.tau_itself)
             if not self.args.only_global:
-                TAL_grab_loss = objectives.compute_TAL(i_grab_f, t_grab_f,batch['pids'],margin=self.args.margin,tau=self.args.tau)
+                TAL_grab_loss = objectives.compute_TAL(i_grab_f, t_grab_f,batch['pids'],margin=self.args.margin,tau=self.args.tau_itself)
                 ret.update({'tal_loss': TAL_global_loss + TAL_grab_loss}) 
             else:
                 ret.update({'tal_loss': TAL_global_loss})

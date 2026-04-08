@@ -3,7 +3,7 @@ import argparse
 def get_args():
     parser = argparse.ArgumentParser(description="args")
     
-    parser.add_argument("--tau", default=0.015, type=float, help="temperature for ITSELF")
+    parser.add_argument("--tau_itself", default=0.015, type=float, help="temperature for ITSELF")
     parser.add_argument("--select_ratio", default=0.4, type=float, help="the ratio of selected tokens for ITSELF")
     parser.add_argument("--margin", default=0.1, type=float, help="margin + neg_score - pos_score for ITSELF")
     # parser.add_argument("--lambda1_weight", default=0.5, type=float) #TODO: please confirm whether those configs mean?
@@ -83,8 +83,7 @@ def get_args():
     ################################################ new flag (no code yet) ################################################
 
     # reproducibility / experiment identity
-    parser.add_argument("--seed", default=1, type=int,
-                        help="random seed for reproducibility")
+    parser.add_argument("--seed", default=1, type=int, help="random seed for reproducibility")
 
     # model / runtime mode
     parser.add_argument("--model_name", default="NONAME", help="top-level model name used by newer training pipeline")

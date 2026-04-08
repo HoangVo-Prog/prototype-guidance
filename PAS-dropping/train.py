@@ -45,7 +45,6 @@ def _count_parameters(parameters):
     return total, trainable
 
 
-
 def log_parameter_trainability(logger, model, args):
     total_params, trainable_params = _count_parameters(model.parameters())
     logger.info(

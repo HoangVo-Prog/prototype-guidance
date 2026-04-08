@@ -305,7 +305,7 @@ class ITSELFHostHead(nn.Module):
         self.layer_index = int(getattr(args, 'itself_layer_index', -1))
         self.modify_k = bool(getattr(args, 'itself_modify_k', False))
         self.score_weight_global = float(getattr(args, 'itself_score_weight_global', 0.68))
-        self.tau = float(getattr(args, 'itself_tau', 0.015))
+        self.tau_itself = float(getattr(args, 'itself_tau', 0.015))
         self.margin = float(getattr(args, 'itself_margin', 0.1))
         loss_names = str(getattr(args, 'itself_loss_names', 'tal+cid')).lower()
         self.loss_names = {name.strip() for name in loss_names.split('+') if name.strip()}
@@ -531,8 +531,8 @@ class ITSELFHostHead(nn.Module):
             'lambda_div': zero,
             'lambda_bal': zero,
             'proxy_temperature': zero,
-            'retrieval_temperature': reference.new_tensor(self.tau),
-            'logit_scale': reference.new_tensor(1.0 / max(self.tau, 1e-12)),
+            'retrieval_temperature': reference.new_tensor(self.tau_itself),
+            'logit_scale': reference.new_tensor(1.0 / max(self.tau_itself, 1e-12)),
             'debug_metrics': {},
         }
 
@@ -719,7 +719,7 @@ class ITSELFHostHead(nn.Module):
                 image_features["global_image_embedding"],
                 text_features["global_text_embedding"],
                 pids,
-                tau=self.tau,
+                tau=self.tau_itself,
                 margin=self.margin,
             )
             tal_loss = tal_total_global
@@ -735,7 +735,7 @@ class ITSELFHostHead(nn.Module):
                     image_features["grab_image_embedding"],
                     text_features["grab_text_embedding"],
                     pids,
-                    tau=self.tau,
+                    tau=self.tau_itself,
                     margin=self.margin,
                 )
                 tal_loss = tal_loss + tal_total_grab
