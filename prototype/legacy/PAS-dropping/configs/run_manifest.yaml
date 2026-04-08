@@ -1,0 +1,41 @@
+run_groups:
+  main_benchmarks:
+    config: configs/train_pas_v1.yaml
+    mode: train_eval
+    seeds: [1, 2, 3]
+    datasets: [CUHK-PEDES, ICFG-PEDES, RSTPReid]
+    run_id_pattern: pas_main_<dataset_short>_seed<seed>
+    primary_metric: val/pas/R1
+  essential_ablations:
+    dataset: CUHK-PEDES
+    seeds: [1, 2, 3]
+    runs:
+      - id_pattern: pas_ablation_ref_cuhk_seed<seed>
+        config: configs/train_pas_v1.yaml
+      - id_pattern: pas_ablate_no_context_cuhk_seed<seed>
+        config: configs/ablation_pas_no_context.yaml
+      - id_pattern: pas_ablate_no_diversity_cuhk_seed<seed>
+        config: configs/ablation_pas_no_diversity.yaml
+    primary_metric: val/pas/R1
+  cross_domain_eval:
+    config: configs/train_pas_v1.yaml
+    mode: eval_only
+    seeds: [1, 2, 3]
+    source_datasets: [CUHK-PEDES, ICFG-PEDES, RSTPReid]
+    target_pairs:
+      CUHK-PEDES: [ICFG-PEDES, RSTPReid]
+      ICFG-PEDES: [CUHK-PEDES, RSTPReid]
+      RSTPReid: [CUHK-PEDES, ICFG-PEDES]
+    run_id_pattern: pas_xdomain_<source_short>_to_<target_short>_seed<seed>
+    primary_metric: val/pas/R1
+blocked_groups:
+  - no_bank_baseline
+  - eos_only_baseline
+  - mean_pool_baseline
+  - prototype_count_sensitivity
+  - temperature_sensitivity
+  - efficiency_table
+  - qualitative_bundle
+repo_limitations:
+  - no automatic eval json export
+  - no automatic summary csv export
