@@ -1,4 +1,4 @@
-"""Default config placeholders for integration runtime."""
+"""Default integration config aligned with stage-control contract."""
 
 from __future__ import annotations
 
@@ -9,11 +9,26 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "num_prototypes": 64,
         "dim": 512,
-        "contextualization_enabled": False,
-        "routing_temperature": 0.07,
-        "basis_temperature": 0.07,
-        "teacher_temperature": 0.07,
-        "retrieval_temperature": 0.07,
+        "contextualization": {
+            "enabled": False,
+            "type": "self_attention",
+        },
+        "temperatures": {
+            "routing": 0.07,
+            "basis": 0.07,
+            "teacher": 0.07,
+            "retrieval": 0.07,
+        },
+        "regularization": {
+            "diversity": {
+                "enabled": False,
+                "weight": 0.0,
+            },
+            "balance": {
+                "enabled": False,
+                "weight": 0.0,
+            },
+        },
     },
     "fusion": {
         "enabled": True,
@@ -24,8 +39,19 @@ DEFAULT_CONFIG = {
     },
     "training": {
         "stage": "stage0",
-        "freeze_host": False,
-        "freeze_prototype": True,
+        "calibration_only": False,
+        "freeze": {
+            "host": False,
+            "prototype": True,
+            "host_allowlist": [],
+            "prototype_policy": "freeze_all",
+        },
+        "initialization": {
+            "clip_backbone_source": None,
+            "stage1_prototype_checkpoint": None,
+            "host_checkpoint": None,
+            "host_checkpoint_compatible": False,
+        },
     },
     "loss": {
         "host_enabled": True,
