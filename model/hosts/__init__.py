@@ -1,4 +1,4 @@
-from .clip import ClipHostPlaceholder, build_clip_host
+from .clip import ClipHostModel, build_clip_host
 from .itself import (
     build_itself_host,
     build_original_itself_lr_scheduler,
@@ -11,7 +11,7 @@ from .itself import (
 )
 
 __all__ = [
-    'ClipHostPlaceholder',
+    'ClipHostModel',
     'build_clip_host',
     'build_itself_host',
     'build_original_itself_optimizer',

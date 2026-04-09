@@ -1,0 +1,54 @@
+experiment:
+  name: CLIP_VANILLA_BIDIRECTIONAL
+
+model:
+  variant: clip_vanilla_bidirectional
+  temperature: 0.07
+  use_custom_projector: false
+  use_prototype_branch: false
+  use_prototype_bank: false
+  use_image_conditioned_pooling: false
+  return_debug_outputs: true
+
+host:
+  type: clip
+  freeze_projectors: false
+
+objectives:
+  objectives:
+    use_host_loss: true
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: false
+    use_loss_diag: false
+    use_loss_ret: true
+    retrieval_mode: clip_bidirectional
+    use_loss_support: false
+    use_balancing_loss: false
+    use_diversity_loss: false
+  lambda:
+    host: 1.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.0
+    diag: 0.0
+    ret: 1.0
+    support: 0.0
+    balance: 0.0
+    diversity: 0.0
+
+text_pooling:
+  token_policy: eos_only
+
+training:
+  freeze_prototype_side: true
+  grad_clip: 0.0
+
+logging:
+  tags: [clip, vanilla, bidirectional, no_prototype]
+
+evaluation:
+  retrieval_scorer: exact
