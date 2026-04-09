@@ -264,14 +264,34 @@ class ClipHostModel(nn.Module):
         return caption_ids.argmax(dim=-1)
 
     def _encode_image_global(self, images: torch.Tensor) -> torch.Tensor:
-        x = self.base_model.encode_image_intermediates(images, return_all=False, average_attn_weights=True)['projected_tokens']
-        return x[:, 0, :]
+        encode_image_intermediates = getattr(self.base_model, 'encode_image_intermediates', None)
+        if callable(encode_image_intermediates):
+            x = encode_image_intermediates(images, return_all=False, average_attn_weights=True)['projected_tokens']
+        else:
+            x = self.base_model.encode_image(images)
+            if isinstance(x, tuple):
+                x = x[0]
+        if x.ndim == 2:
+            return x
+        if x.ndim == 3:
+            return x[:, 0, :]
+        raise ValueError(f'Unexpected image feature shape: {tuple(x.shape)}')
 
     def _encode_text_global(self, caption_ids: torch.Tensor) -> torch.Tensor:
         caption_ids = caption_ids.long()
-        x = self.base_model.encode_text_intermediates(caption_ids, return_all=False, average_attn_weights=True)['projected_tokens']
-        idx = self._eos_indices(caption_ids)
-        return x[torch.arange(x.size(0), device=x.device), idx]
+        encode_text_intermediates = getattr(self.base_model, 'encode_text_intermediates', None)
+        if callable(encode_text_intermediates):
+            x = encode_text_intermediates(caption_ids, return_all=False, average_attn_weights=True)['projected_tokens']
+        else:
+            x = self.base_model.encode_text(caption_ids)
+            if isinstance(x, tuple):
+                x = x[0]
+        if x.ndim == 2:
+            return x
+        if x.ndim == 3:
+            idx = self._eos_indices(caption_ids)
+            return x[torch.arange(x.size(0), device=x.device), idx]
+        raise ValueError(f'Unexpected text feature shape: {tuple(x.shape)}')
 
     def _project_image(self, image_global: torch.Tensor):
         return self.host_head['image_projector'](image_global)
