@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import torch.nn as nn
 
 from .hosts import build_clip_host, build_itself_host
@@ -55,6 +57,17 @@ class PASModel(nn.Module):
             raise exc
 
     def forward(self, *args, **kwargs):
+        if kwargs:
+            impl_forward = getattr(self.impl, 'forward', None)
+            if impl_forward is not None:
+                signature = inspect.signature(impl_forward)
+                accepts_var_kwargs = any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in signature.parameters.values()
+                )
+                if not accepts_var_kwargs and 'return_debug' in kwargs and 'return_debug' not in signature.parameters:
+                    kwargs = dict(kwargs)
+                    kwargs.pop('return_debug', None)
         return self.impl(*args, **kwargs)
 
 

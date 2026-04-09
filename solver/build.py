@@ -166,6 +166,32 @@ def summarize_optimizer_param_groups(optimizer):
 
 def _build_original_itself_stage0_optimizer(args, model):
     optimizer = build_original_itself_optimizer(args, model)
+    param_name_by_id = {id(parameter): name for name, parameter in model.named_parameters()}
+    base_lr = float(args.lr)
+    base_weight_decay = float(args.weight_decay)
+    lr_factor = float(getattr(args, 'lr_factor', 1.0))
+    bias_lr_factor = float(getattr(args, 'bias_lr_factor', 1.0))
+    weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))
+
+    for index, group in enumerate(optimizer.param_groups):
+        if 'name' in group:
+            continue
+        params = list(group.get('params', []))
+        inferred_name = f'stage0_itself::group_{index}'
+        if params:
+            first_param_name = param_name_by_id.get(id(params[0]))
+            if first_param_name is not None:
+                label, _, _ = _itself_stage0_group_spec(
+                    first_param_name,
+                    base_lr=base_lr,
+                    base_weight_decay=base_weight_decay,
+                    lr_factor=lr_factor,
+                    bias_lr_factor=bias_lr_factor,
+                    weight_decay_bias=weight_decay_bias,
+                )
+                inferred_name = f'stage0_itself::{label}'
+        group['name'] = inferred_name
+
     _validate_optimizer_groups_against_model(optimizer, model)
     return optimizer
 
