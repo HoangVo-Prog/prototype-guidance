@@ -175,7 +175,7 @@ dataset:
   num_workers: 4
 
 logging:
-  use_wandb: false
+  use_wandb: true
   project: PAS-Stage1
   entity: null
   run_name: null
