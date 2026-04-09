@@ -7,6 +7,7 @@ import logging
 import sys
 import threading
 import types
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
@@ -173,6 +174,12 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
             if alpha < 0.0 or alpha > 1.0:
                 raise ValueError(f'score_weight_global must be in [0, 1], got {alpha}.')
 
+            start_time = time.time()
+            self.logger.info(
+                'Static ITSELF evaluation started (alpha_global=%.4f, only_global=%s).',
+                alpha,
+                bool(getattr(self.args, 'only_global', False)),
+            )
             qfeats, gfeats, qids, gids = self._compute_embedding(model)
             qfeats = F.normalize(qfeats, p=2, dim=1)
             gfeats = F.normalize(gfeats, p=2, dim=1)
@@ -209,6 +216,7 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
             self.logger.info('\n' + str(table))
             self.logger.info('\n' + f'static global-grab alpha = {alpha:.4f}')
             self.logger.info('\n' + f'best R1 = {top1}')
+            self.logger.info('Static ITSELF evaluation finished in %.1fs.', time.time() - start_time)
             return top1
 
     _STATIC_MIX_EVALUATOR_CACHE = ITSELFStaticMixEvaluator

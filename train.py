@@ -3,6 +3,7 @@ import os.path as op
 import random
 import sys
 import warnings
+import logging
 
 import numpy as np
 import torch
@@ -49,6 +50,18 @@ def _count_parameters(parameters):
         if parameter.requires_grad:
             trainable += count
     return total, trainable
+
+
+def _bridge_original_itself_loggers(base_logger):
+    """Route original ITSELF logger namespaces to the active PAS handlers."""
+    bridge_names = ('ITSELF', 'ITSELF.train', 'ITSELF.eval', 'ITSELF.test', 'IRRA', 'IRRA.dataset')
+    for logger_name in bridge_names:
+        target_logger = logging.getLogger(logger_name)
+        target_logger.setLevel(base_logger.level)
+        target_logger.propagate = False
+        target_logger.handlers.clear()
+        for handler in base_logger.handlers:
+            target_logger.addHandler(handler)
 
 
 def log_parameter_trainability(logger, model, args):
@@ -179,6 +192,7 @@ if __name__ == '__main__':
     logger.info('W&B/log run name: %s', get_effective_wandb_run_name(args))
     logger.info(str(args).replace(',', '\n'))
     if use_original_itself:
+        _bridge_original_itself_loggers(logger)
         module_paths = get_original_itself_module_paths()
         logger.info(
             'Original ITSELF adapter modules active: model=%s solver=%s processor=%s metrics=%s',
@@ -232,15 +246,39 @@ if __name__ == '__main__':
         if unexpected_keys:
             logger.warning('Finetune checkpoint has unexpected keys: %s', unexpected_keys[:20])
     optimizer = build_optimizer(args, model)
-    for group_summary in summarize_optimizer_param_groups(optimizer):
+    optimizer_group_summaries = summarize_optimizer_param_groups(optimizer)
+    if use_original_itself:
+        total_groups = len(optimizer_group_summaries)
+        total_tensors = sum(summary['tensor_count'] for summary in optimizer_group_summaries)
+        total_params = sum(summary['parameter_count'] for summary in optimizer_group_summaries)
         logger.info(
-            'Optimizer group %-28s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
-            group_summary['name'],
-            group_summary['lr'],
-            group_summary['weight_decay'],
-            group_summary['tensor_count'],
-            group_summary['parameter_count'],
+            'Original ITSELF optimizer summary: groups=%d tensors=%d params=%d',
+            total_groups,
+            total_tensors,
+            total_params,
         )
+        preview_count = min(8, total_groups)
+        for group_summary in optimizer_group_summaries[:preview_count]:
+            logger.info(
+                'Optimizer preview %-24s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
+                group_summary['name'],
+                group_summary['lr'],
+                group_summary['weight_decay'],
+                group_summary['tensor_count'],
+                group_summary['parameter_count'],
+            )
+        if total_groups > preview_count:
+            logger.info('... %d additional optimizer groups omitted from log for brevity.', total_groups - preview_count)
+    else:
+        for group_summary in optimizer_group_summaries:
+            logger.info(
+                'Optimizer group %-28s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
+                group_summary['name'],
+                group_summary['lr'],
+                group_summary['weight_decay'],
+                group_summary['tensor_count'],
+                group_summary['parameter_count'],
+            )
     scheduler = build_lr_scheduler(args, optimizer)
 
     if args.distributed:
@@ -268,6 +306,9 @@ if __name__ == '__main__':
 
     try:
         if use_original_itself:
+            logger.info(
+                'Entering original ITSELF training loop. Note: it performs a full validation pass before Epoch 1; this can take several minutes with no per-batch logs.'
+            )
             do_train_fn(
                 start_epoch,
                 args,
