@@ -301,6 +301,54 @@ class PASModel(nn.Module):
         if self.freeze_prototype_side and self.prototype_head is not None:
             self._freeze_module(self.prototype_head)
 
+    def _encode_image_intermediates(self, image: torch.Tensor, return_all: bool, average_attn_weights: bool) -> Dict[str, Optional[torch.Tensor]]:
+        if hasattr(self.base_model, 'encode_image_intermediates'):
+            return self.base_model.encode_image_intermediates(
+                image,
+                return_all=return_all,
+                average_attn_weights=average_attn_weights,
+            )
+
+        if return_all and hasattr(self.base_model, 'encode_image_all_atten'):
+            projected_tokens, attention_weights = self.base_model.encode_image_all_atten(
+                image,
+                average_attn_weights=average_attn_weights,
+            )
+        else:
+            projected_tokens, attention_weights = self.base_model.encode_image(image)
+
+        if torch.is_tensor(projected_tokens) and projected_tokens.ndim == 2:
+            projected_tokens = projected_tokens.unsqueeze(1)
+        return {
+            'projected_tokens': projected_tokens,
+            'pre_projection_tokens': None,
+            'attention_weights': attention_weights,
+        }
+
+    def _encode_text_intermediates(self, text: torch.Tensor, return_all: bool, average_attn_weights: bool) -> Dict[str, Optional[torch.Tensor]]:
+        if hasattr(self.base_model, 'encode_text_intermediates'):
+            return self.base_model.encode_text_intermediates(
+                text,
+                return_all=return_all,
+                average_attn_weights=average_attn_weights,
+            )
+
+        if return_all and hasattr(self.base_model, 'encode_text_all_atten'):
+            projected_tokens, attention_weights = self.base_model.encode_text_all_atten(
+                text,
+                average_attn_weights=average_attn_weights,
+            )
+        else:
+            projected_tokens, attention_weights = self.base_model.encode_text(text)
+
+        if torch.is_tensor(projected_tokens) and projected_tokens.ndim == 2:
+            projected_tokens = projected_tokens.unsqueeze(1)
+        return {
+            'projected_tokens': projected_tokens,
+            'pre_projection_tokens': None,
+            'attention_weights': attention_weights,
+        }
+
 
     def _collect_train_image_records(self, train_loader) -> list:
         train_dataset = getattr(train_loader, 'dataset', None)
@@ -381,7 +429,7 @@ class PASModel(nn.Module):
                 with build_autocast_context(self.args, extraction_device):
                     for _, images in image_loader:
                         images = images.to(extraction_device)
-                        image_outputs = self.base_model.encode_image_intermediates(
+                        image_outputs = self._encode_image_intermediates(
                             images,
                             return_all=False,
                             average_attn_weights=True,
@@ -531,9 +579,15 @@ class PASModel(nn.Module):
         return self._broadcast_train_image_embeddings(local_features, extraction_error=extraction_error)
 
     def _resolve_text_states(self, text_output: EncoderOutput) -> torch.Tensor:
-        if text_output.pre_projection_tokens is None:
-            raise ValueError('The text encoder must expose last-layer token hidden states before CLIP pooling/projection.')
-        return text_output.pre_projection_tokens
+        if text_output.pre_projection_tokens is not None:
+            return text_output.pre_projection_tokens
+        if not getattr(self, '_warned_projected_text_state_fallback', False):
+            logging.getLogger('pas.model').warning(
+                'Text pre-projection token states are unavailable from the current CLIP runtime; '
+                'falling back to projected text tokens for prototype routing.'
+            )
+            self._warned_projected_text_state_fallback = True
+        return text_output.projected_tokens
 
     def _prototype_dtype(self) -> torch.dtype:
         return precision_to_torch_dtype(self.prototype_precision)
@@ -598,7 +652,7 @@ class PASModel(nn.Module):
         }
 
     def extract_image_features(self, image: torch.Tensor) -> EncoderOutput:
-        image_outputs = self.base_model.encode_image_intermediates(
+        image_outputs = self._encode_image_intermediates(
             image,
             return_all=self.itself_return_all,
             average_attn_weights=self.itself_average_attn_weights,
@@ -630,7 +684,7 @@ class PASModel(nn.Module):
         )
 
     def extract_text_features(self, text: torch.Tensor) -> EncoderOutput:
-        text_outputs = self.base_model.encode_text_intermediates(
+        text_outputs = self._encode_text_intermediates(
             text.long(),
             return_all=self.itself_return_all,
             average_attn_weights=self.itself_average_attn_weights,
@@ -1053,7 +1107,6 @@ def build_model(args, num_classes, train_loader=None):
         if model.prototype_head is not None:
             model.prototype_head.float()
     return model
-
 
 
 
