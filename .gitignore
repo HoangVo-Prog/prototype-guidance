@@ -206,6 +206,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-WACV2026-Oral-ITSELF/*
+adapter/WACV2026-Oral-ITSELF/*
 Prototype4ITSELF.md
 *.zip
