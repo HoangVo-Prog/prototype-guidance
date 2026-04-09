@@ -24,11 +24,11 @@ host:
   itself_score_weight_global: 0.32
   itself_tau: 0.015
   itself_margin: 0.1
-  itself_return_all: false
-  itself_topk_type: mean
+  itself_return_all: true
+  itself_topk_type: custom
   itself_layer_index: -1
   itself_average_attn_weights: true
-  itself_modify_k: false
+  itself_modify_k: true
   itself_lambda1_weight: 0.5
   itself_lambda2_weight: 3.5
 
@@ -69,7 +69,7 @@ objectives:
 
 training:
   batch_size: 256
-  epochs: 60
+  epochs: 15
   log_period: 20
   eval_frequency: 1
   save_interval: 1
@@ -90,7 +90,13 @@ optimizer:
   beta: 0.999
   optimizer_eps: 1.0e-3
   milestones: [45, 50]
+  gamma: 0.1
+  warmup_factor: 0.1
+  warmup_epochs: 5
+  warmup_method: linear
   scheduler: cosine
+  target_lr: 0.0
+  power: 0.9
 
 dataset:
   dataset_name: RSTPReid
