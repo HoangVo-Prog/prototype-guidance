@@ -34,14 +34,16 @@ host:
   itself_only_global: false
   itself_select_ratio: 0.4
   itself_grab_embed_dim: 4096
-  itself_score_weight_global: 0.68
+  itself_score_weight_global: 0.32
   itself_tau: 0.015
   itself_margin: 0.1
   itself_return_all: true
-  itself_topk_type: mean
+  itself_topk_type: custom
   itself_layer_index: -1
   itself_average_attn_weights: true
-  itself_modify_k: false
+  itself_modify_k: true
+  itself_lambda1_weight: 0.5
+  itself_lambda2_weight: 3.5
 
 prototype:
   num_prototypes: 32
@@ -106,59 +108,61 @@ text_pooling:
 
 training:
   stage: stage1
-  batch_size: 128
-  epochs: 20
+  batch_size: 256
+  epochs: 15
   log_period: 20
   eval_frequency: 1
   save_interval: 1
   resume: false
   resume_ckpt_file: ''
-  finetune: path/to/stage0_itself_best.pth
+  finetune: ''
   pretrain: ''
   img_aug: false
   txt_aug: false
-  sampler: random
+  sampler: identity
   num_instance: 2
   num_workers: 4
   training: true
-  freeze_image_backbone: true
-  freeze_text_backbone: true
+  freeze_image_backbone: false
+  freeze_text_backbone: false
   freeze_prototype_side: false
-  freeze_host_projectors: true
+  freeze_host_projectors: false
   grad_clip: 1.0
   amp: false
   amp_dtype: fp16
   proxy_temperature: 0.07
 
 optimizer:
-  type: AdamW
-  lr: 0.001
-  lr_prototype_bank: 0.001
-  lr_projectors: 0.001
-  lr_prototype_routing: 0.001
-  lr_prototype_pooling: 0.001
-  lr_prototype_contextualization: 0.001
-  lr_host_projectors: 0.0
-  lr_image_backbone: 0.0
-  lr_text_backbone: 0.0
-  weight_decay: 0.01
-  weight_decay_prototype_bank: 0.01
-  weight_decay_projectors: 0.05
-  weight_decay_prototype_routing: 0.05
-  weight_decay_prototype_pooling: 0.05
-  weight_decay_prototype_contextualization: 0.05
-  weight_decay_host_projectors: 0.05
-  lr_class_proxies: 0.0
-  weight_decay_class_proxies: 0.0
-  weight_decay_image_backbone: 0.0
-  weight_decay_text_backbone: 0.0
-  momentum: 0.9
-  alpha: 0.9
-  beta: 0.999
-  milestones: [12, 16]
+  # keep ITSELF backbone protected
+  lr: 1.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
+  lr_host_projectors: 2.0e-5
+
+  # prototype side: 5x backbone (good default start)
+  lr_prototype_bank: 5.0e-5
+  lr_projectors: 5.0e-5
+  lr_prototype_routing: 5.0e-5
+  lr_prototype_pooling: 5.0e-5
+  lr_prototype_contextualization: 5.0e-5
+  lr_class_proxies: 5.0e-5
+
+  weight_decay: 4.0e-5
+  weight_decay_image_backbone: 4.0e-5
+  weight_decay_text_backbone: 4.0e-5
+  weight_decay_host_projectors: 4.0e-5
+  weight_decay_prototype_bank: 1.0e-4
+  weight_decay_projectors: 1.0e-4
+  weight_decay_prototype_routing: 1.0e-4
+  weight_decay_prototype_pooling: 1.0e-4
+  weight_decay_prototype_contextualization: 1.0e-4
+  weight_decay_class_proxies: 1.0e-4
+
+  # Scheduler 
+  milestones: [45, 50]
   gamma: 0.1
   warmup_factor: 0.1
-  warmup_epochs: 1
+  warmup_epochs: 5
   warmup_method: linear
   scheduler: cosine
   target_lr: 0.0
@@ -193,4 +197,3 @@ evaluation:
   prototype_image_chunk_size: 8
   prototype_text_chunk_size: 16
   retrieval_scorer: exact
-
