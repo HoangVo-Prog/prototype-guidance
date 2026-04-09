@@ -13,7 +13,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 if torch is not None:
-    from utils.metric_logging import RoutingCoverageTracker, build_train_metrics, build_validation_metrics
+    from utils.metric_logging import RoutingCoverageTracker, build_train_metrics, build_train_metrics_from_scalars, build_validation_metrics
 
 
 @unittest.skipUnless(torch is not None, 'Torch is required for metric logging tests.')
@@ -48,6 +48,26 @@ class MetricLoggingTests(unittest.TestCase):
         self.assertEqual(metrics['train/loss_ret_weighted'], 0.5)
         self.assertEqual(metrics['debug/surrogate_pairwise_logit_mean'], 0.2)
         self.assertEqual(metrics['debug/surrogate_retrieval_grad_norm'], 1.5)
+
+    def test_build_train_metrics_from_scalars_maps_losses_and_debug(self):
+        metrics = build_train_metrics_from_scalars(
+            epoch=2,
+            step=17,
+            scalar_metrics={
+                'loss_total': 1.25,
+                'loss_ret': 0.4,
+                'routing_entropy': 2.0,
+                'surrogate_retrieval_grad_norm': 1.3,
+            },
+            lr=5e-4,
+        )
+        self.assertEqual(metrics['train/epoch'], 2.0)
+        self.assertEqual(metrics['train/step'], 17.0)
+        self.assertEqual(metrics['train/lr'], 5e-4)
+        self.assertEqual(metrics['train/loss_total'], 1.25)
+        self.assertEqual(metrics['train/loss_ret'], 0.4)
+        self.assertEqual(metrics['debug/routing_entropy'], 2.0)
+        self.assertEqual(metrics['debug/surrogate_retrieval_grad_norm'], 1.3)
 
     def test_build_validation_metrics_merges_loss_and_retrieval_under_val_namespace(self):
         evaluator = type('EvaluatorStub', (), {

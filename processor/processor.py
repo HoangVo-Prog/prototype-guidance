@@ -6,7 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
-from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_train_metrics, build_validation_metrics, collect_loss_metrics, collect_scalar_metrics
+from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_train_metrics_from_scalars, build_validation_metrics, collect_loss_metrics, collect_scalar_metrics
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
 from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
@@ -48,6 +48,10 @@ def _compute_eval_loss_metrics(model, val_loss_loader, args):
 
 def _make_meters():
     return {key: AverageMeter() for key in METER_KEYS}
+
+
+def _meter_averages(meters):
+    return {key: float(meter.avg) for key, meter in meters.items() if meter.count > 0}
 
 
 
@@ -130,6 +134,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
         canonicalize_amp_dtype(getattr(args, 'amp_dtype', 'fp16')),
     )
     meters = _make_meters()
+    wandb_interval_meters = _make_meters()
     tb_writer = SummaryWriter(log_dir=args.output_dir)
 
     best_top1 = 0.0
@@ -189,17 +194,20 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 value = scalar_metrics.get(key)
                 if value is not None:
                     meter.update(value, batch_size)
+                    wandb_interval_meters[key].update(value, batch_size)
 
             if experiment_tracker is not None and get_rank() == 0 and current_steps % max(getattr(args, 'wandb_log_interval', log_period), 1) == 0:
+                averaged_metrics = _meter_averages(wandb_interval_meters)
                 experiment_tracker.log(
-                    build_train_metrics(
-                        epoch,
-                        current_steps,
-                        outputs,
-                        scheduler.get_lr()[0],
-                        include_debug_metrics=log_debug_metrics,
+                    build_train_metrics_from_scalars(
+                        epoch=epoch,
+                        step=current_steps,
+                        scalar_metrics=averaged_metrics,
+                        lr=scheduler.get_lr()[0],
                     )
                 )
+                for meter in wandb_interval_meters.values():
+                    meter.reset()
 
             if (n_iter + 1) % log_period == 0:
                 info = [f'Epoch[{epoch}] Iteration[{n_iter + 1}/{len(train_loader)}]']
@@ -215,13 +223,13 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 tb_writer.add_scalar(key, meter.avg, epoch)
 
         if experiment_tracker is not None and get_rank() == 0:
+            averaged_metrics = _meter_averages(meters)
             experiment_tracker.log(
-                build_train_metrics(
-                    epoch,
-                    current_steps,
-                    outputs,
-                    scheduler.get_lr()[0],
-                    include_debug_metrics=log_debug_metrics,
+                build_train_metrics_from_scalars(
+                    epoch=epoch,
+                    step=current_steps,
+                    scalar_metrics=averaged_metrics,
+                    lr=scheduler.get_lr()[0],
                 )
             )
         if coverage_tracker is not None:

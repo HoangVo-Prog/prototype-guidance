@@ -487,17 +487,39 @@ def collect_scalar_metrics(outputs: Dict[str, object], include_debug_metrics: bo
     return metrics
 
 
-def build_train_metrics(epoch: int, step: Optional[int], outputs: Dict[str, object], lr: float, include_debug_metrics: bool = True) -> Dict[str, float]:
+def build_train_metrics_from_scalars(
+    epoch: int,
+    step: Optional[int],
+    scalar_metrics: Dict[str, float],
+    lr: float,
+) -> Dict[str, float]:
     metrics = {
         'train/epoch': float(epoch),
         'train/lr': float(lr),
     }
     if step is not None:
         metrics['train/step'] = float(step)
-    for key, value in collect_loss_metrics(outputs).items():
-        metrics[f'train/{key}'] = value
-    metrics.update(collect_debug_metrics(outputs, include_debug_metrics=include_debug_metrics))
+
+    for key, value in scalar_metrics.items():
+        try:
+            scalar_value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if key in TRAIN_LOSS_KEYS:
+            metrics[f'train/{key}'] = scalar_value
+        else:
+            metrics[f'debug/{key}'] = scalar_value
     return metrics
+
+
+def build_train_metrics(epoch: int, step: Optional[int], outputs: Dict[str, object], lr: float, include_debug_metrics: bool = True) -> Dict[str, float]:
+    scalar_metrics = collect_scalar_metrics(outputs, include_debug_metrics=include_debug_metrics)
+    return build_train_metrics_from_scalars(
+        epoch=epoch,
+        step=step,
+        scalar_metrics=scalar_metrics,
+        lr=lr,
+    )
 
 
 def build_validation_metrics(
@@ -517,7 +539,6 @@ def build_validation_metrics(
     if evaluator is not None and getattr(evaluator, 'latest_metrics', None):
         metrics.update(evaluator.latest_metrics)
     return metrics
-
 
 
 
