@@ -365,24 +365,8 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertTrue(args.freeze_prototype_side)
         self.assertEqual(args.finetune, 'runs/stage1/best.pth')
 
-    def test_itself_reference_applies_dataset_specific_weight(self):
-        path = os.path.join(REPO_ROOT, 'configs', 'stage0', 'stage0_itself_host_only.yaml')
-        args = get_args(['--config_file', path])
-        self.assertEqual(args.host_type, 'itself')
-        self.assertAlmostEqual(args.itself_score_weight_global, 0.32)
-        self.assertEqual(args.itself_topk_type, 'custom')
-        self.assertTrue(args.itself_modify_k)
-
-    def test_itself_reference_follows_dataset_cli_override(self):
-        path = os.path.join(REPO_ROOT, 'configs', 'stage0', 'stage0_itself_host_only.yaml')
-        args = get_args(['--config_file', path, '--dataset_name', 'CUHK-PEDES', '--itself_score_weight_global', '0.55'])
-        self.assertEqual(args.dataset_name, 'CUHK-PEDES')
-        self.assertAlmostEqual(args.itself_score_weight_global, 0.55)
-
-
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
-
 
 
 

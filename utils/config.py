@@ -15,6 +15,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 
     ('model', 'name'): 'model_name',
     ('model', 'variant'): 'model_variant',
+    ('model', 'training_mode'): 'training_mode',
     ('model', 'pretrain_choice'): 'pretrain_choice',
     ('model', 'image_backbone'): 'image_backbone',
     ('model', 'text_backbone'): 'text_backbone',
@@ -108,6 +109,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('text_pooling', 'error_on_empty_kept_tokens'): 'error_on_empty_kept_tokens',
 
     ('training', 'batch_size'): 'batch_size',
+    ('training', 'stage'): 'training_stage',
     ('training', 'epochs'): 'num_epoch',
     ('training', 'log_period'): 'log_period',
     ('training', 'eval_frequency'): 'eval_period',
@@ -199,6 +201,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 # Backward-compatible alias paths (accepted by parser/loader) that are intentionally
 # not part of canonical configs/base.yaml.
 READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
+    ('training', 'training_stage'): 'training_stage',
     ('training', 'num_epoch'): 'num_epoch',
     ('training', 'eval_period'): 'eval_period',
     ('optimizer', 'optimizer'): 'optimizer',
@@ -315,8 +318,6 @@ SUPPORTED_SPECIAL_TOKEN_ID_KEYS = {
     'pad_token_id',
 }
 UNSUPPORTED_CONFIG_PATHS = {
-    ('model', 'training_mode'): 'model.training_mode was removed. Route model family via host.type (clip | itself).',
-    ('training', 'stage'): 'training.stage was removed. Control host/prototype behavior with host.type plus model.use_prototype_branch.',
     ('model', 'pooling_mode'): 'model.pooling_mode was removed because PAS only supports image-conditioned pooling.',
     ('text_pooling', 'exclude_special_tokens'): 'text_pooling.exclude_special_tokens was removed. Use text_pooling.token_policy.',
     ('text_pooling', 'eos_as_only_token'): 'text_pooling.eos_as_only_token was removed. Use text_pooling.token_policy.',
@@ -357,6 +358,7 @@ UNSUPPORTED_CONFIG_PATHS = {
 
 
 CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
+    ('model', 'training_mode'): ('pas', 'vanilla_clip'),
     ('host', 'type'): ('clip', 'itself'),
     ('host', 'itself_topk_type'): ('mean', 'std', 'layer_index', 'custom'),
     ('model', 'projector_type'): ('mlp2', 'linear'),
@@ -377,6 +379,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('objectives', 'objectives', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
     ('loss', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
     ('training', 'amp_dtype'): tuple(AMP_DTYPE_ALIASES.keys()),
+    ('training', 'stage'): ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     ('optimizer', 'type'): ('SGD', 'Adam', 'AdamW'),
     ('optimizer', 'scheduler'): ('step', 'exp', 'poly', 'cosine', 'linear'),
     ('dataset', 'dataset_name'): ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
@@ -386,6 +389,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
 }
 
 RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
+    'training_mode': ('pas', 'vanilla_clip'),
     'host_type': ('clip', 'itself'),
     'itself_topk_type': ('mean', 'std', 'layer_index', 'custom'),
     'projector_type': ('mlp2', 'linear'),
@@ -405,6 +409,7 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'token_scoring_type': ('cosine', 'dot'),
     'retrieval_mode': ('surrogate_i2t', 'clip_bidirectional'),
     'amp_dtype': tuple(AMP_DTYPE_ALIASES.keys()),
+    'training_stage': ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     'optimizer': ('SGD', 'Adam', 'AdamW'),
     'lrscheduler': ('step', 'exp', 'poly', 'cosine', 'linear'),
     'dataset_name': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
@@ -617,6 +622,11 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     flat = flatten_config_dict(config_data)
     host_type = str(flat.get('host_type', 'clip')).lower()
     use_prototype_branch = bool(flat.get('use_prototype_branch', False))
+    if not use_prototype_branch and (
+        bool(flat.get('use_prototype_bank', False))
+        or bool(flat.get('use_image_conditioned_pooling', False))
+    ):
+        use_prototype_branch = True
     use_prototype_bank = bool(flat.get('use_prototype_bank', use_prototype_branch))
     use_image_conditioned_pooling = bool(flat.get('use_image_conditioned_pooling', use_prototype_branch))
     retrieval_mode = str(flat.get('retrieval_mode', 'surrogate_i2t')).lower()
@@ -687,6 +697,11 @@ def validate_runtime_args_namespace(args) -> None:
 
     host_type = str(getattr(args, 'host_type', 'clip')).lower()
     use_prototype_branch = bool(getattr(args, 'use_prototype_branch', False))
+    if not use_prototype_branch and (
+        bool(getattr(args, 'use_prototype_bank', False))
+        or bool(getattr(args, 'use_image_conditioned_pooling', False))
+    ):
+        use_prototype_branch = True
     use_prototype_bank = bool(getattr(args, 'use_prototype_bank', use_prototype_branch))
     use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', use_prototype_branch))
     retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()

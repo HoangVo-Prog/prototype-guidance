@@ -2,8 +2,7 @@
 #
 # Routing policy:
 # - model family routing is by host.type only: clip | itself
-# - model.training_mode is removed
-# - training.stage is removed
+# - model.training_mode and training.stage remain alias-compatible for legacy prototype configs
 # - objectives + loss are unified into:
 #     objectives.objectives
 #     objectives.lambda
@@ -44,7 +43,7 @@ model:
   use_image_conditioned_pooling: false  # [CANONICAL]
   return_debug_outputs: false  # [CANONICAL]
 
-  # [REMOVED]
+  # [ALIAS_ONLY] accepted for legacy configs
   # training_mode: pas
 
 host:
@@ -205,8 +204,8 @@ training:
   amp_dtype: fp16              # [CANONICAL], {fp16, bf16}
   proxy_temperature: 0.07      # [CANONICAL]
 
-  # [REMOVED]
-  # stage: stage0
+  # [ALIAS_ONLY] accepted for legacy staged configs
+  # stage: stage1
 
 optimizer:
   type: Adam                   # [CANONICAL], {SGD, Adam, AdamW}

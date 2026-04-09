@@ -1,8 +1,3 @@
-"""Model package placeholder.
-
-The legacy model implementation was intentionally excluded during migration.
-We will re-implement this package incrementally.
-"""
+"""Model package exports."""
 
 from .build import PASModel, build_model
-

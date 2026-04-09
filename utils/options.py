@@ -77,6 +77,7 @@ def build_parser():
 
     parser.add_argument('--model_name', default='PAS')
     parser.add_argument('--model_variant', default='pas_v1')
+    parser.add_argument('--training_mode', type=str, default='pas')
     parser.add_argument('--pretrain_choice', default='ViT-B/16')
     parser.add_argument('--image_backbone', default='clip_visual')
     parser.add_argument('--text_backbone', default='clip_text_transformer')
@@ -176,6 +177,7 @@ def build_parser():
     parser.add_argument('--error_on_empty_kept_tokens', type=_str2bool, nargs='?', const=True, default=True)
 
     parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--stage', '--training_stage', dest='training_stage', type=str, default='joint')
     parser.add_argument('--epochs', '--num_epoch', dest='num_epoch', type=int, default=60)
     parser.add_argument('--log_period', default=20, type=int)
     parser.add_argument('--eval_frequency', '--eval_period', dest='eval_period', default=1, type=int)
@@ -282,11 +284,21 @@ def _finalize_args(args):
     model_config = override_config_data.get('model', {}) if isinstance(override_config_data.get('model', {}), dict) else {}
     cli_dests = getattr(args, 'cli_dests', set())
     if args.use_prototype_branch is None:
-        args.use_prototype_branch = False
+        args.use_prototype_branch = bool(
+            getattr(args, 'use_prototype_bank', False)
+            or getattr(args, 'use_image_conditioned_pooling', False)
+        )
+    elif not bool(args.use_prototype_branch) and (
+        bool(getattr(args, 'use_prototype_bank', False))
+        or bool(getattr(args, 'use_image_conditioned_pooling', False))
+    ):
+        args.use_prototype_branch = True
     args.use_prototype_branch = bool(args.use_prototype_branch)
     args.use_prototype_bank = bool(args.use_prototype_bank) if args.use_prototype_branch else False
     args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling) if args.use_prototype_branch else False
     args.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
+    args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
+    args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
     args.retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
     if args.fusion_enabled is None:
         args.fusion_enabled = args.use_prototype_branch

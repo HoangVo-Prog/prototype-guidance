@@ -1,0 +1,196 @@
+experiment:
+  name: ITSELF_PROTOTYPE_FROM_LEGACY
+
+model:
+  name: PAS
+  variant: itself_prototype_from_legacy
+  training_mode: pas
+  pretrain_choice: ViT-B/16
+  image_backbone: clip_visual
+  text_backbone: clip_text_transformer
+  embedding_dim: 512
+  projection_dim: 256
+  projector_hidden_dim: 512
+  projector_dropout: 0.0
+  projector_type: mlp2
+  normalize_projector_outputs: true
+  use_custom_projector: true
+  backbone_precision: fp32
+  prototype_precision: fp32
+  temperature: 0.07
+  img_size: [384, 128]
+  stride_size: 16
+  text_length: 77
+  vocab_size: 49408
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+  return_debug_outputs: false
+
+host:
+  type: itself
+  freeze_projectors: true
+  itself_loss_names: tal+cid
+  itself_only_global: false
+  itself_select_ratio: 0.4
+  itself_grab_embed_dim: 4096
+  itself_score_weight_global: 0.68
+  itself_tau: 0.015
+  itself_margin: 0.1
+  itself_return_all: true
+  itself_topk_type: mean
+  itself_layer_index: -1
+  itself_average_attn_weights: true
+  itself_modify_k: false
+
+prototype:
+  num_prototypes: 32
+  prototype_dim: 512
+  prototype_init: kmeans_centroids
+  prototype_init_path: null
+  prototype_init_hybrid_ratio: 0.5
+  prototype_init_max_iters: 50
+  prototype_init_tol: 1.0e-4
+  prototype_init_seed: null
+  routing_type: cosine
+  routing_temperature: 0.07
+  contextualization_enabled: true
+  contextualization_type: self_attention
+  contextualization_residual: true
+  normalize_for_self_interaction: true
+  normalize_for_routing: true
+  dead_prototype_threshold: 0.005
+
+fusion:
+  enabled: true
+  coefficient: 1.0
+  coefficient_source: fixed
+
+objectives:
+  objectives:
+    use_host_loss: true
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: false
+    use_loss_diag: true
+    use_loss_ret: true
+    retrieval_mode: surrogate_i2t
+    use_loss_support: false
+    support_min: 2.0
+    use_balancing_loss: true
+    use_diversity_loss: true
+  lambda:
+    host: 1.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.0
+    diag: 1.0
+    ret: 1.0
+    support: 0.0
+    balance: 0.01
+    diversity: 0.01
+
+text_pooling:
+  token_policy: content_only
+  scoring_type: cosine
+  normalize_for_token_scoring: true
+  token_temperature: 0.07
+  special_token_ids:
+    bos_token_id: 49406
+    eos_token_id: 49407
+    pad_token_id: 0
+  error_on_empty_kept_tokens: true
+
+training:
+  stage: stage1
+  batch_size: 128
+  epochs: 20
+  log_period: 20
+  eval_frequency: 1
+  save_interval: 1
+  resume: false
+  resume_ckpt_file: ''
+  finetune: path/to/stage0_itself_best.pth
+  pretrain: ''
+  img_aug: false
+  txt_aug: false
+  sampler: random
+  num_instance: 2
+  num_workers: 4
+  training: true
+  freeze_image_backbone: true
+  freeze_text_backbone: true
+  freeze_prototype_side: false
+  freeze_host_projectors: true
+  grad_clip: 1.0
+  amp: false
+  amp_dtype: fp16
+  proxy_temperature: 0.07
+
+optimizer:
+  type: AdamW
+  lr: 0.001
+  lr_prototype_bank: 0.001
+  lr_projectors: 0.001
+  lr_prototype_routing: 0.001
+  lr_prototype_pooling: 0.001
+  lr_prototype_contextualization: 0.001
+  lr_host_projectors: 0.0
+  lr_image_backbone: 0.0
+  lr_text_backbone: 0.0
+  weight_decay: 0.01
+  weight_decay_prototype_bank: 0.01
+  weight_decay_projectors: 0.05
+  weight_decay_prototype_routing: 0.05
+  weight_decay_prototype_pooling: 0.05
+  weight_decay_prototype_contextualization: 0.05
+  weight_decay_host_projectors: 0.05
+  lr_class_proxies: 0.0
+  weight_decay_class_proxies: 0.0
+  weight_decay_image_backbone: 0.0
+  weight_decay_text_backbone: 0.0
+  momentum: 0.9
+  alpha: 0.9
+  beta: 0.999
+  milestones: [12, 16]
+  gamma: 0.1
+  warmup_factor: 0.1
+  warmup_epochs: 1
+  warmup_method: linear
+  scheduler: cosine
+  target_lr: 0.0
+  power: 0.9
+
+dataset:
+  dataset_name: RSTPReid
+  root_dir: data
+  val_dataset: test
+  num_workers: 4
+
+logging:
+  use_wandb: false
+  project: PAS-Stage1
+  entity: null
+  run_name: null
+  group: stage1_itself_host_plus_prototype
+  mode: online
+  tags: [pas, itself, stage1, prototype]
+  notes: Stage1 ITSELF host + prototype branch based on legacy recipe.
+  log_interval: 50
+  log_code: false
+  log_debug_metrics: true
+
+evaluation:
+  checkpoint_path: ''
+  device: cuda
+  cross_domain_generalization: false
+  target_domain: RSTPReid
+  retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
+  batch_size: 512
+  prototype_image_chunk_size: 8
+  prototype_text_chunk_size: 16
+  retrieval_scorer: exact
+
