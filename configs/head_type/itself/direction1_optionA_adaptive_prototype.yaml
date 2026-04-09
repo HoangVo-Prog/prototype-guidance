@@ -26,6 +26,7 @@ fusion:
 training:
   epochs: 60
   log_period: 50
+  prototype_selection_metric: R1
   freeze_prototype_side: false
   freeze_schedule:
     # Warm-up: freeze host backbone/retrieval, train prototype side only, lambda_host=0.

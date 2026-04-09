@@ -71,6 +71,7 @@ training:
   batch_size: 256
   epochs: 15
   log_period: 50
+  prototype_selection_metric: R1
   eval_frequency: 1
   save_interval: 1
   grad_clip: 0.0

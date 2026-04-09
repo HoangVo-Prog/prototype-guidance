@@ -26,6 +26,7 @@ fusion:
 training:
   epochs: 60
   log_period: 50
+  prototype_selection_metric: R1
   freeze_schedule:
     # Warm-up: host frozen, prototype branch trainable.
     - name: warmup

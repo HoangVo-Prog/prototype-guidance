@@ -26,6 +26,7 @@ fusion:
 training:
   epochs: 20
   log_period: 50
+  prototype_selection_metric: L_diag
   freeze_prototype_side: false
   freeze_schedule:
     # Stage 1 emphasis: structural fidelity (diag), weak semantic anchor (ret), anti-collapse regularizers.

@@ -29,6 +29,7 @@ fusion:
 training:
   epochs: 60
   log_period: 50
+  prototype_selection_metric: R1
   freeze_schedule:
     # Stage 1: stabilize prototypes before touching host backbone.
     - name: stage1_prototype_stability

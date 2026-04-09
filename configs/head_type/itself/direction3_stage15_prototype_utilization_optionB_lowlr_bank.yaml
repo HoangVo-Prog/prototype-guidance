@@ -26,6 +26,7 @@ fusion:
 training:
   epochs: 10
   log_period: 50
+  prototype_selection_metric: L_total
   finetune: ''
   freeze_prototype_side: false
   freeze_schedule:
