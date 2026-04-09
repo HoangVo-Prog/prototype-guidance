@@ -269,7 +269,7 @@ class PrototypeLosses(nn.Module):
     def cosine_alignment_loss(self, source_embeddings: torch.Tensor, target_embeddings: torch.Tensor) -> torch.Tensor:
         source_embeddings = F.normalize(source_embeddings, dim=-1)
         target_embeddings = F.normalize(target_embeddings, dim=-1)
-        return (1.0 - (source_embeddings * target_embeddings).sum(dim=-1)).mean()
+        return (1.0 - (source_embeddings * target_embeddings).sum(dim=-1)).clamp_min(0.0).mean()
 
     def diagonal_fidelity_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> torch.Tensor:
         return self.cosine_alignment_loss(surrogate_embeddings, exact_embeddings.detach())
@@ -447,4 +447,3 @@ class PrototypeLosses(nn.Module):
                 outputs['surrogate_retrieval_logits'] = loss_ret_info['logits']
             outputs['class_proxies'] = self.class_proxies.detach()
         return outputs
-

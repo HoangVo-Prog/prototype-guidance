@@ -323,6 +323,22 @@ def apply_loss_weight_overrides(model, args, loss_weights: Dict[str, float]) -> 
         setattr(args, weight_name, scalar)
         if weight_name == 'lambda_host' and hasattr(model, 'lambda_host'):
             setattr(model, 'lambda_host', scalar)
+            host_loss_enabled = bool(scalar > 0.0)
+            setattr(args, 'use_host_loss', host_loss_enabled)
+            if hasattr(model, 'use_host_loss'):
+                setattr(model, 'use_host_loss', host_loss_enabled)
+            host_head = getattr(model, 'host_head', None)
+            if host_head is not None and hasattr(host_head, 'use_host_loss'):
+                setattr(host_head, 'use_host_loss', host_loss_enabled)
+            # PAS CLIP host adapter path: host_head.core.losses.use_loss_ret
+            host_head_core = getattr(host_head, 'core', None) if host_head is not None else None
+            host_head_core_losses = getattr(host_head_core, 'losses', None) if host_head_core is not None else None
+            if host_head_core_losses is not None and hasattr(host_head_core_losses, 'use_loss_ret'):
+                host_head_core_losses.use_loss_ret = host_loss_enabled
+            # Host-only CLIP model path: model.losses.use_loss_ret
+            model_losses = getattr(model, 'losses', None)
+            if model_losses is not None and hasattr(model_losses, 'use_loss_ret'):
+                model_losses.use_loss_ret = host_loss_enabled
             applied[weight_name] = scalar
             continue
         if prototype_losses is None:

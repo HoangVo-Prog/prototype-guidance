@@ -26,6 +26,14 @@ class _FakeParameter:
 class _FakeModel:
     def __init__(self):
         self.lambda_host = 1.0
+        self.use_host_loss = True
+        self.host_head = SimpleNamespace(
+            use_host_loss=True,
+            core=SimpleNamespace(
+                losses=SimpleNamespace(use_loss_ret=True)
+            ),
+        )
+        self.losses = SimpleNamespace(use_loss_ret=True)
         self.prototype_head = SimpleNamespace(
             losses=SimpleNamespace(
                 lambda_ret=1.0,
@@ -192,6 +200,7 @@ class FreezeScheduleTests(unittest.TestCase):
             lambda_diag=1.0,
             lambda_bal=0.01,
             lambda_div=0.01,
+            use_host_loss=True,
         )
         applied = apply_loss_weight_overrides(
             model,
@@ -207,6 +216,11 @@ class FreezeScheduleTests(unittest.TestCase):
         self.assertEqual(applied['lambda_host'], 0.0)
         self.assertEqual(model.lambda_host, 0.0)
         self.assertEqual(args.lambda_host, 0.0)
+        self.assertFalse(args.use_host_loss)
+        self.assertFalse(model.use_host_loss)
+        self.assertFalse(model.host_head.use_host_loss)
+        self.assertFalse(model.host_head.core.losses.use_loss_ret)
+        self.assertFalse(model.losses.use_loss_ret)
         self.assertEqual(model.prototype_head.losses.lambda_ret, 0.25)
         self.assertEqual(model.prototype_head.losses.lambda_diag, 0.5)
         self.assertEqual(model.prototype_head.losses.lambda_bal, 0.003)
@@ -224,6 +238,7 @@ class FreezeScheduleTests(unittest.TestCase):
             lambda_diag=1.0,
             lambda_bal=0.01,
             lambda_div=0.01,
+            use_host_loss=True,
             use_loss_ret=True,
             use_loss_diag=True,
             use_balancing_loss=True,
