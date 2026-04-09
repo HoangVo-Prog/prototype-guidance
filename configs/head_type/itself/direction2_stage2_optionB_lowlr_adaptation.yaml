@@ -5,7 +5,7 @@ experiment:
   name: DIRECTION2_STAGE2_OPTIONB_LOWLR_ADAPT
 
 model:
-  variant: direction2_stage2_optionB_lowlr_adaptation
+  variant: direction2_stage2_optionB_lowlr_adaptation_itself_head
   training_mode: pas
   use_prototype_branch: true
   use_prototype_bank: true
@@ -35,7 +35,7 @@ training:
       trainable_groups: [host_backbone, host_retrieval, prototype_bank, prototype_projector, routing, fusion]
       frozen_groups: []
       lr_overrides:
-        host_backbone: 1.0e-5
+        host_backbone: 5.0e-6
         host_retrieval: 1.0e-5
         prototype_bank: 2.0e-6
         prototype_projector: 5.0e-6
@@ -51,7 +51,10 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+  lr_image_backbone: 5.0e-6
+  lr_text_backbone: 5.0e-6
 
 logging:
   use_wandb: true
-  project: direction2_stage2_optionB_lowlr_adaptation
+  project: direction2_stage2_optionB_lowlr_adaptation_itself_head
+

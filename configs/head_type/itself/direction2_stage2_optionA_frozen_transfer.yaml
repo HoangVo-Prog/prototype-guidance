@@ -1,0 +1,58 @@
+# Direction 2 / Stage 2 / Option A
+# Frozen prototype transfer: host learns from stabilized prototype branch with frozen bank/routing.
+
+experiment:
+  name: DIRECTION2_STAGE2_OPTIONA_FROZEN_TRANSFER
+
+model:
+  variant: direction2_stage2_optionA_frozen_transfer_itself_head
+  training_mode: pas
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+
+host:
+  type: itself
+
+prototype:
+  num_prototypes: 32
+  contextualization_enabled: true
+  contextualization_type: self_attention
+
+fusion:
+  enabled: true
+  coefficient: 1.0
+
+training:
+  epochs: 40
+  finetune: ''
+  freeze_prototype_side: false
+  freeze_schedule:
+    # Stage 2: host active, full host loss, prototype bank/routing fixed.
+    - name: stage2_frozen_transfer
+      epoch_start: 1
+      epoch_end: 40
+      trainable_groups: [host_backbone, host_retrieval, prototype_projector, fusion]
+      frozen_groups: [prototype_bank, routing]
+      lr_overrides:
+        host_backbone: 5.0e-6
+        host_retrieval: 1.0e-5
+        prototype_projector: 2.0e-5
+        fusion: 2.0e-5
+      loss_weights:
+        lambda_host: 1.0
+        lambda_ret: 0.25
+        lambda_diag: 0.25
+        lambda_bal: 0.002
+        lambda_div: 0.002
+
+optimizer:
+  type: AdamW
+  lr: 1.0e-5
+  lr_image_backbone: 5.0e-6
+  lr_text_backbone: 5.0e-6
+
+logging:
+  use_wandb: true
+  project: direction2_stage2_optionA_frozen_transfer_itself_head
+

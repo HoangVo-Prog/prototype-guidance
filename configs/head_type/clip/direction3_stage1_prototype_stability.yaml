@@ -5,14 +5,14 @@ experiment:
   name: DIRECTION3_STAGE1_PROTOTYPE_STABILITY
 
 model:
-  variant: direction3_stage1_prototype_stability
+  variant: direction3_stage1_prototype_stability_clip_head
   training_mode: pas
   use_prototype_branch: true
   use_prototype_bank: true
   use_image_conditioned_pooling: true
 
 host:
-  type: itself
+  type: clip
 
 prototype:
   num_prototypes: 32
@@ -48,7 +48,10 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
 
 logging:
   use_wandb: true
-  project: direction3_stage1_prototype_stability
+  project: direction3_stage1_prototype_stability_clip_head
+

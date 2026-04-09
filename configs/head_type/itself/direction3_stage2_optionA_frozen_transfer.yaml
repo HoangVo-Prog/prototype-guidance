@@ -5,7 +5,7 @@ experiment:
   name: DIRECTION3_STAGE2_OPTIONA_FROZEN_TRANSFER
 
 model:
-  variant: direction3_stage2_optionA_frozen_transfer
+  variant: direction3_stage2_optionA_frozen_transfer_itself_head
   training_mode: pas
   use_prototype_branch: true
   use_prototype_bank: true
@@ -35,7 +35,7 @@ training:
       trainable_groups: [host_backbone, host_retrieval, prototype_projector, fusion]
       frozen_groups: [prototype_bank, routing]
       lr_overrides:
-        host_backbone: 1.0e-5
+        host_backbone: 5.0e-6
         host_retrieval: 1.0e-5
         prototype_projector: 2.0e-5
         fusion: 2.0e-5
@@ -49,7 +49,10 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+  lr_image_backbone: 5.0e-6
+  lr_text_backbone: 5.0e-6
 
 logging:
   use_wandb: true
-  project: direction3_stage2_optionA_frozen_transfer
+  project: direction3_stage2_optionA_frozen_transfer_itself_head
+

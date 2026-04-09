@@ -1,11 +1,11 @@
-# Direction 2 / Stage 1
-# Prototype stability training only: host frozen, prototype branch trainable.
+# Direction 3 / Stage 1
+# Prototype stabilization before adaptation and backbone transfer.
 
 experiment:
-  name: DIRECTION2_STAGE1_PROTOTYPE_STABILITY
+  name: DIRECTION3_STAGE1_PROTOTYPE_STABILITY
 
 model:
-  variant: direction2_stage1_prototype_stability
+  variant: direction3_stage1_prototype_stability_itself_head
   training_mode: pas
   use_prototype_branch: true
   use_prototype_bank: true
@@ -24,13 +24,13 @@ fusion:
   coefficient: 1.0
 
 training:
-  epochs: 20
+  epochs: 15
   freeze_prototype_side: false
   freeze_schedule:
-    # Stage 1 emphasis: structural fidelity (diag), weak semantic anchor (ret), anti-collapse regularizers.
+    # Stage 1: host frozen, prototype branch trainable, structural stability prioritized.
     - name: stage1_prototype_stability
       epoch_start: 1
-      epoch_end: 20
+      epoch_end: 15
       trainable_groups: [prototype_bank, prototype_projector, routing, fusion]
       frozen_groups: [host_backbone, host_retrieval]
       lr_overrides:
@@ -48,7 +48,10 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+  lr_image_backbone: 5.0e-6
+  lr_text_backbone: 5.0e-6
 
 logging:
   use_wandb: true
-  project: direction2_stage1_prototype_stability
+  project: direction3_stage1_prototype_stability_itself_head
+

@@ -1,18 +1,18 @@
-# Direction 3 / Stage 1.5 / Option B
-# Prototype utilization adaptation with low-lr bank updates and frozen host backbone.
+# Direction 3 / Stage 1.5 / Option A
+# Prototype utilization adaptation with frozen bank and frozen host backbone.
 
 experiment:
-  name: DIRECTION3_STAGE15_OPTIONB_LOWLR_BANK
+  name: DIRECTION3_STAGE15_OPTIONA_FROZEN_BANK
 
 model:
-  variant: direction3_stage15_prototype_utilization_optionB_lowlr_bank
+  variant: direction3_stage15_prototype_utilization_optionA_frozen_or_minimal_bank_clip_head
   training_mode: pas
   use_prototype_branch: true
   use_prototype_bank: true
   use_image_conditioned_pooling: true
 
 host:
-  type: itself
+  type: clip
 
 prototype:
   num_prototypes: 32
@@ -28,16 +28,15 @@ training:
   finetune: ''
   freeze_prototype_side: false
   freeze_schedule:
-    # Stage 1.5: host backbone frozen, bank still trainable at very low lr, train lightweight modules.
-    - name: stage15_lowlr_bank
+    # Stage 1.5: host backbone frozen, prototype bank frozen, train lightweight usage modules.
+    - name: stage15_frozen_bank
       epoch_start: 1
       epoch_end: 10
-      trainable_groups: [prototype_bank, prototype_projector, routing, fusion]
-      frozen_groups: [host_backbone, host_retrieval]
+      trainable_groups: [prototype_projector, routing, fusion]
+      frozen_groups: [host_backbone, host_retrieval, prototype_bank]
       lr_overrides:
-        prototype_bank: 2.0e-6
         prototype_projector: 2.0e-5
-        routing: 5.0e-6
+        routing: 1.0e-5
         fusion: 2.0e-5
       loss_weights:
         lambda_host: 0.1
@@ -49,7 +48,10 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
 
 logging:
   use_wandb: true
-  project: direction3_stage15_prototype_utilization_optionB_lowlr_bank
+  project: direction3_stage15_prototype_utilization_optionA_frozen_or_minimal_bank_clip_head
+

@@ -5,7 +5,7 @@ experiment:
   name: DIRECTION3_STAGE15_OPTIONA_FROZEN_BANK
 
 model:
-  variant: direction3_stage15_prototype_utilization_optionA_frozen_or_minimal_bank
+  variant: direction3_stage15_prototype_utilization_optionA_frozen_or_minimal_bank_itself_head
   training_mode: pas
   use_prototype_branch: true
   use_prototype_bank: true
@@ -48,7 +48,10 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+  lr_image_backbone: 5.0e-6
+  lr_text_backbone: 5.0e-6
 
 logging:
   use_wandb: true
-  project: direction3_stage15_prototype_utilization_optionA_frozen_or_minimal_bank
+  project: direction3_stage15_prototype_utilization_optionA_frozen_or_minimal_bank_itself_head
+
