@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from utils.precision import build_autocast_context, is_cuda_device
+from utils.metric_logging import build_validation_debug_metrics, build_validation_retrieval_metrics
 
 
 SUPPORTED_RETRIEVAL_METRICS = ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum')
@@ -159,16 +160,16 @@ class Evaluator:
         core_model = model.module if hasattr(model, 'module') else model
         similarity = similarity.detach().float().cpu()
         positive_mask, positive_counts, first_positive = self._positive_gallery_structure(text_ids, image_ids)
-        metrics['val/debug/eval_positive_gallery_count_min'] = float(positive_counts.min().item())
-        metrics['val/debug/eval_positive_gallery_count_mean'] = float(positive_counts.float().mean().item())
+        metrics['eval_positive_gallery_count_min'] = float(positive_counts.min().item())
+        metrics['eval_positive_gallery_count_mean'] = float(positive_counts.float().mean().item())
 
         logit_scale_value = None
         if hasattr(core_model, 'prototype_head') and hasattr(core_model.prototype_head, 'losses'):
             logit_scale = core_model.prototype_head.losses.get_logit_scale().detach().float().cpu()
             retrieval_temperature = core_model.prototype_head.losses.get_retrieval_temperature().detach().float().cpu()
             logit_scale_value = float(logit_scale.item())
-            metrics['val/debug/eval_logit_scale'] = logit_scale_value
-            metrics['val/debug/eval_retrieval_temperature'] = float(retrieval_temperature.item())
+            metrics['eval_logit_scale'] = logit_scale_value
+            metrics['eval_retrieval_temperature'] = float(retrieval_temperature.item())
 
         cosine_similarity = similarity
         if logit_scale_value is not None and logit_scale_value > 0.0:
@@ -180,17 +181,17 @@ class Evaluator:
             hardest_negative = cosine_similarity.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
         else:
             hardest_negative = torch.zeros_like(positive_scores)
-        metrics['val/debug/eval_positive_exact_cosine_mean'] = float(positive_scores.mean().item())
-        metrics['val/debug/eval_hardest_negative_exact_cosine_mean'] = float(hardest_negative.mean().item())
-        metrics['val/debug/eval_exact_margin_mean'] = float((positive_scores - hardest_negative).mean().item())
+        metrics['eval_positive_exact_cosine_mean'] = float(positive_scores.mean().item())
+        metrics['eval_hardest_negative_exact_cosine_mean'] = float(hardest_negative.mean().item())
+        metrics['eval_exact_margin_mean'] = float((positive_scores - hardest_negative).mean().item())
 
         image_projected = None
         if isinstance(image_features, dict):
             image_projected = image_features.get('prototype_image_projected', image_features.get('image_projected'))
         if isinstance(image_projected, torch.Tensor):
             image_norms = image_projected.detach().float().norm(dim=-1).cpu()
-            metrics['val/debug/eval_image_projected_norm_mean'] = float(image_norms.mean().item())
-            metrics['val/debug/eval_image_projected_norm_std'] = float(image_norms.std(unbiased=False).item())
+            metrics['eval_image_projected_norm_mean'] = float(image_norms.mean().item())
+            metrics['eval_image_projected_norm_std'] = float(image_norms.std(unbiased=False).item())
 
         if self.retrieval_scorer == 'exact' and isinstance(image_projected, torch.Tensor):
             required_text_keys = ('text_token_states', 'token_ids')
@@ -213,12 +214,12 @@ class Evaluator:
                     F.normalize(positive_image_projected.detach().float(), dim=-1)
                     * F.normalize(exact_outputs['text_projected'].detach().float(), dim=-1)
                 ).sum(dim=-1).cpu()
-                metrics['val/debug/eval_positive_exact_text_embed_norm_mean'] = float(exact_raw_norms.mean().item())
-                metrics['val/debug/eval_positive_exact_text_embed_norm_std'] = float(exact_raw_norms.std(unbiased=False).item())
-                metrics['val/debug/eval_positive_exact_text_embed_unit_norm_mean'] = float(exact_unit_norms.mean().item())
-                metrics['val/debug/eval_positive_exact_pair_cosine_mean'] = float(paired_cosine.mean().item())
+                metrics['eval_positive_exact_text_embed_norm_mean'] = float(exact_raw_norms.mean().item())
+                metrics['eval_positive_exact_text_embed_norm_std'] = float(exact_raw_norms.std(unbiased=False).item())
+                metrics['eval_positive_exact_text_embed_unit_norm_mean'] = float(exact_unit_norms.mean().item())
+                metrics['eval_positive_exact_pair_cosine_mean'] = float(paired_cosine.mean().item())
 
-        return metrics
+        return build_validation_debug_metrics(metrics)
 
     def _compute_similarity(self, model):
         model = model.eval()
@@ -289,18 +290,19 @@ class Evaluator:
         for metric_name in self.requested_metrics:
             table.custom_format[metric_name] = lambda _, value: f'{value:.2f}'
 
-        self.latest_metrics = {
-            f'val/pas/{metric_name}': metrics[metric_name]
+        retrieval_metrics = {
+            metric_name: metrics[metric_name]
             for metric_name in self.requested_metrics
         }
+        self.latest_metrics = build_validation_retrieval_metrics(retrieval_metrics)
         self.latest_metrics['val/top1'] = metrics['R1']
         self.latest_metrics.update(debug_metrics)
 
         self.logger.info('\n' + str(table))
         if debug_metrics:
-            positive_cos = debug_metrics.get('val/debug/eval_positive_exact_cosine_mean')
-            hardest_negative = debug_metrics.get('val/debug/eval_hardest_negative_exact_cosine_mean')
-            margin = debug_metrics.get('val/debug/eval_exact_margin_mean')
+            positive_cos = debug_metrics.get('val/geometry/exact_positive_cosine_mean')
+            hardest_negative = debug_metrics.get('val/geometry/exact_hardest_negative_cosine_mean')
+            margin = debug_metrics.get('val/geometry/exact_margin_mean')
             if positive_cos is not None and hardest_negative is not None and margin is not None:
                 self.logger.info(
                     'Retrieval sanity: positive_exact_cos=%.4f hardest_negative_exact_cos=%.4f margin=%.4f',

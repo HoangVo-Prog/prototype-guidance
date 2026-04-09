@@ -261,6 +261,193 @@ DEBUG_SKIP_KEYS = {
 
 TRACKED_SCALAR_KEYS = TRAIN_LOSS_KEYS + tuple(sorted(set(DEBUG_METRIC_MAP.keys())))
 
+PROTOTYPE_GEOMETRY_METRIC_KEYS = (
+    'prototype_pairwise_cosine_mean',
+    'prototype_pairwise_cosine_std',
+    'prototype_pairwise_cosine_max',
+    'contextualized_prototype_pairwise_cosine_mean',
+    'contextualized_prototype_pairwise_cosine_std',
+    'contextualized_prototype_pairwise_cosine_max',
+)
+
+_LOSS_BASE_SUFFIX_MAP = {
+    'loss_total': 'total',
+    'loss_host': 'host',
+    'loss_host_ret': 'host_ret',
+    'loss_host_ret_i2t': 'host_ret_i2t',
+    'loss_host_ret_t2i': 'host_ret_t2i',
+    'loss_host_cid': 'host_cid',
+    'loss_proto_total': 'proto_total',
+    'loss_proxy': 'proxy',
+    'loss_proxy_image': 'proxy_image',
+    'loss_proxy_text': 'proxy_text',
+    'loss_proxy_text_exact': 'proxy_text_exact',
+    'loss_ret': 'ret',
+    'loss_align': 'align',
+    'loss_diag': 'diag',
+    'loss_support': 'support',
+    'loss_diversity': 'diversity',
+    'loss_balance': 'balance',
+    # Kept under train/loss/* for minimal, non-invasive compatibility.
+    'loss_host_weighted': 'host_weighted',
+}
+
+_LOSS_WEIGHTED_SUFFIX_MAP = {
+    'loss_proxy_image_weighted': 'proxy_image',
+    'loss_proxy_text_weighted': 'proxy_text',
+    'loss_proxy_text_exact_weighted': 'proxy_text_exact',
+    'loss_proxy_weighted': 'proxy',
+    'loss_ret_weighted': 'ret',
+    'loss_align_weighted': 'align',
+    'loss_diag_weighted': 'diag',
+    'loss_support_weighted': 'support',
+    'loss_diversity_weighted': 'diversity',
+    'loss_balance_weighted': 'balance',
+}
+
+_TRAIN_MODEL_KEYS = {
+    'logit_scale',
+    'host_logit_scale',
+    'host_retrieval_temperature',
+    'fusion_coefficient',
+    'proxy_temperature',
+    'retrieval_temperature',
+    'host_loss_total',
+    'host_loss_ret',
+    'lambda_host',
+}
+
+_TRAIN_TOKEN_POOL_KEYS = {
+    'token_pool_entropy',
+    'beta_max_prob',
+    'token_special_mass',
+    'token_valid_fraction',
+    'valid_token_fraction',
+}
+
+_TRAIN_NORM_KEYS = {
+    'image_embed_norm_std',
+    'image_embed_norm_min',
+    'image_embed_norm_max',
+    'text_embed_norm_std',
+    'text_embed_norm_min',
+    'text_embed_norm_max',
+    'q_norm',
+    'surrogate_t_pool_norm',
+    'exact_t_pool_norm',
+    'image_feature_norm',
+    'image_embed_norm_raw',
+    'image_embed_unit_norm',
+    'surrogate_text_embed_norm_raw',
+    'surrogate_text_embed_unit_norm',
+    'exact_text_embed_norm_raw',
+    'exact_text_embed_unit_norm',
+}
+
+_VAL_DEBUG_NAMESPACE_MAP = {
+    'eval_positive_gallery_count_min': 'val/data/positive_gallery_count_min',
+    'eval_positive_gallery_count_mean': 'val/data/positive_gallery_count_mean',
+    'eval_logit_scale': 'val/model/logit_scale',
+    'eval_retrieval_temperature': 'val/model/retrieval_temperature',
+    'eval_positive_exact_cosine_mean': 'val/geometry/exact_positive_cosine_mean',
+    'eval_hardest_negative_exact_cosine_mean': 'val/geometry/exact_hardest_negative_cosine_mean',
+    'eval_exact_margin_mean': 'val/geometry/exact_margin_mean',
+    'eval_positive_exact_pair_cosine_mean': 'val/geometry/exact_pair_cosine_mean',
+    'eval_image_projected_norm_mean': 'val/norm/image_projected_norm_mean',
+    'eval_image_projected_norm_std': 'val/norm/image_projected_norm_std',
+    'eval_positive_exact_text_embed_norm_mean': 'val/norm/exact_text_embed_norm_mean',
+    'eval_positive_exact_text_embed_norm_std': 'val/norm/exact_text_embed_norm_std',
+    'eval_positive_exact_text_embed_unit_norm_mean': 'val/norm/exact_text_embed_unit_norm_mean',
+}
+
+
+def _map_train_loss_key(raw_key: str) -> str:
+    if raw_key in _LOSS_BASE_SUFFIX_MAP:
+        return f'train/loss/{_LOSS_BASE_SUFFIX_MAP[raw_key]}'
+    if raw_key in _LOSS_WEIGHTED_SUFFIX_MAP:
+        return f'train/loss_weighted/{_LOSS_WEIGHTED_SUFFIX_MAP[raw_key]}'
+    if raw_key.startswith('loss_'):
+        return f'train/loss/{raw_key[len("loss_"):]}'
+    return f'train/model/{raw_key}'
+
+
+def _map_val_loss_key(raw_key: str) -> str:
+    if raw_key in _LOSS_BASE_SUFFIX_MAP:
+        return f'val/loss/{_LOSS_BASE_SUFFIX_MAP[raw_key]}'
+    if raw_key in _LOSS_WEIGHTED_SUFFIX_MAP:
+        return f'val/loss_weighted/{_LOSS_WEIGHTED_SUFFIX_MAP[raw_key]}'
+    if raw_key.startswith('loss_'):
+        return f'val/loss/{raw_key[len("loss_"):]}'
+    return f'val/model/{raw_key}'
+
+
+def map_train_diagnostic_key(raw_key: str) -> str:
+    if raw_key in _TRAIN_MODEL_KEYS:
+        return f'train/model/{raw_key}'
+    if raw_key in _TRAIN_TOKEN_POOL_KEYS:
+        return f'train/token_pool/{raw_key}'
+    if raw_key in _TRAIN_NORM_KEYS:
+        return f'train/norm/{raw_key}'
+    if raw_key.startswith('prototype_usage_') or raw_key == 'prototype_dead_count' or raw_key.startswith('prototype_active_count_'):
+        return f'train/prototype_usage/{raw_key}'
+    if raw_key == 'prototype_assignment_entropy':
+        return f'train/prototype_usage/{raw_key}'
+    if raw_key.startswith('routing_top1_usage_') or raw_key == 'routing_top1_dead_count' or raw_key.startswith('routing_top1_dead_count_window_') or raw_key.startswith('routing_top1_active_count_window_'):
+        return f'train/prototype_usage/{raw_key}'
+    if raw_key.startswith('routing_'):
+        return f'train/routing/{raw_key}'
+    if raw_key.startswith('diag_cos_') or raw_key.startswith('loss_diag_'):
+        return f'train/fidelity/{raw_key}'
+    if raw_key.startswith('image_surrogate_') or raw_key.startswith('image_exact_') or raw_key.startswith('surrogate_pairwise_'):
+        return f'train/geometry/{raw_key}'
+    if raw_key.startswith('image_proxy_') or raw_key.startswith('text_proxy_') or raw_key.startswith('text_exact_proxy_') or raw_key.startswith('image_positive_proxy_') or raw_key.startswith('image_hardest_negative_proxy_') or raw_key.startswith('text_positive_proxy_') or raw_key.startswith('text_hardest_negative_proxy_') or raw_key.startswith('class_proxy_norm_'):
+        return f'train/proxy/{raw_key}'
+    if raw_key.startswith('prototype_pairwise_') or raw_key.startswith('contextualized_prototype_pairwise_') or raw_key == 'prototype_contextualization_entropy':
+        return f'train/prototype_geometry/{raw_key}'
+    if raw_key.startswith('grad_norm_') or raw_key == 'surrogate_retrieval_grad_norm':
+        return f'train/grad/{raw_key}'
+    return f'train/model/{raw_key}'
+
+
+def map_train_scalar_to_wandb_key(raw_key: str) -> str:
+    if raw_key in TRAIN_LOSS_KEYS:
+        return _map_train_loss_key(raw_key)
+    return map_train_diagnostic_key(raw_key)
+
+
+def map_validation_metric_key(metric_key: str) -> str:
+    if metric_key.startswith('val/pas/'):
+        return f'val/retrieval/{metric_key.split("/", 2)[2]}'
+    if metric_key.startswith('val/debug/'):
+        debug_key = metric_key.split('/', 2)[2]
+        return _VAL_DEBUG_NAMESPACE_MAP.get(debug_key, f'val/model/{debug_key}')
+    return metric_key
+
+
+def build_validation_debug_metrics(raw_debug_metrics: Dict[str, float]) -> Dict[str, float]:
+    mapped = {}
+    for raw_key, value in raw_debug_metrics.items():
+        mapped_key = _VAL_DEBUG_NAMESPACE_MAP.get(raw_key, f'val/model/{raw_key}')
+        mapped[mapped_key] = float(value)
+    return mapped
+
+
+def build_validation_retrieval_metrics(retrieval_metrics: Dict[str, float]) -> Dict[str, float]:
+    return {f'val/retrieval/{metric_name}': float(metric_value) for metric_name, metric_value in retrieval_metrics.items()}
+
+
+def collect_metric_namespace_collisions() -> Dict[str, Tuple[str, ...]]:
+    tracked_keys = set(TRAIN_LOSS_KEYS) | set(DEBUG_METRIC_MAP.keys()) | set(PROTOTYPE_GEOMETRY_METRIC_KEYS)
+    mapped_to_sources: Dict[str, list] = {}
+    for raw_key in sorted(tracked_keys):
+        mapped_key = map_train_scalar_to_wandb_key(raw_key)
+        mapped_to_sources.setdefault(mapped_key, []).append(raw_key)
+    return {
+        mapped_key: tuple(source_keys)
+        for mapped_key, source_keys in mapped_to_sources.items()
+        if len(source_keys) > 1
+    }
+
 
 class RoutingCoverageTracker:
     """Tracks rolling routing coverage and epoch summaries for logging only."""
@@ -505,10 +692,7 @@ def build_train_metrics_from_scalars(
             scalar_value = float(value)
         except (TypeError, ValueError):
             continue
-        if key in TRAIN_LOSS_KEYS:
-            metrics[f'train/{key}'] = scalar_value
-        else:
-            metrics[f'debug/{key}'] = scalar_value
+        metrics[map_train_scalar_to_wandb_key(key)] = scalar_value
     return metrics
 
 
@@ -535,12 +719,11 @@ def build_validation_metrics(
     if val_loss is not None and 'loss_total' not in merged_loss_metrics:
         merged_loss_metrics['loss_total'] = float(val_loss)
     for key, value in merged_loss_metrics.items():
-        metrics[f'val/{key}'] = float(value)
+        metrics[_map_val_loss_key(key)] = float(value)
     if evaluator is not None and getattr(evaluator, 'latest_metrics', None):
-        metrics.update(evaluator.latest_metrics)
+        for metric_key, metric_value in evaluator.latest_metrics.items():
+            metrics[map_validation_metric_key(metric_key)] = metric_value
     return metrics
-
-
 
 
 

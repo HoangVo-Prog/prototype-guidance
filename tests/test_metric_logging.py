@@ -13,7 +13,13 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 if torch is not None:
-    from utils.metric_logging import RoutingCoverageTracker, build_train_metrics, build_train_metrics_from_scalars, build_validation_metrics
+    from utils.metric_logging import (
+        RoutingCoverageTracker,
+        build_train_metrics,
+        build_train_metrics_from_scalars,
+        build_validation_metrics,
+        collect_metric_namespace_collisions,
+    )
 
 
 @unittest.skipUnless(torch is not None, 'Torch is required for metric logging tests.')
@@ -44,10 +50,10 @@ class MetricLoggingTests(unittest.TestCase):
             },
         }
         metrics = build_train_metrics(epoch=2, step=17, outputs=outputs, lr=1e-3, include_debug_metrics=True)
-        self.assertEqual(metrics['train/loss_ret'], 0.5)
-        self.assertEqual(metrics['train/loss_ret_weighted'], 0.5)
-        self.assertEqual(metrics['debug/surrogate_pairwise_logit_mean'], 0.2)
-        self.assertEqual(metrics['debug/surrogate_retrieval_grad_norm'], 1.5)
+        self.assertEqual(metrics['train/loss/ret'], 0.5)
+        self.assertEqual(metrics['train/loss_weighted/ret'], 0.5)
+        self.assertEqual(metrics['train/geometry/surrogate_pairwise_logit_mean'], 0.2)
+        self.assertEqual(metrics['train/grad/surrogate_retrieval_grad_norm'], 1.5)
 
     def test_build_train_metrics_from_scalars_maps_losses_and_debug(self):
         metrics = build_train_metrics_from_scalars(
@@ -64,10 +70,10 @@ class MetricLoggingTests(unittest.TestCase):
         self.assertEqual(metrics['train/epoch'], 2.0)
         self.assertEqual(metrics['train/step'], 17.0)
         self.assertEqual(metrics['train/lr'], 5e-4)
-        self.assertEqual(metrics['train/loss_total'], 1.25)
-        self.assertEqual(metrics['train/loss_ret'], 0.4)
-        self.assertEqual(metrics['debug/routing_entropy'], 2.0)
-        self.assertEqual(metrics['debug/surrogate_retrieval_grad_norm'], 1.3)
+        self.assertEqual(metrics['train/loss/total'], 1.25)
+        self.assertEqual(metrics['train/loss/ret'], 0.4)
+        self.assertEqual(metrics['train/routing/routing_entropy'], 2.0)
+        self.assertEqual(metrics['train/grad/surrogate_retrieval_grad_norm'], 1.3)
 
     def test_build_validation_metrics_merges_loss_and_retrieval_under_val_namespace(self):
         evaluator = type('EvaluatorStub', (), {
@@ -82,11 +88,11 @@ class MetricLoggingTests(unittest.TestCase):
             loss_metrics={'loss_total': 0.75, 'loss_diag': 0.2, 'loss_ret': 0.4},
         )
         self.assertEqual(metrics['val/epoch'], 3.0)
-        self.assertEqual(metrics['val/loss_total'], 0.75)
-        self.assertEqual(metrics['val/loss_diag'], 0.2)
-        self.assertEqual(metrics['val/loss_ret'], 0.4)
-        self.assertEqual(metrics['val/pas/R1'], 42.0)
-        self.assertEqual(metrics['val/debug/eval_exact_margin_mean'], 0.15)
+        self.assertEqual(metrics['val/loss/total'], 0.75)
+        self.assertEqual(metrics['val/loss/diag'], 0.2)
+        self.assertEqual(metrics['val/loss/ret'], 0.4)
+        self.assertEqual(metrics['val/retrieval/R1'], 42.0)
+        self.assertEqual(metrics['val/geometry/exact_margin_mean'], 0.15)
 
     def test_routing_coverage_tracker_window_metrics_capture_rotation(self):
         tracker = RoutingCoverageTracker(window_sizes=(3,), activity_epsilons=(1e-3, 1e-2))
@@ -102,6 +108,9 @@ class MetricLoggingTests(unittest.TestCase):
         self.assertEqual(metrics['routing_top1_dead_count_window_3'], 0.0)
         self.assertAlmostEqual(metrics['routing_top1_usage_max_window_3'], 1.0 / 3.0, places=6)
         self.assertAlmostEqual(metrics['routing_top1_usage_entropy_window_3'], math.log(3.0), places=6)
+
+    def test_namespace_mapping_has_no_collisions_for_tracked_metrics(self):
+        self.assertEqual(collect_metric_namespace_collisions(), {})
 
 
 if __name__ == '__main__':  # pragma: no cover

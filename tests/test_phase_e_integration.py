@@ -449,13 +449,13 @@ class PhaseEIntegrationTests(unittest.TestCase):
         exact_model = PASModel(exact_args, num_classes=2)
         exact_evaluator = Evaluator(self.img_loader, self.text_loader, exact_args)
         self.assertTrue(torch.isfinite(torch.tensor(exact_evaluator.eval(exact_model.eval()))))
-        self.assertIn('val/pas/R1', exact_evaluator.latest_metrics)
+        self.assertIn('val/retrieval/R1', exact_evaluator.latest_metrics)
 
         approx_args = self._build_args(stage='stage1', retrieval_scorer='approximate')
         approx_model = PASModel(approx_args, num_classes=2)
         approx_evaluator = Evaluator(self.img_loader, self.text_loader, approx_args)
         self.assertTrue(torch.isfinite(torch.tensor(approx_evaluator.eval(approx_model.eval()))))
-        self.assertIn('val/pas/R1', approx_evaluator.latest_metrics)
+        self.assertIn('val/retrieval/R1', approx_evaluator.latest_metrics)
 
 
 if __name__ == '__main__':  # pragma: no cover
