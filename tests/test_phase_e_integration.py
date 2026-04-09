@@ -35,6 +35,7 @@ if nn is not None:
         def __init__(self, embed_dim=8, image_shape=(3, 4, 4), vocab_size=50010, text_length=77):
             super().__init__()
             self.embed_dim = embed_dim
+            self.dtype = torch.float32
             self.image_input_dim = image_shape[0] * image_shape[1] * image_shape[2]
             self.visual = nn.Linear(self.image_input_dim, embed_dim)
             self.transformer = nn.Linear(embed_dim, embed_dim)
@@ -67,6 +68,32 @@ if nn is not None:
                 'pre_projection_tokens': hidden,
                 'attention_weights': attention,
             }
+
+        def encode_image(self, image):
+            outputs = self.encode_image_intermediates(image, return_all=True, average_attn_weights=True)
+            return outputs['projected_tokens'], outputs['attention_weights']
+
+        def encode_text(self, text):
+            outputs = self.encode_text_intermediates(text, return_all=True, average_attn_weights=True)
+            return outputs['projected_tokens'], outputs['attention_weights']
+
+        def forward(self, image, text, return_all=False, average_attn_weights=True):
+            image_outputs = self.encode_image_intermediates(
+                image,
+                return_all=return_all,
+                average_attn_weights=average_attn_weights,
+            )
+            text_outputs = self.encode_text_intermediates(
+                text,
+                return_all=return_all,
+                average_attn_weights=average_attn_weights,
+            )
+            return (
+                image_outputs['projected_tokens'],
+                image_outputs['attention_weights'],
+                text_outputs['projected_tokens'],
+                text_outputs['attention_weights'],
+            )
 else:
     DummyCLIPBackbone = None
 
