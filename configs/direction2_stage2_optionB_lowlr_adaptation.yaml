@@ -51,3 +51,7 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+
+logging:
+  use_wandb: true
+  project: direction2_stage2_optionB_lowlr_adaptation

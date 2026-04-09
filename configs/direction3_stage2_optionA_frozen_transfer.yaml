@@ -49,3 +49,7 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+
+logging:
+  use_wandb: true
+  project: direction3_stage2_optionA_frozen_transfer

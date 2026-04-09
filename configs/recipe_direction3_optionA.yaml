@@ -84,3 +84,7 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+
+logging:
+  use_wandb: true
+  project: recipe_direction3_optionA

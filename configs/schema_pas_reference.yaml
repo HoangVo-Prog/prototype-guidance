@@ -286,8 +286,8 @@ dataset:
   num_workers: 4               # [CANONICAL]
 
 logging:
-  use_wandb: false             # [CANONICAL]
-  project: ITSELF              # [CANONICAL]
+  use_wandb: true              # [CANONICAL]
+  project: itself_base         # [CANONICAL]
   entity: null                 # [CANONICAL]
   run_name: null               # [CANONICAL]
   group: itself_base           # [CANONICAL]

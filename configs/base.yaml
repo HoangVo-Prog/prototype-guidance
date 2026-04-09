@@ -203,8 +203,8 @@ dataset:
   num_workers: 4
 
 logging:
-  use_wandb: false
-  project: ITSELF
+  use_wandb: true
+  project: itself_base
   entity: null
   run_name: null
   group: itself_base

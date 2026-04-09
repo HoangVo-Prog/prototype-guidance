@@ -104,7 +104,8 @@ dataset:
   val_dataset: test
 
 logging:
-  project: ITSELF
+  use_wandb: true
+  project: itself_repro_from_original
   tags: [itself, original_adapter, no_prototype]
 
 evaluation:

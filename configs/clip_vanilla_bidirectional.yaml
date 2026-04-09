@@ -56,6 +56,8 @@ training:
   freeze_prototype_side: true
 
 logging:
+  use_wandb: true
+  project: clip_vanilla_bidirectional
   tags: [clip, vanilla, bidirectional, no_prototype]
 
 evaluation:
