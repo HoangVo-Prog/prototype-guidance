@@ -307,6 +307,7 @@ def _finalize_args(args):
     args.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
     args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
     args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
+    config_data = getattr(args, 'config_data', {}) or {}
     training_config = config_data.get('training', {}) if isinstance(config_data.get('training', {}), dict) else {}
     freeze_schedule = training_config.get('freeze_schedule')
     args.freeze_schedule = copy.deepcopy(freeze_schedule) if freeze_schedule is not None else None
