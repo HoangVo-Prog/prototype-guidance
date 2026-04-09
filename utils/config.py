@@ -114,6 +114,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'log_period'): 'log_period',
     ('training', 'eval_frequency'): 'eval_period',
     ('training', 'save_interval'): 'save_interval',
+    ('training', 'prototype_selection_metric'): 'prototype_selection_metric',
     ('training', 'resume'): 'resume',
     ('training', 'resume_ckpt_file'): 'resume_ckpt_file',
     ('training', 'finetune'): 'finetune',

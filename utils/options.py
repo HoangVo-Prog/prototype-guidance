@@ -182,6 +182,13 @@ def build_parser():
     parser.add_argument('--log_period', default=20, type=int)
     parser.add_argument('--eval_frequency', '--eval_period', dest='eval_period', default=1, type=int)
     parser.add_argument('--save_interval', type=int, default=1)
+    parser.add_argument(
+        '--prototype-selection-metric',
+        dest='prototype_selection_metric',
+        type=str,
+        default=None,
+        help='Optional val metric for prototype best checkpoint selection: L_total, L_diag, or R1.',
+    )
     parser.add_argument('--grad_clip', type=float, default=1.0)
     parser.add_argument('--amp', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--amp_dtype', type=str, default='fp16')
@@ -299,6 +306,10 @@ def _finalize_args(args):
     args.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
     args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
     args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
+    selection_metric = getattr(args, 'prototype_selection_metric', None)
+    if selection_metric is not None:
+        selection_metric = str(selection_metric).strip()
+        args.prototype_selection_metric = selection_metric if selection_metric else None
     args.retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
     if args.fusion_enabled is None:
         args.fusion_enabled = args.use_prototype_branch
