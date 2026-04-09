@@ -24,6 +24,7 @@ fusion:
   coefficient: 1.0
 
 training:
+  log_debug_metrics: true
   epochs: 40
   log_period: 50
   prototype_selection_metric: R1

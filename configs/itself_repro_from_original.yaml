@@ -68,6 +68,7 @@ objectives:
     diversity: 0.0
 
 training:
+  log_debug_metrics: true
   batch_size: 256
   epochs: 15
   log_period: 50

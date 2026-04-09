@@ -180,6 +180,7 @@ text_pooling:
   error_on_empty_kept_tokens: true   # [CANONICAL]
 
 training:
+  log_debug_metrics: true
   batch_size: 256              # [CANONICAL]
   epochs: 60                   # [CANONICAL]
   log_period: 50               # [CANONICAL]

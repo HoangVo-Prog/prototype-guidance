@@ -107,6 +107,7 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
+  log_debug_metrics: true
   stage: stage1
   batch_size: 256
   epochs: 15
