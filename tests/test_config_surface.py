@@ -365,9 +365,80 @@ class ConfigSurfaceTests(unittest.TestCase):
         self.assertTrue(args.freeze_prototype_side)
         self.assertEqual(args.finetune, 'runs/stage1/best.pth')
 
+    def test_freeze_schedule_surface_loads(self):
+        path = self._write_config(
+            {
+                'model': {
+                    'use_prototype_branch': True,
+                    'use_prototype_bank': True,
+                    'use_image_conditioned_pooling': True,
+                },
+                'training': {
+                    'epochs': 8,
+                    'freeze_schedule': [
+                        {
+                            'name': 'warmup',
+                            'epoch_start': 1,
+                            'epoch_end': 2,
+                            'trainable_groups': ['prototype_bank', 'prototype_projector', 'routing', 'fusion'],
+                            'frozen_groups': ['host_backbone', 'host_retrieval'],
+                            'lr_overrides': {'prototype_bank': 1e-4},
+                            'loss_weights': {'lambda_host': 0.0, 'lambda_ret': 1.0},
+                        },
+                        {
+                            'name': 'joint',
+                            'epoch_start': 3,
+                            'epoch_end': 8,
+                            'trainable_groups': ['host_backbone', 'host_retrieval', 'prototype_projector', 'fusion'],
+                            'frozen_groups': ['prototype_bank'],
+                            'lr_overrides': {'host_backbone': 1e-5},
+                            'loss_weights': {'lambda_host': 1.0},
+                        },
+                    ],
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertIsInstance(args.freeze_schedule, list)
+        self.assertEqual(args.freeze_schedule[0]['name'], 'warmup')
+        self.assertEqual(args.freeze_schedule[1]['name'], 'joint')
+
+    def test_freeze_schedule_rejects_unknown_group(self):
+        path = self._write_config(
+            {
+                'training': {
+                    'epochs': 3,
+                    'freeze_schedule': [
+                        {
+                            'name': 'bad',
+                            'epoch_start': 1,
+                            'epoch_end': 3,
+                            'trainable_groups': ['prototype_bank', 'unknown_group'],
+                        }
+                    ],
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'Unsupported module group'):
+            load_yaml_config(None, path)
+
+    def test_freeze_schedule_rejects_overlaps(self):
+        path = self._write_config(
+            {
+                'training': {
+                    'epochs': 5,
+                    'freeze_schedule': [
+                        {'name': 'p1', 'epoch_start': 1, 'epoch_end': 3},
+                        {'name': 'p2', 'epoch_start': 3, 'epoch_end': 5},
+                    ],
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'overlapping phases'):
+            load_yaml_config(None, path)
+
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
-
 
 
 

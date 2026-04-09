@@ -1,0 +1,50 @@
+# Direction 3 / Stage 1.5 / Option A
+# Prototype utilization adaptation with frozen bank and frozen host backbone.
+
+experiment:
+  name: DIRECTION3_STAGE15_OPTIONA_FROZEN_BANK
+
+model:
+  variant: direction3_stage15_prototype_utilization_optionA_frozen_or_minimal_bank
+  training_mode: pas
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+
+host:
+  type: itself
+
+prototype:
+  num_prototypes: 32
+  contextualization_enabled: true
+  contextualization_type: self_attention
+
+fusion:
+  enabled: true
+  coefficient: 1.0
+
+training:
+  epochs: 10
+  finetune: ''
+  freeze_prototype_side: false
+  freeze_schedule:
+    # Stage 1.5: host backbone frozen, prototype bank frozen, train lightweight usage modules.
+    - name: stage15_frozen_bank
+      epoch_start: 1
+      epoch_end: 10
+      trainable_groups: [prototype_projector, routing, fusion]
+      frozen_groups: [host_backbone, host_retrieval, prototype_bank]
+      lr_overrides:
+        prototype_projector: 2.0e-5
+        routing: 1.0e-5
+        fusion: 2.0e-5
+      loss_weights:
+        lambda_host: 0.1
+        lambda_ret: 0.5
+        lambda_diag: 0.5
+        lambda_bal: 0.005
+        lambda_div: 0.005
+
+optimizer:
+  type: AdamW
+  lr: 1.0e-5

@@ -4,6 +4,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import yaml
 
+from utils.freeze_schedule import parse_freeze_schedule_config
 from utils.precision import AMP_DTYPE_ALIASES, BACKBONE_PRECISION_ALIASES, PROTOTYPE_PRECISION_ALIASES
 
 
@@ -312,6 +313,7 @@ AUXILIARY_SECTION_KEYS = {'itself_reference', 'loss'}
 SECTION_KEYS = set(SECTION_TEMPLATE.keys()) | AUXILIARY_SECTION_KEYS
 ITSELF_REFERENCE_SECTION_KEYS = {'enabled', 'path'}
 OBJECTIVES_NESTED_SECTION_KEYS = {'objectives', 'lambda'}
+TRAINING_NESTED_SECTION_KEYS = {'freeze_schedule'}
 SUPPORTED_SPECIAL_TOKEN_ID_KEYS = {
     'bos_token_id',
     'cls_token_id',
@@ -595,6 +597,19 @@ def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
                         raise ValueError(f'Unknown config key `objectives.{key}.{nested_key}`.')
                 continue
 
+            if section_name == 'training' and key in TRAINING_NESTED_SECTION_KEYS:
+                if key == 'freeze_schedule':
+                    if value is None:
+                        continue
+                    if not isinstance(value, list):
+                        raise ValueError('training.freeze_schedule must be a list of phase mappings.')
+                    for phase_index, phase in enumerate(value):
+                        if not isinstance(phase, dict):
+                            raise ValueError(
+                                f'training.freeze_schedule[{phase_index}] must be a mapping.'
+                            )
+                continue
+
             if isinstance(value, dict):
                 raise ValueError(f'Unsupported nested config mapping at `{section_name}.{key}`.')
             if path not in supported_leafs and path not in UNSUPPORTED_CONFIG_PATHS:
@@ -675,6 +690,13 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
             'Prototype-routed training with text-only pooling is no longer supported.'
         )
 
+    training_config = config_data.get('training', {})
+    if isinstance(training_config, dict) and 'freeze_schedule' in training_config:
+        parse_freeze_schedule_config(
+            training_config.get('freeze_schedule'),
+            num_epoch=flat.get('num_epoch'),
+        )
+
 
 
 def load_yaml_config(default_path: Optional[str] = None, override_path: Optional[str] = None) -> Dict[str, Any]:
@@ -695,6 +717,10 @@ def validate_runtime_args_namespace(args) -> None:
     retrieval_metrics = getattr(args, 'retrieval_metrics', None)
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
+    parse_freeze_schedule_config(
+        getattr(args, 'freeze_schedule', None),
+        num_epoch=getattr(args, 'num_epoch', None),
+    )
 
     host_type = str(getattr(args, 'host_type', 'clip')).lower()
     use_prototype_branch = bool(getattr(args, 'use_prototype_branch', False))
@@ -828,6 +854,9 @@ def build_runtime_config(args) -> Dict[str, Any]:
         if isinstance(value, tuple):
             value = list(value)
         current[path[-1]] = copy.deepcopy(value)
+    freeze_schedule = getattr(args, 'freeze_schedule', None)
+    if freeze_schedule is not None:
+        config.setdefault('training', {})['freeze_schedule'] = copy.deepcopy(freeze_schedule)
     return config
 
 

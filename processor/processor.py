@@ -4,8 +4,16 @@ import time
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
+from solver import build_lr_scheduler, build_optimizer, summarize_optimizer_param_groups
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
+from utils.freeze_schedule import (
+    apply_loss_weight_overrides,
+    apply_optimizer_lr_overrides,
+    apply_phase_trainability,
+    get_active_phase,
+    parse_freeze_schedule_config,
+)
 from utils.metric_logging import (
     TRACKED_SCALAR_KEYS,
     TRAIN_LOSS_KEYS,
@@ -122,6 +130,55 @@ def _collect_output_gradient_metrics(outputs, scale: float = 1.0):
     return metrics
 
 
+def _unwrap_model(model):
+    return model.module if hasattr(model, 'module') else model
+
+
+def _copy_optimizer_state(old_optimizer, new_optimizer):
+    if old_optimizer is None:
+        return
+    old_state = old_optimizer.state_dict()
+    old_param_groups = old_state.get('param_groups', [])
+    old_states = old_state.get('state', {})
+    if not old_param_groups:
+        return
+
+    old_param_order = []
+    for group in old_param_groups:
+        old_param_order.extend(group.get('params', []))
+
+    old_param_tensors = []
+    for group in old_optimizer.param_groups:
+        old_param_tensors.extend(group.get('params', []))
+    if len(old_param_tensors) != len(old_param_order):
+        return
+
+    index_to_param = {}
+    for param_index, parameter in zip(old_param_order, old_param_tensors):
+        index_to_param[param_index] = parameter
+
+    tensor_state_by_id = {}
+    for param_index, state_value in old_states.items():
+        tensor = index_to_param.get(param_index)
+        if tensor is None:
+            continue
+        tensor_state_by_id[id(tensor)] = state_value
+
+    for group in new_optimizer.param_groups:
+        for parameter in group.get('params', []):
+            source_state = tensor_state_by_id.get(id(parameter))
+            if source_state is None:
+                continue
+            new_optimizer.state[parameter] = source_state
+
+
+def _rewind_scheduler_to_epoch(scheduler, completed_epochs: int):
+    completed = max(int(completed_epochs), 0)
+    if completed == 0:
+        return
+    scheduler.step(completed)
+
+
 def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker: ExperimentTracker = None, eval_loss_loader=None):
     log_period = args.log_period
     eval_period = args.eval_period
@@ -180,8 +237,62 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
         )
     log_debug_metrics = bool(getattr(args, 'log_debug_metrics', True))
     coverage_tracker = RoutingCoverageTracker() if log_debug_metrics else None
+    freeze_schedule_phases = parse_freeze_schedule_config(
+        getattr(args, 'freeze_schedule', None),
+        num_epoch=num_epoch,
+    )
+    active_freeze_phase_name = None
+    missing_phase_warning_emitted = False
+    if freeze_schedule_phases:
+        schedule_preview = ', '.join(
+            f'{phase.name}[{phase.epoch_start}-{phase.epoch_end}]' for phase in freeze_schedule_phases
+        )
+        logger.info('Using training.freeze_schedule phases: %s', schedule_preview)
 
     for epoch in range(start_epoch, num_epoch + 1):
+        active_phase = get_active_phase(freeze_schedule_phases, epoch)
+        if active_phase is not None and active_phase.name != active_freeze_phase_name:
+            runtime_model = _unwrap_model(model)
+            trainability_summary = apply_phase_trainability(runtime_model, active_phase)
+            applied_loss_weights = apply_loss_weight_overrides(runtime_model, args, active_phase.loss_weights)
+
+            previous_optimizer = optimizer
+            optimizer = build_optimizer(args, runtime_model)
+            _copy_optimizer_state(previous_optimizer, optimizer)
+            lr_override_summary = apply_optimizer_lr_overrides(optimizer, active_phase.lr_overrides)
+
+            scheduler = build_lr_scheduler(args, optimizer)
+            _rewind_scheduler_to_epoch(scheduler, epoch - 1)
+
+            optimizer_groups = summarize_optimizer_param_groups(optimizer)
+            logger.info(
+                'Activated freeze phase `%s` at epoch %d: trainable=%s frozen=%s lr_overrides=%s loss_weights=%s',
+                active_phase.name,
+                epoch,
+                trainability_summary.get('trainable', {}),
+                trainability_summary.get('frozen', {}),
+                active_phase.lr_overrides,
+                applied_loss_weights,
+            )
+            if active_phase.lr_overrides:
+                logger.info('Phase `%s` optimizer lr override hit counts: %s', active_phase.name, lr_override_summary)
+            for group_summary in optimizer_groups:
+                logger.info(
+                    'Phase optimizer group %-28s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
+                    group_summary['name'],
+                    group_summary['lr'],
+                    group_summary['weight_decay'],
+                    group_summary['tensor_count'],
+                    group_summary['parameter_count'],
+                )
+            active_freeze_phase_name = active_phase.name
+        elif freeze_schedule_phases and active_phase is None and not missing_phase_warning_emitted:
+            logger.warning(
+                'No freeze-schedule phase covers epoch %d. Training will continue with the previous trainability/lr state.',
+                epoch,
+            )
+            missing_phase_warning_emitted = True
+
         last_epoch = epoch
         start_time = time.time()
         for meter in meters.values():

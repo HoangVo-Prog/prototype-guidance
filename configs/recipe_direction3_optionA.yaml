@@ -1,0 +1,86 @@
+# End-to-end recipe: Direction 3 / Option A (recommended frozen transfer).
+# Phase chain:
+# 1) Stage 1 prototype stability
+# 2) Stage 1.5 prototype utilization adaptation (bank frozen)
+# 3) Stage 2 host backbone transfer (bank/routing frozen)
+
+experiment:
+  name: RECIPE_DIRECTION3_OPTIONA
+
+model:
+  variant: recipe_direction3_optionA
+  training_mode: pas
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+
+host:
+  type: itself
+
+prototype:
+  num_prototypes: 32
+  contextualization_enabled: true
+  contextualization_type: self_attention
+
+fusion:
+  enabled: true
+  coefficient: 1.0
+
+training:
+  epochs: 60
+  freeze_prototype_side: false
+  freeze_schedule:
+    # Stage 1: stabilize prototypes before touching host backbone.
+    - name: stage1_prototype_stability
+      epoch_start: 1
+      epoch_end: 15
+      trainable_groups: [prototype_bank, prototype_projector, routing, fusion]
+      frozen_groups: [host_backbone, host_retrieval]
+      lr_overrides:
+        prototype_bank: 5.0e-5
+        prototype_projector: 5.0e-5
+        routing: 5.0e-5
+        fusion: 5.0e-5
+      loss_weights:
+        lambda_host: 0.0
+        lambda_ret: 0.5
+        lambda_diag: 1.0
+        lambda_bal: 0.01
+        lambda_div: 0.01
+    # Stage 1.5: keep host frozen and adapt lightweight prototype usage modules.
+    - name: stage15_utilization
+      epoch_start: 16
+      epoch_end: 25
+      trainable_groups: [prototype_projector, routing, fusion]
+      frozen_groups: [host_backbone, host_retrieval, prototype_bank]
+      lr_overrides:
+        prototype_projector: 2.0e-5
+        routing: 1.0e-5
+        fusion: 2.0e-5
+      loss_weights:
+        lambda_host: 0.1
+        lambda_ret: 0.5
+        lambda_diag: 0.5
+        lambda_bal: 0.005
+        lambda_div: 0.005
+    # Stage 2: unfreeze host with full host loss, keep bank/routing fixed (frozen transfer).
+    - name: stage2_frozen_transfer
+      epoch_start: 26
+      epoch_end: 60
+      trainable_groups: [host_backbone, host_retrieval, prototype_projector, fusion]
+      frozen_groups: [prototype_bank, routing]
+      lr_overrides:
+        host_backbone: 1.0e-5
+        host_retrieval: 1.0e-5
+        prototype_projector: 2.0e-5
+        fusion: 2.0e-5
+      loss_weights:
+        lambda_host: 1.0
+        lambda_ret: 0.25
+        lambda_diag: 0.25
+        lambda_bal: 0.002
+        lambda_div: 0.002
+
+optimizer:
+  type: AdamW
+  lr: 1.0e-5

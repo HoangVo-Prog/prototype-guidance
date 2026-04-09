@@ -1,0 +1,53 @@
+# Direction 2 / Stage 2 / Option B
+# Low-lr prototype adaptation: host updates while prototype bank keeps small updates.
+
+experiment:
+  name: DIRECTION2_STAGE2_OPTIONB_LOWLR_ADAPT
+
+model:
+  variant: direction2_stage2_optionB_lowlr_adaptation
+  training_mode: pas
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+
+host:
+  type: itself
+
+prototype:
+  num_prototypes: 32
+  contextualization_enabled: true
+  contextualization_type: self_attention
+
+fusion:
+  enabled: true
+  coefficient: 1.0
+
+training:
+  epochs: 40
+  finetune: ''
+  freeze_prototype_side: false
+  freeze_schedule:
+    # Stage 2: host active; prototype branch remains trainable with significantly smaller lr.
+    - name: stage2_lowlr_adaptation
+      epoch_start: 1
+      epoch_end: 40
+      trainable_groups: [host_backbone, host_retrieval, prototype_bank, prototype_projector, routing, fusion]
+      frozen_groups: []
+      lr_overrides:
+        host_backbone: 1.0e-5
+        host_retrieval: 1.0e-5
+        prototype_bank: 2.0e-6
+        prototype_projector: 5.0e-6
+        routing: 2.0e-6
+        fusion: 5.0e-6
+      loss_weights:
+        lambda_host: 1.0
+        lambda_ret: 0.25
+        lambda_diag: 0.25
+        lambda_bal: 0.002
+        lambda_div: 0.002
+
+optimizer:
+  type: AdamW
+  lr: 1.0e-5

@@ -1,0 +1,50 @@
+# Direction 3 / Stage 1
+# Prototype stabilization before adaptation and backbone transfer.
+
+experiment:
+  name: DIRECTION3_STAGE1_PROTOTYPE_STABILITY
+
+model:
+  variant: direction3_stage1_prototype_stability
+  training_mode: pas
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+
+host:
+  type: itself
+
+prototype:
+  num_prototypes: 32
+  contextualization_enabled: true
+  contextualization_type: self_attention
+
+fusion:
+  enabled: true
+  coefficient: 1.0
+
+training:
+  epochs: 15
+  freeze_prototype_side: false
+  freeze_schedule:
+    # Stage 1: host frozen, prototype branch trainable, structural stability prioritized.
+    - name: stage1_prototype_stability
+      epoch_start: 1
+      epoch_end: 15
+      trainable_groups: [prototype_bank, prototype_projector, routing, fusion]
+      frozen_groups: [host_backbone, host_retrieval]
+      lr_overrides:
+        prototype_bank: 5.0e-5
+        prototype_projector: 5.0e-5
+        routing: 5.0e-5
+        fusion: 5.0e-5
+      loss_weights:
+        lambda_host: 0.0
+        lambda_ret: 0.5
+        lambda_diag: 1.0
+        lambda_bal: 0.01
+        lambda_div: 0.01
+
+optimizer:
+  type: AdamW
+  lr: 1.0e-5
