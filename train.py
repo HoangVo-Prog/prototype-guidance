@@ -9,7 +9,13 @@ import torch
 
 from datasets import build_dataloader
 from model import build_model
-from processor.processor import do_train
+from model.hosts import (
+    get_original_itself_module_paths,
+    get_original_itself_training_components,
+    prepare_itself_legacy_args,
+    should_use_original_itself_runtime,
+)
+from processor.processor import do_train as do_train_pas
 from solver import build_lr_scheduler, build_optimizer, summarize_optimizer_param_groups
 from utils.checkpoint import Checkpointer
 from utils.comm import get_rank, synchronize
@@ -18,7 +24,7 @@ from utils.experiment import ExperimentTracker
 from utils.iotools import save_train_configs
 from utils.launch import build_nohup_log_path, build_run_name, get_effective_wandb_run_name, launch_with_nohup
 from utils.logger import setup_logger
-from utils.metrics import Evaluator
+from utils.metrics import Evaluator as PASEvaluator
 from utils.options import get_args
 
 warnings.filterwarnings('ignore')
@@ -58,6 +64,40 @@ def log_parameter_trainability(logger, model, args):
             param_count = sum(parameter.numel() for _, parameter in named_params)
             tensor_count = len(named_params)
             logger.info('Trainable group %-16s tensors=%d params=%d', group_name, tensor_count, param_count)
+
+    if should_use_original_itself_runtime(args):
+        if hasattr(model, 'base_model') and hasattr(model.base_model, 'visual'):
+            image_total, image_trainable = _count_parameters(model.base_model.visual.parameters())
+        else:
+            image_total, image_trainable = 0, 0
+
+        text_parameters = []
+        if hasattr(model, 'base_model'):
+            base_model = model.base_model
+            for attribute in ('transformer', 'token_embedding'):
+                module = getattr(base_model, attribute, None)
+                if module is not None:
+                    text_parameters.extend(list(module.parameters()))
+            for attribute in ('positional_embedding', 'text_projection'):
+                tensor = getattr(base_model, attribute, None)
+                if isinstance(tensor, torch.Tensor):
+                    text_parameters.append(tensor)
+            ln_final = getattr(base_model, 'ln_final', None)
+            if ln_final is not None:
+                for attribute in ('weight', 'bias'):
+                    tensor = getattr(ln_final, attribute, None)
+                    if isinstance(tensor, torch.Tensor):
+                        text_parameters.append(tensor)
+
+        text_total, text_trainable = _count_parameters(text_parameters)
+        logger.info(
+            'ITSELF module params: image_backbone=%d/%d text_backbone=%d/%d',
+            image_trainable,
+            image_total,
+            text_trainable,
+            text_total,
+        )
+        return
 
     image_total, image_trainable = _count_parameters(model.base_model.visual.parameters())
     text_parameters = list(model.base_model.transformer.parameters())
@@ -103,6 +143,9 @@ def log_parameter_trainability(logger, model, args):
 if __name__ == '__main__':
     load_runtime_environment()
     args = get_args()
+    use_original_itself = should_use_original_itself_runtime(args)
+    if use_original_itself:
+        prepare_itself_legacy_args(args)
     args.run_name = build_run_name(args)
     if not args.wandb_run_name:
         args.wandb_run_name = args.run_name
@@ -135,11 +178,22 @@ if __name__ == '__main__':
     logger.info('Using %s GPUs', num_gpus)
     logger.info('W&B/log run name: %s', get_effective_wandb_run_name(args))
     logger.info(str(args).replace(',', '\n'))
+    if use_original_itself:
+        module_paths = get_original_itself_module_paths()
+        logger.info(
+            'Original ITSELF adapter modules active: model=%s solver=%s processor=%s metrics=%s',
+            module_paths['model_build'],
+            module_paths['solver_build'],
+            module_paths['processor'],
+            module_paths['metrics'],
+        )
 
     save_train_configs(args.output_dir, args)
     os.makedirs(op.join(args.output_dir, 'img'), exist_ok=True)
 
-    experiment_tracker = ExperimentTracker(args, args.output_dir, distributed_rank=get_rank())
+    experiment_tracker = None
+    if not use_original_itself:
+        experiment_tracker = ExperimentTracker(args, args.output_dir, distributed_rank=get_rank())
 
     train_loader, val_img_loader, val_txt_loader, num_classes = build_dataloader(args)
     eval_loss_loader = getattr(train_loader, 'eval_loss_loader', None)
@@ -199,7 +253,12 @@ if __name__ == '__main__':
 
     is_master = get_rank() == 0
     checkpointer = Checkpointer(model, optimizer, scheduler, args.output_dir, is_master)
-    evaluator = Evaluator(val_img_loader, val_txt_loader, args)
+
+    do_train_fn = do_train_pas
+    evaluator_class = PASEvaluator
+    if use_original_itself:
+        do_train_fn, evaluator_class = get_original_itself_training_components(args)
+    evaluator = evaluator_class(val_img_loader, val_txt_loader, args)
 
     start_epoch = 1
     if args.resume:
@@ -208,20 +267,33 @@ if __name__ == '__main__':
         logger.info('Resuming from epoch %s', start_epoch)
 
     try:
-        do_train(
-            start_epoch,
-            args,
-            model,
-            train_loader,
-            evaluator,
-            optimizer,
-            scheduler,
-            checkpointer,
-            experiment_tracker=experiment_tracker,
-            eval_loss_loader=eval_loss_loader,
-        )
+        if use_original_itself:
+            do_train_fn(
+                start_epoch,
+                args,
+                model,
+                train_loader,
+                evaluator,
+                optimizer,
+                scheduler,
+                checkpointer,
+            )
+        else:
+            do_train_fn(
+                start_epoch,
+                args,
+                model,
+                train_loader,
+                evaluator,
+                optimizer,
+                scheduler,
+                checkpointer,
+                experiment_tracker=experiment_tracker,
+                eval_loss_loader=eval_loss_loader,
+            )
     finally:
-        experiment_tracker.finish()
+        if experiment_tracker is not None:
+            experiment_tracker.finish()
 
 
 

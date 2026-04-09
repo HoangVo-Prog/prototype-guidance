@@ -1,5 +1,10 @@
 import torch
 
+from model.hosts import (
+    build_original_itself_lr_scheduler,
+    build_original_itself_optimizer,
+    should_use_original_itself_runtime,
+)
 from .lr_scheduler import LRSchedulerWithWarmup
 
 
@@ -65,10 +70,7 @@ def _group_weight_decay(args, group_name: str) -> float:
 
 def _use_original_itself_stage0_optimizer(args, model) -> bool:
     del model
-    return (
-        str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
-        and not bool(getattr(args, 'use_prototype_branch', False))
-    )
+    return should_use_original_itself_runtime(args)
 
 
 def _itself_stage0_group_spec(name: str, base_lr: float, base_weight_decay: float, lr_factor: float, bias_lr_factor: float, weight_decay_bias: float):
@@ -163,65 +165,9 @@ def summarize_optimizer_param_groups(optimizer):
 
 
 def _build_original_itself_stage0_optimizer(args, model):
-    base_lr = float(getattr(args, 'lr', 1e-5))
-    base_weight_decay = float(getattr(args, 'weight_decay', 4e-5))
-    lr_factor = float(getattr(args, 'lr_factor', 5.0))
-    bias_lr_factor = float(getattr(args, 'bias_lr_factor', 2.0))
-    weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))
-    optimizer_eps = float(getattr(args, 'optimizer_eps', 1e-3))
-
-    grouped_entries = {}
-    for name, parameter in model.named_parameters():
-        if not parameter.requires_grad:
-            continue
-        label, lr, weight_decay = _itself_stage0_group_spec(
-            name,
-            base_lr=base_lr,
-            base_weight_decay=base_weight_decay,
-            lr_factor=lr_factor,
-            bias_lr_factor=bias_lr_factor,
-            weight_decay_bias=weight_decay_bias,
-        )
-        group_name = f'stage0_itself::{label}'
-        key = (group_name, lr, weight_decay)
-        entry = grouped_entries.setdefault(
-            key,
-            {
-                'name': group_name,
-                'params': [],
-                'lr': lr,
-                'weight_decay': weight_decay,
-                'named_params': [],
-            },
-        )
-        entry['params'].append(parameter)
-        entry['named_params'].append((name, parameter))
-
-    named_group_entries = {entry['name']: entry['named_params'] for entry in grouped_entries.values()}
-    _validate_param_group_assignment(model, named_group_entries)
-
-    param_groups = [
-        {
-            'params': entry['params'],
-            'lr': entry['lr'],
-            'weight_decay': entry['weight_decay'],
-            'name': entry['name'],
-        }
-        for entry in grouped_entries.values()
-    ]
-
-    if args.optimizer == 'SGD':
-        optimizer = torch.optim.SGD(param_groups, lr=base_lr, momentum=args.momentum)
-    elif args.optimizer == 'Adam':
-        optimizer = torch.optim.Adam(param_groups, lr=base_lr, betas=(args.alpha, args.beta), eps=optimizer_eps)
-    elif args.optimizer == 'AdamW':
-        optimizer = torch.optim.AdamW(param_groups, lr=base_lr, betas=(args.alpha, args.beta), eps=optimizer_eps)
-    else:
-        raise NotImplementedError(f'Unsupported optimizer: {args.optimizer}')
-
+    optimizer = build_original_itself_optimizer(args, model)
     _validate_optimizer_groups_against_model(optimizer, model)
     return optimizer
-
 
 def build_optimizer(args, model):
     if _use_original_itself_stage0_optimizer(args, model):
@@ -260,6 +206,8 @@ def build_optimizer(args, model):
 
 
 def build_lr_scheduler(args, optimizer):
+    if should_use_original_itself_runtime(args):
+        return build_original_itself_lr_scheduler(args, optimizer)
     return LRSchedulerWithWarmup(
         optimizer,
         milestones=args.milestones,
@@ -272,3 +220,4 @@ def build_lr_scheduler(args, optimizer):
         target_lr=args.target_lr,
         power=args.power,
     )
+

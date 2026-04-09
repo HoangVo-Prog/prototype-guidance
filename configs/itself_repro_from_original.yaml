@@ -1,0 +1,105 @@
+experiment:
+  name: ITSELF_REPRO_ORIGINAL
+
+model:
+  name: ITSELF
+  variant: itself_repro_from_original
+  pretrain_choice: ViT-B/16
+  temperature: 0.02
+  img_size: [384, 128]
+  stride_size: 16
+  text_length: 77
+  vocab_size: 49408
+  use_prototype_branch: false
+  use_prototype_bank: false
+  use_image_conditioned_pooling: false
+  return_debug_outputs: false
+
+host:
+  type: itself
+  itself_loss_names: tal+cid
+  itself_only_global: false
+  itself_select_ratio: 0.4
+  itself_grab_embed_dim: 4096
+  itself_score_weight_global: 0.32
+  itself_tau: 0.015
+  itself_margin: 0.1
+  itself_return_all: false
+  itself_topk_type: mean
+  itself_layer_index: -1
+  itself_average_attn_weights: true
+  itself_modify_k: false
+  itself_lambda1_weight: 0.5
+  itself_lambda2_weight: 3.5
+
+prototype:
+  num_prototypes: 0
+  contextualization_enabled: false
+  contextualization_type: none
+
+fusion:
+  enabled: false
+  coefficient: 0.0
+
+objectives:
+  objectives:
+    use_host_loss: true
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: false
+    use_loss_diag: false
+    use_loss_ret: false
+    retrieval_mode: surrogate_i2t
+    use_loss_support: false
+    use_balancing_loss: false
+    use_diversity_loss: false
+  lambda:
+    host: 1.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.0
+    diag: 0.0
+    ret: 0.0
+    support: 0.0
+    balance: 0.0
+    diversity: 0.0
+
+training:
+  batch_size: 256
+  epochs: 60
+  log_period: 20
+  eval_frequency: 1
+  save_interval: 1
+  grad_clip: 0.0
+  amp: false
+  freeze_image_backbone: false
+  freeze_text_backbone: false
+  freeze_prototype_side: true
+
+optimizer:
+  type: Adam
+  lr: 1.0e-5
+  weight_decay: 4.0e-5
+  lr_factor: 5.0
+  bias_lr_factor: 2.0
+  weight_decay_bias: 0.0
+  alpha: 0.9
+  beta: 0.999
+  optimizer_eps: 1.0e-3
+  milestones: [45, 50]
+  scheduler: cosine
+
+dataset:
+  dataset_name: CUHK-PEDES
+  root_dir: data
+  val_dataset: test
+
+logging:
+  project: ITSELF
+  tags: [itself, original_adapter, no_prototype]
+
+evaluation:
+  retrieval_scorer: exact

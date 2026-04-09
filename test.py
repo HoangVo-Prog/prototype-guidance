@@ -2,7 +2,13 @@ import os.path as op
 
 from datasets import build_dataloader
 from model import build_model
-from processor.processor import do_inference
+from model.hosts import (
+    get_original_itself_inference_fn,
+    get_original_itself_module_paths,
+    prepare_itself_legacy_args,
+    should_use_original_itself_runtime,
+)
+from processor.processor import do_inference as do_inference_pas
 from utils.checkpoint import Checkpointer
 from utils.env import load_runtime_environment
 from utils.iotools import load_train_configs
@@ -33,9 +39,20 @@ if __name__ == '__main__':
     args = get_args()
     args = _maybe_load_saved_run_config(args)
     args.training = False
+    use_original_itself = should_use_original_itself_runtime(args)
+    if use_original_itself:
+        prepare_itself_legacy_args(args)
 
     logger = setup_logger('pas', save_dir=args.output_dir, if_train=args.training)
     logger.info(args)
+    if use_original_itself:
+        module_paths = get_original_itself_module_paths()
+        logger.info(
+            'Original ITSELF adapter modules active: model=%s processor=%s metrics=%s',
+            module_paths['model_build'],
+            module_paths['processor'],
+            module_paths['metrics'],
+        )
     device = args.device
 
     if args.cross_domain_generalization:
@@ -53,7 +70,11 @@ if __name__ == '__main__':
     checkpointer = Checkpointer(model)
     checkpointer.load(f=checkpoint_path)
     model = model.to(device)
-    do_inference(model, test_img_loader, test_txt_loader, args)
+    if use_original_itself:
+        do_inference_fn = get_original_itself_inference_fn(args)
+        do_inference_fn(model, test_img_loader, test_txt_loader, args)
+    else:
+        do_inference_pas(model, test_img_loader, test_txt_loader, args)
 
 
 
