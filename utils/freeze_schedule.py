@@ -336,6 +336,20 @@ def apply_loss_weight_overrides(model, args, loss_weights: Dict[str, float]) -> 
         if target_attr is None or not hasattr(prototype_losses, target_attr):
             continue
         setattr(prototype_losses, target_attr, scalar)
+        # Keep loss switches aligned with phase-level lambda overrides.
+        # This prevents zero-grad phases when configs inherit disabled defaults.
+        if weight_name == 'lambda_ret' and hasattr(prototype_losses, 'use_loss_ret'):
+            prototype_losses.use_loss_ret = bool(scalar > 0.0)
+            setattr(args, 'use_loss_ret', prototype_losses.use_loss_ret)
+        elif weight_name == 'lambda_diag' and hasattr(prototype_losses, 'use_loss_diag'):
+            prototype_losses.use_loss_diag = bool(scalar > 0.0)
+            setattr(args, 'use_loss_diag', prototype_losses.use_loss_diag)
+        elif weight_name == 'lambda_bal' and hasattr(prototype_losses, 'use_balance_loss'):
+            prototype_losses.use_balance_loss = bool(scalar > 0.0)
+            setattr(args, 'use_balancing_loss', prototype_losses.use_balance_loss)
+        elif weight_name == 'lambda_div' and hasattr(prototype_losses, 'use_diversity_loss'):
+            prototype_losses.use_diversity_loss = bool(scalar > 0.0)
+            setattr(args, 'use_diversity_loss', prototype_losses.use_diversity_loss)
         applied[weight_name] = scalar
     return applied
 

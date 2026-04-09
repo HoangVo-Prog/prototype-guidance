@@ -32,6 +32,10 @@ class _FakeModel:
                 lambda_diag=1.0,
                 lambda_bal=0.01,
                 lambda_div=0.01,
+                use_loss_ret=False,
+                use_loss_diag=False,
+                use_balance_loss=False,
+                use_diversity_loss=False,
             )
         )
         self._named_params = [
@@ -207,6 +211,42 @@ class FreezeScheduleTests(unittest.TestCase):
         self.assertEqual(model.prototype_head.losses.lambda_diag, 0.5)
         self.assertEqual(model.prototype_head.losses.lambda_bal, 0.003)
         self.assertEqual(model.prototype_head.losses.lambda_div, 0.004)
+        self.assertTrue(model.prototype_head.losses.use_loss_ret)
+        self.assertTrue(model.prototype_head.losses.use_loss_diag)
+        self.assertTrue(model.prototype_head.losses.use_balance_loss)
+        self.assertTrue(model.prototype_head.losses.use_diversity_loss)
+
+    def test_apply_loss_weight_overrides_disables_switches_when_zero(self):
+        model = _FakeModel()
+        args = SimpleNamespace(
+            lambda_host=1.0,
+            lambda_ret=1.0,
+            lambda_diag=1.0,
+            lambda_bal=0.01,
+            lambda_div=0.01,
+            use_loss_ret=True,
+            use_loss_diag=True,
+            use_balancing_loss=True,
+            use_diversity_loss=True,
+        )
+        apply_loss_weight_overrides(
+            model,
+            args,
+            {
+                'lambda_ret': 0.0,
+                'lambda_diag': 0.0,
+                'lambda_bal': 0.0,
+                'lambda_div': 0.0,
+            },
+        )
+        self.assertFalse(model.prototype_head.losses.use_loss_ret)
+        self.assertFalse(model.prototype_head.losses.use_loss_diag)
+        self.assertFalse(model.prototype_head.losses.use_balance_loss)
+        self.assertFalse(model.prototype_head.losses.use_diversity_loss)
+        self.assertFalse(args.use_loss_ret)
+        self.assertFalse(args.use_loss_diag)
+        self.assertFalse(args.use_balancing_loss)
+        self.assertFalse(args.use_diversity_loss)
 
     def test_apply_optimizer_lr_overrides_maps_logical_groups(self):
         optimizer = _FakeOptimizer()
