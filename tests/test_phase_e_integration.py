@@ -78,12 +78,30 @@ else:
 class PhaseEIntegrationTests(unittest.TestCase):
     def setUp(self):
         torch.manual_seed(13)
+        self._dummy_clip_builder = lambda *args, **kwargs: (
+            DummyCLIPBackbone(),
+            {'embed_dim': 8, 'vision_layers': 1, 'transformer_width': 8},
+        )
+
         self.patch_build = mock.patch(
             'model.build.build_CLIP_from_openai_pretrained',
-            side_effect=lambda *args, **kwargs: (DummyCLIPBackbone(), {'embed_dim': 8, 'vision_layers': 1, 'transformer_width': 8}),
+            side_effect=self._dummy_clip_builder,
         )
         self.patch_build.start()
         self.addCleanup(self.patch_build.stop)
+
+        # Host-only runtime (clip/itself) resolves CLIP builder from the original
+        # adapter module object returned by get_original_itself_components(), so we
+        # patch that object directly to keep tests independent from external weights.
+        from model.hosts.itself import get_original_itself_components
+        components = get_original_itself_components()
+        self.patch_original_components_build = mock.patch.object(
+            components.model_build,
+            'build_CLIP_from_openai_pretrained',
+            side_effect=self._dummy_clip_builder,
+        )
+        self.patch_original_components_build.start()
+        self.addCleanup(self.patch_original_components_build.stop)
 
         self.batch = {
             'images': torch.randn(4, 3, 4, 4),
