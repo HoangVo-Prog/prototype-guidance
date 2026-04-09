@@ -180,7 +180,7 @@ def build_parser():
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--stage', '--training_stage', dest='training_stage', type=str, default='joint')
     parser.add_argument('--epochs', '--num_epoch', dest='num_epoch', type=int, default=60)
-    parser.add_argument('--log_period', default=20, type=int)
+    parser.add_argument('--log_period', default=50, type=int)
     parser.add_argument('--eval_frequency', '--eval_period', dest='eval_period', default=1, type=int)
     parser.add_argument('--save_interval', type=int, default=1)
     parser.add_argument(
