@@ -25,6 +25,7 @@ fusion:
 
 training:
   epochs: 15
+  log_period: 50
   freeze_prototype_side: false
   freeze_schedule:
     # Stage 1: host frozen, prototype branch trainable, structural stability prioritized.
@@ -54,4 +55,5 @@ optimizer:
 logging:
   use_wandb: true
   project: direction3_stage1_prototype_stability_itself_head
+
 

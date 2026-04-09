@@ -25,7 +25,7 @@ fusion:
 
 training:
   epochs: 60
-  freeze_prototype_side: false
+  log_period: 50
   freeze_schedule:
     # Warm-up: host frozen, prototype branch trainable.
     - name: warmup
@@ -71,4 +71,5 @@ optimizer:
 logging:
   use_wandb: true
   project: direction1_optionB_locked_prototype_clip_head
+
 

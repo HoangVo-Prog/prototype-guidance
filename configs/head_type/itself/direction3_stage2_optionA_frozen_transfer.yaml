@@ -25,6 +25,7 @@ fusion:
 
 training:
   epochs: 35
+  log_period: 50
   finetune: ''
   freeze_prototype_side: false
   freeze_schedule:
@@ -55,4 +56,5 @@ optimizer:
 logging:
   use_wandb: true
   project: direction3_stage2_optionA_frozen_transfer_itself_head
+
 

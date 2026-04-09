@@ -27,7 +27,7 @@ fusion:
 
 training:
   epochs: 60
-  freeze_prototype_side: false
+  log_period: 50
   freeze_schedule:
     - name: warmup
       epoch_start: 1
@@ -73,4 +73,5 @@ optimizer:
 logging:
   use_wandb: true
   project: recipe_direction1_optionA_itself_head
+
 

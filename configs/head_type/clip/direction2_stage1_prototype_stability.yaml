@@ -25,6 +25,7 @@ fusion:
 
 training:
   epochs: 20
+  log_period: 50
   freeze_prototype_side: false
   freeze_schedule:
     # Stage 1 emphasis: structural fidelity (diag), weak semantic anchor (ret), anti-collapse regularizers.
@@ -54,4 +55,5 @@ optimizer:
 logging:
   use_wandb: true
   project: direction2_stage1_prototype_stability_clip_head
+
 

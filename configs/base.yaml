@@ -117,7 +117,7 @@ text_pooling:
 training:
   batch_size: 256
   epochs: 60
-  log_period: 20
+  log_period: 50
   eval_frequency: 1
   save_interval: 1
   resume: false
@@ -225,3 +225,4 @@ evaluation:
   prototype_image_chunk_size: 32
   prototype_text_chunk_size: 128
   retrieval_scorer: exact
+

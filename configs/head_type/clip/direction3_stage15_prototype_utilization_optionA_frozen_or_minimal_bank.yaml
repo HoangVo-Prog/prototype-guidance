@@ -25,6 +25,7 @@ fusion:
 
 training:
   epochs: 10
+  log_period: 50
   finetune: ''
   freeze_prototype_side: false
   freeze_schedule:
@@ -54,4 +55,5 @@ optimizer:
 logging:
   use_wandb: true
   project: direction3_stage15_prototype_utilization_optionA_frozen_or_minimal_bank_clip_head
+
 

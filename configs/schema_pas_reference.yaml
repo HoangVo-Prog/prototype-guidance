@@ -182,7 +182,7 @@ text_pooling:
 training:
   batch_size: 256              # [CANONICAL]
   epochs: 60                   # [CANONICAL]
-  log_period: 20               # [CANONICAL]
+  log_period: 50               # [CANONICAL]
   eval_frequency: 1            # [CANONICAL]
   save_interval: 1             # [CANONICAL]
   resume: false                # [CANONICAL]
@@ -312,3 +312,4 @@ evaluation:
 itself_reference:              # [CANONICAL OPTIONAL]
   enabled: true
   path: itself_dataset_reference.yaml
+
