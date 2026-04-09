@@ -267,6 +267,7 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'lambda_diag'): 'lambda_diag',
     ('training', 'use_loss_ret'): 'use_loss_ret',
     ('training', 'lambda_ret'): 'lambda_ret',
+    ('training', 'log_debug_metrics'): 'log_debug_metrics',
 
     ('text_pooling', 'token_similarity'): 'token_scoring_type',
     ('text_pooling', 'tau_t'): 'token_pooling_temperature',

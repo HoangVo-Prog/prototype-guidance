@@ -47,6 +47,11 @@ class ConfigSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'training.stage'):
             load_yaml_config(None, path)
 
+    def test_training_log_debug_metrics_alias_is_accepted(self):
+        path = self._write_config({'training': {'log_debug_metrics': True}})
+        args = get_args(['--config_file', path])
+        self.assertTrue(args.log_debug_metrics)
+
     def test_stage2_allows_missing_finetune_checkpoint(self):
         path = self._write_config(
             {
@@ -439,7 +444,6 @@ class ConfigSurfaceTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
-
 
 
 
