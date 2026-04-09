@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from importlib.machinery import ModuleSpec
 from pathlib import Path
 from types import ModuleType
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
+import torch
 import torch.nn.functional as F
 from prettytable import PrettyTable
 
@@ -267,6 +268,49 @@ def get_original_itself_module_paths() -> Dict[str, str]:
         'processor': str(Path(components.processor.__file__).resolve()),
         'metrics': str(Path(components.metrics.__file__).resolve()),
     }
+
+
+def attach_itself_clip_text_intermediates(base_model) -> None:
+    """Attach a thin `encode_text_intermediates` adapter for original ITSELF CLIP."""
+
+    existing = getattr(base_model, 'encode_text_intermediates', None)
+    if callable(existing):
+        return
+
+    required = ('token_embedding', 'positional_embedding', 'transformer', 'ln_final', 'text_projection')
+    missing = [name for name in required if not hasattr(base_model, name)]
+    if missing:
+        return
+
+    def _encode_text_intermediates(text: torch.Tensor, return_all: bool = False, average_attn_weights: bool = True):
+        text = text.long()
+        model_dtype: Optional[torch.dtype] = getattr(base_model, 'dtype', None)
+
+        x = base_model.token_embedding(text)
+        if model_dtype is not None:
+            x = x.type(model_dtype)
+        x = x + base_model.positional_embedding[: text.size(1)].type(x.dtype)
+        x = x.permute(1, 0, 2)  # NLD -> LND
+
+        if return_all:
+            outputs = base_model.transformer.forward([x], return_all=True, average_attn_weights=average_attn_weights)
+            x = outputs[0][0]
+            attention_weights = outputs[1]
+        else:
+            outputs = base_model.transformer([x], average_attn_weights=average_attn_weights)
+            x = outputs[0]
+            attention_weights = outputs[1]
+
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        pre_projection_tokens = base_model.ln_final(x).type(x.dtype)
+        projected_tokens = pre_projection_tokens @ base_model.text_projection
+        return {
+            'projected_tokens': projected_tokens,
+            'pre_projection_tokens': pre_projection_tokens,
+            'attention_weights': attention_weights,
+        }
+
+    base_model.encode_text_intermediates = _encode_text_intermediates
 
 
 def build_itself_host(args, num_classes, **kwargs):

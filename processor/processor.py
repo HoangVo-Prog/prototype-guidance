@@ -6,13 +6,22 @@ from torch.utils.tensorboard import SummaryWriter
 
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
-from utils.metric_logging import TRACKED_SCALAR_KEYS, RoutingCoverageTracker, build_train_metrics_from_scalars, build_validation_metrics, collect_loss_metrics, collect_scalar_metrics
+from utils.metric_logging import (
+    TRACKED_SCALAR_KEYS,
+    TRAIN_LOSS_KEYS,
+    RoutingCoverageTracker,
+    build_train_metrics_from_scalars,
+    build_validation_metrics,
+    collect_loss_metrics,
+    collect_scalar_metrics,
+)
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
 from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
 
 
 METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key != 'loss_total')
+CONSOLE_LOSS_LOG_KEYS = tuple(key for key in TRAIN_LOSS_KEYS if key in METER_KEYS)
 
 
 
@@ -211,7 +220,8 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
 
             if (n_iter + 1) % log_period == 0:
                 info = [f'Epoch[{epoch}] Iteration[{n_iter + 1}/{len(train_loader)}]']
-                for key, meter in meters.items():
+                for key in CONSOLE_LOSS_LOG_KEYS:
+                    meter = meters[key]
                     if meter.count > 0:
                         info.append(f'{key}: {meter.avg:.4f}')
                 info.append(f'Base Lr: {scheduler.get_lr()[0]:.2e}')

@@ -1,124 +1,299 @@
 # W&B Metrics Reference
 
-This document describes the metrics that PAS sends to Weights & Biases during training and evaluation.
+This document is the current metric surface for W&B logging in this repo.
 
-The logging path is implemented in:
-- `utils/experiment.py`
-- `utils/metric_logging.py`
+Code sources:
 - `processor/processor.py`
+- `utils/metric_logging.py`
 - `utils/metrics.py`
-- `model/prototype/head.py`
-- `model/prototype/losses.py`
 
 ## Logging Behavior
 
-### Metric namespaces
-- `train/*`: training metrics.
-- `debug/*`: per-batch diagnostic metrics.
-- `val/*`: retrieval metrics and proxy-disabled loss metrics for the evaluation split selected by `dataset.val_dataset`.
+- Training console logs now print only loss keys (plus `Base Lr`).
+- W&B still logs all non-loss diagnostics under `debug/*`.
+- Validation logs are written under `val/*`.
 
-### X-axes in W&B
-- `train/*` uses `train/step` as the step axis.
-- `debug/*` uses `train/step` as the step axis.
-- `val/*` uses `val/epoch` as the step axis.
+## W&B Namespaces
 
-### When metrics are logged
-- Training metrics are logged every `wandb_log_interval` steps.
-- Training metrics are also logged once at the end of each epoch.
-- Validation metrics are logged every evaluation epoch.
+- `train/*`: loss and schedule metrics.
+- `debug/*`: diagnostic metrics (routing, gradients, geometry, similarity stats, norms).
+- `val/*`: validation loss metrics, retrieval metrics, and validation diagnostics.
 
-### Important runtime toggles
-- `logging.use_wandb=true`: enables W&B.
-- `logging.log_debug_metrics=true`: enables the `debug/*` metrics below.
-- `val/*` loss monitoring disables proxy-classification terms because the selected eval split may contain unseen identities.
-- `evaluation.retrieval_metrics`: controls which retrieval metrics appear under `val/pas/*`.
+## Train Metrics (`train/*`)
 
-### Run files on W&B
-- Each run uploads `configs.yaml` and `resolved_config.yaml` to W&B as a `run_config` artifact.
-- If you launched with `--config_file`, that source config is also uploaded as `source_config.yaml`.
+Always logged schedule keys:
+- `train/epoch`
+- `train/step`
+- `train/lr`
 
-### Notes on interpretation
-- `train/*` metrics are computed from the current batch at log time.
-- Most `debug/*` metrics are computed from the current batch at log time.
-- Rolling-window `debug/*` coverage metrics summarize recent training batches rather than only the current batch.
-- Some losses can be intentionally zero if their corresponding loss branch is disabled.
-- Prototype-bank initialization diagnostics are logged to the Python logger, not to W&B.
+Loss keys (from `TRAIN_LOSS_KEYS`):
 
-## Always Logged Training Metrics
+```text
+train/loss_total
+train/loss_host
+train/loss_host_ret
+train/loss_host_ret_i2t
+train/loss_host_ret_t2i
+train/loss_host_cid
+train/loss_proto_total
+train/loss_host_weighted
+train/lambda_host
+train/loss_proxy
+train/loss_proxy_image
+train/loss_proxy_text
+train/loss_proxy_text_exact
+train/loss_ret
+train/loss_align
+train/loss_diag
+train/loss_support
+train/loss_diversity
+train/loss_balance
+train/loss_proxy_image_weighted
+train/loss_proxy_text_weighted
+train/loss_proxy_text_exact_weighted
+train/loss_proxy_weighted
+train/loss_ret_weighted
+train/loss_align_weighted
+train/loss_diag_weighted
+train/loss_support_weighted
+train/loss_diversity_weighted
+train/loss_balance_weighted
+```
 
-### Core schedule metrics
-- `train/epoch`: current training epoch.
-- `train/step`: global optimization step.
-- `train/lr`: learning rate used for the logged step.
+## Debug Metrics (`debug/*`)
 
-### Total and component losses
-- `train/loss_total`: full optimized objective.
-- `train/loss_proxy`: sum of all enabled proxy-classification losses.
-- `train/loss_proxy_image`: proxy loss on the image embedding branch.
-- `train/loss_proxy_text`: proxy loss on the surrogate text branch.
-- `train/loss_proxy_text_exact`: proxy loss on the exact pooled text branch.
-- `train/loss_ret`: row-wise image-to-text cross-entropy over the surrogate score matrix.
-- `train/loss_align`: cosine-alignment loss between image and surrogate text embeddings.
-- `train/loss_diag`: diagonal fidelity loss between surrogate and exact text embeddings.
-- `train/loss_support`: low-support routing penalty based on inverse participation ratio.
-- `train/loss_diversity`: prototype diversity regularizer.
-- `train/loss_balance`: routing-usage balance regularizer.
+Full debug key inventory (from `DEBUG_METRIC_MAP`):
 
-### Weighted objective terms
-- `train/loss_proxy_weighted`: weighted proxy objective.
-- `train/loss_ret_weighted`: weighted row-wise surrogate retrieval objective.
-- `train/loss_align_weighted`: weighted alignment objective.
-- `train/loss_diag_weighted`: weighted diagonal fidelity objective.
-- `train/loss_support_weighted`: weighted support penalty.
-- `train/loss_diversity_weighted`: weighted diversity regularizer.
-- `train/loss_balance_weighted`: weighted balance regularizer.
+```text
+debug/logit_scale
+debug/host_logit_scale
+debug/host_retrieval_temperature
+debug/fusion_coefficient
+debug/host_loss_total
+debug/host_loss_ret
+debug/proxy_temperature
+debug/retrieval_temperature
+debug/image_embed_norm_std
+debug/image_embed_norm_min
+debug/image_embed_norm_max
+debug/text_embed_norm_std
+debug/text_embed_norm_min
+debug/text_embed_norm_max
+debug/prototype_usage_entropy
+debug/prototype_usage_max
+debug/prototype_dead_count
+debug/routing_max_prob
+debug/routing_entropy
+debug/routing_top1_usage_entropy
+debug/routing_top1_usage_max
+debug/routing_top1_dead_count
+debug/routing_top1_active_count_window_100
+debug/routing_top1_active_count_window_500
+debug/routing_top1_dead_count_window_100
+debug/routing_top1_dead_count_window_500
+debug/routing_top1_usage_entropy_window_100
+debug/routing_top1_usage_entropy_window_500
+debug/routing_top1_usage_max_window_100
+debug/routing_top1_usage_max_window_500
+debug/prototype_assignment_entropy
+debug/routing_effective_support
+debug/routing_effective_support_ipr
+debug/routing_effective_support_ipr_p10
+debug/routing_effective_support_ipr_p50
+debug/routing_effective_support_ipr_p90
+debug/routing_support_below_2_frac
+debug/routing_support_below_3_frac
+debug/routing_support_below_min_frac
+debug/routing_top1_minus_top2
+debug/routing_top2_mass
+debug/routing_top4_mass
+debug/diag_cos_full
+debug/diag_cos_top1
+debug/diag_cos_top2
+debug/diag_cos_top4
+debug/loss_diag_full
+debug/loss_diag_top1
+debug/loss_diag_top2
+debug/loss_diag_top4
+debug/prototype_active_count_eps_1e-3
+debug/prototype_active_count_eps_1e-2
+debug/prototype_active_count_eps_1e-3_window_100
+debug/prototype_active_count_eps_1e-3_window_500
+debug/prototype_active_count_eps_1e-2_window_100
+debug/prototype_active_count_eps_1e-2_window_500
+debug/prototype_usage_entropy_window_100
+debug/prototype_usage_entropy_window_500
+debug/prototype_usage_max_window_100
+debug/prototype_usage_max_window_500
+debug/image_proxy_logit_mean
+debug/image_proxy_logit_std
+debug/image_proxy_logit_min
+debug/image_proxy_logit_max
+debug/text_proxy_logit_mean
+debug/text_proxy_logit_std
+debug/text_proxy_logit_min
+debug/text_proxy_logit_max
+debug/image_positive_proxy_cosine_mean
+debug/image_positive_proxy_cosine_std
+debug/image_hardest_negative_proxy_cosine_mean
+debug/image_hardest_negative_proxy_cosine_std
+debug/image_proxy_margin_mean
+debug/image_proxy_margin_min
+debug/text_positive_proxy_cosine_mean
+debug/text_positive_proxy_cosine_std
+debug/text_hardest_negative_proxy_cosine_mean
+debug/text_hardest_negative_proxy_cosine_std
+debug/text_proxy_margin_mean
+debug/text_proxy_margin_min
+debug/text_exact_positive_proxy_cosine_mean
+debug/text_exact_positive_proxy_cosine_std
+debug/text_exact_hardest_negative_proxy_cosine_mean
+debug/text_exact_hardest_negative_proxy_cosine_std
+debug/text_exact_proxy_margin_mean
+debug/text_exact_proxy_margin_min
+debug/image_surrogate_positive_cosine_mean
+debug/image_surrogate_positive_cosine_std
+debug/image_surrogate_hardest_negative_cosine_mean
+debug/image_surrogate_hardest_negative_cosine_std
+debug/image_surrogate_margin_mean
+debug/image_surrogate_margin_min
+debug/image_surrogate_positive_logit_mean
+debug/image_surrogate_hardest_negative_logit_mean
+debug/image_exact_positive_cosine_mean
+debug/image_exact_positive_cosine_std
+debug/image_exact_hardest_negative_cosine_mean
+debug/image_exact_hardest_negative_cosine_std
+debug/image_exact_margin_mean
+debug/image_exact_margin_min
+debug/image_exact_positive_logit_mean
+debug/image_exact_hardest_negative_logit_mean
+debug/surrogate_pairwise_positive_cosine_mean
+debug/surrogate_pairwise_positive_cosine_std
+debug/surrogate_pairwise_hardest_negative_cosine_mean
+debug/surrogate_pairwise_hardest_negative_cosine_std
+debug/surrogate_pairwise_margin_mean
+debug/surrogate_pairwise_margin_min
+debug/surrogate_pairwise_positive_logit_mean
+debug/surrogate_pairwise_hardest_negative_logit_mean
+debug/surrogate_pairwise_logit_mean
+debug/surrogate_pairwise_logit_std
+debug/class_proxy_norm_mean
+debug/class_proxy_norm_std
+debug/class_proxy_norm_min
+debug/class_proxy_norm_max
+debug/class_proxy_norm_normalized_mean
+debug/class_proxy_norm_normalized_std
+debug/class_proxy_norm_normalized_min
+debug/class_proxy_norm_normalized_max
+debug/grad_norm_class_proxies
+debug/grad_norm_image_projector
+debug/grad_norm_text_projector
+debug/grad_norm_prototype_bank
+debug/grad_norm_image_backbone
+debug/grad_norm_text_backbone
+debug/grad_norm_image_projected_output
+debug/grad_norm_surrogate_text_projected_output
+debug/grad_norm_exact_text_projected_output
+debug/surrogate_retrieval_grad_norm
+debug/grad_norm_total
+debug/token_pool_entropy
+debug/beta_max_prob
+debug/token_special_mass
+debug/token_valid_fraction
+debug/valid_token_fraction
+debug/prototype_pairwise_cosine_mean
+debug/prototype_pairwise_cosine_std
+debug/prototype_pairwise_cosine_max
+debug/contextualized_prototype_pairwise_cosine_mean
+debug/contextualized_prototype_pairwise_cosine_std
+debug/contextualized_prototype_pairwise_cosine_max
+debug/prototype_contextualization_entropy
+debug/q_norm
+debug/surrogate_t_pool_norm
+debug/exact_t_pool_norm
+debug/image_feature_norm
+debug/image_embed_norm_raw
+debug/image_embed_unit_norm
+debug/surrogate_text_embed_norm_raw
+debug/surrogate_text_embed_unit_norm
+debug/exact_text_embed_norm_raw
+debug/exact_text_embed_unit_norm
+```
 
-## Validation Metrics
+## Validation Metrics (`val/*`)
 
-These are logged during evaluation on the split selected by `dataset.val_dataset`.
+Always possible:
+- `val/epoch`
+- `val/top1`
 
-- `val/epoch`: epoch at which validation was run.
-- `val/loss_total`: proxy-disabled evaluation objective on the selected eval split.
-- `val/loss_ret`: row-wise surrogate retrieval loss on the selected eval split.
-- `val/loss_align`: image/surrogate alignment loss on the selected eval split.
-- `val/loss_diag`: surrogate/exact fidelity loss on the selected eval split.
-- `val/top1`: alias for `R1`, used as the primary model-selection metric.
-- `val/pas/R1`: rank-1 retrieval accuracy.
-- `val/pas/R5`: rank-5 retrieval accuracy.
-- `val/pas/R10`: rank-10 retrieval accuracy.
-- `val/pas/mAP`: mean average precision for retrieval.
+Validation loss keys (same set as train losses, produced by `collect_loss_metrics`):
 
-## Debug Metrics
+```text
+val/loss_total
+val/loss_host
+val/loss_host_ret
+val/loss_host_ret_i2t
+val/loss_host_ret_t2i
+val/loss_host_cid
+val/loss_proto_total
+val/loss_host_weighted
+val/lambda_host
+val/loss_proxy
+val/loss_proxy_image
+val/loss_proxy_text
+val/loss_proxy_text_exact
+val/loss_ret
+val/loss_align
+val/loss_diag
+val/loss_support
+val/loss_diversity
+val/loss_balance
+val/loss_proxy_image_weighted
+val/loss_proxy_text_weighted
+val/loss_proxy_text_exact_weighted
+val/loss_proxy_weighted
+val/loss_ret_weighted
+val/loss_align_weighted
+val/loss_diag_weighted
+val/loss_support_weighted
+val/loss_diversity_weighted
+val/loss_balance_weighted
+```
 
-These are logged only when `logging.log_debug_metrics=true`.
+Retrieval metrics (`evaluation.retrieval_metrics` subset of this list):
 
-### Temperatures and retrieval scaling
-- `debug/logit_scale`: multiplicative retrieval scale used for exact similarity scoring.
-- `debug/proxy_temperature`: temperature used for proxy-classification logits.
-- `debug/retrieval_temperature`: reciprocal of `logit_scale`, shown as the effective retrieval temperature.
+```text
+val/pas/R1
+val/pas/R5
+val/pas/R10
+val/pas/mAP
+val/pas/mINP
+val/pas/rSum
+```
 
+Validation debug metrics (`Evaluator._compute_eval_debug_metrics`):
 
-### Embedding and pooled-feature norms
-- `debug/q_norm`: norm of the prototype summary vector `Q` used for token scoring.
-- `debug/surrogate_t_pool_norm`: norm of the surrogate pooled text feature.
-- `debug/exact_t_pool_norm`: norm of the exact pooled text feature.
-- `debug/image_feature_norm`: norm of the image feature entering the image projector.
-- `debug/image_embed_norm_raw`: mean norm of raw projected image embeddings before optional output normalization.
-- `debug/image_embed_unit_norm`: mean norm of the final image embeddings after projector normalization.
-- `debug/surrogate_text_embed_norm_raw`: mean norm of surrogate text projector outputs before normalization.
-- `debug/surrogate_text_embed_unit_norm`: mean norm of final surrogate text embeddings after normalization.
-- `debug/exact_text_embed_norm_raw`: mean norm of exact text embeddings before normalization.
-- `debug/exact_text_embed_unit_norm`: mean norm of final exact text embeddings after normalization.
+```text
+val/debug/eval_positive_gallery_count_min
+val/debug/eval_positive_gallery_count_mean
+val/debug/eval_logit_scale
+val/debug/eval_retrieval_temperature
+val/debug/eval_positive_exact_cosine_mean
+val/debug/eval_hardest_negative_exact_cosine_mean
+val/debug/eval_exact_margin_mean
+val/debug/eval_image_projected_norm_mean
+val/debug/eval_image_projected_norm_std
+val/debug/eval_positive_exact_text_embed_norm_mean
+val/debug/eval_positive_exact_text_embed_norm_std
+val/debug/eval_positive_exact_text_embed_unit_norm_mean
+val/debug/eval_positive_exact_pair_cosine_mean
+```
 
-### Retrieval Diagnostics
-- `debug/image_surrogate_positive_cosine_mean`: mean positive image-vs-surrogate cosine on the current batch.
-- `debug/image_surrogate_hardest_negative_cosine_mean`: mean hardest-negative image-vs-surrogate cosine on the current batch.
-- `debug/image_surrogate_margin_mean`: mean positive-minus-hardest-negative surrogate margin.
-- `debug/image_exact_positive_cosine_mean`: mean positive exact image-to-text cosine from the in-batch deployed scorer.
-- `debug/image_exact_hardest_negative_cosine_mean`: mean hardest-negative exact cosine from the in-batch deployed scorer.
-- `debug/image_exact_margin_mean`: mean positive-minus-hardest-negative exact margin.
-- `debug/surrogate_pairwise_logit_mean`: mean of the in-batch surrogate pairwise logits used by `loss_ret`.
-- `debug/surrogate_pairwise_logit_std`: standard deviation of the in-batch surrogate pairwise logits.
-- `debug/surrogate_pairwise_positive_logit_mean`: mean positive surrogate retrieval logit on the batch diagonal.
-- `debug/surrogate_retrieval_grad_norm`: gradient norm observed at the surrogate pairwise retrieval logits used by `loss_ret`.
+## Conditional Notes
 
+- `debug/*` keys are emitted only when `logging.log_debug_metrics=true`.
+- Some keys can be consistently zero when corresponding branches/losses are disabled by config.
+- `val/pas/*` keys depend on `evaluation.retrieval_metrics` (only requested metrics are logged).
+- Some `val/debug/*` keys are conditional on runtime path:
+  - `val/debug/eval_logit_scale`, `val/debug/eval_retrieval_temperature` require prototype-loss module exposure.
+  - Text-exact debug keys require exact retrieval path data availability.

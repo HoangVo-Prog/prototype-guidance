@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 from .fusion import ResidualScoreFusion
-from .hosts.itself import get_original_itself_components
+from .hosts.itself import attach_itself_clip_text_intermediates, get_original_itself_components
 from .interfaces import EncoderOutput
 from .prototype import TokenMaskBuilder, build_prototype_head, init_mode_requires_data
 from .host_heads import build_host_head
@@ -77,6 +77,8 @@ class PASModel(nn.Module):
         self.fusion_coefficient_source = str(getattr(args, 'fusion_coefficient_source', 'fixed')).lower()
         explicit_stage = getattr(args, 'training_stage', None)
         self.training_stage = 'joint' if explicit_stage is None else str(explicit_stage).lower()
+        if self.host_type == 'itself':
+            attach_itself_clip_text_intermediates(self.base_model)
 
         self._validate_configuration()
         self.token_mask_builder = TokenMaskBuilder(
@@ -581,6 +583,12 @@ class PASModel(nn.Module):
     def _resolve_text_states(self, text_output: EncoderOutput) -> torch.Tensor:
         if text_output.pre_projection_tokens is not None:
             return text_output.pre_projection_tokens
+        if self.host_type == 'itself':
+            raise RuntimeError(
+                'ITSELF host requires text pre-projection token states for prototype routing, but the current '
+                'CLIP runtime did not expose them. Ensure the original ITSELF CLIP internals are available and '
+                '`encode_text_intermediates` returns `pre_projection_tokens` before `text_projection`.'
+            )
         if not getattr(self, '_warned_projected_text_state_fallback', False):
             logging.getLogger('pas.model').warning(
                 'Text pre-projection token states are unavailable from the current CLIP runtime; '
@@ -1107,7 +1115,6 @@ def build_model(args, num_classes, train_loader=None):
         if model.prototype_head is not None:
             model.prototype_head.float()
     return model
-
 
 
 
