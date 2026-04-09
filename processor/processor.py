@@ -112,7 +112,6 @@ def _collect_output_gradient_metrics(outputs, scale: float = 1.0):
 def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, scheduler, checkpointer, experiment_tracker: ExperimentTracker = None, eval_loss_loader=None):
     log_period = args.log_period
     eval_period = args.eval_period
-    save_interval = int(getattr(args, 'save_interval', 0) or 0)
     grad_clip = float(getattr(args, 'grad_clip', 0.0) or 0.0)
     device = getattr(args, 'device', 'cuda')
     num_epoch = args.num_epoch
@@ -136,10 +135,12 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
     best_top1 = 0.0
     current_steps = 0
     best_epoch = start_epoch
+    last_epoch = start_epoch - 1
     log_debug_metrics = bool(getattr(args, 'log_debug_metrics', True))
     coverage_tracker = RoutingCoverageTracker() if log_debug_metrics else None
 
     for epoch in range(start_epoch, num_epoch + 1):
+        last_epoch = epoch
         start_time = time.time()
         for meter in meters.values():
             meter.reset()
@@ -238,10 +239,6 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 )
             )
 
-        if save_interval > 0 and epoch % save_interval == 0:
-            arguments['epoch'] = epoch
-            checkpointer.save(f'epoch_{epoch}', **arguments)
-
         if epoch % eval_period == 0 and get_rank() == 0:
             logger.info('Validation Results - Epoch: {}'.format(epoch))
             eval_loss_metrics = _compute_eval_loss_metrics(
@@ -267,6 +264,9 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 checkpointer.save('best', **arguments)
 
     if get_rank() == 0:
+        if last_epoch >= start_epoch:
+            arguments['epoch'] = last_epoch
+            checkpointer.save('last', **arguments)
         logger.info(f'best R1: {best_top1} at epoch {best_epoch}')
 
     tb_writer.close()
