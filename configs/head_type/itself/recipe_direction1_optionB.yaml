@@ -117,7 +117,7 @@ text_pooling:
 
 training:
   log_debug_metrics: true
-  batch_size: 256
+  batch_size: 128
   epochs: 60
   log_period: 50
   prototype_selection_metric: R1
