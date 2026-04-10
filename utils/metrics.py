@@ -156,6 +156,8 @@ class Evaluator:
         return positive_mask, positive_counts, first_positive
 
     def _compute_eval_debug_metrics(self, model, similarity, text_ids, image_ids, image_features, text_features):
+        if not bool(getattr(self.args, 'log_debug_metrics', True)):
+            return {}
         metrics = {}
         core_model = model.module if hasattr(model, 'module') else model
         similarity = similarity.detach().float().cpu()

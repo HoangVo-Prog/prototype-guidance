@@ -310,7 +310,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
             if scaler.is_enabled():
                 scaler.scale(total_loss).backward()
                 scaler.unscale_(optimizer)
-                if isinstance(outputs.get('debug'), dict):
+                if log_debug_metrics and isinstance(outputs.get('debug'), dict):
                     outputs['debug'].update(_collect_gradient_metrics(model))
                     outputs['debug'].update(_collect_output_gradient_metrics(outputs, scale=scaler.get_scale()))
                 if grad_clip > 0:
@@ -319,7 +319,7 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 scaler.update()
             else:
                 total_loss.backward()
-                if isinstance(outputs.get('debug'), dict):
+                if log_debug_metrics and isinstance(outputs.get('debug'), dict):
                     outputs['debug'].update(_collect_gradient_metrics(model))
                     outputs['debug'].update(_collect_output_gradient_metrics(outputs))
                 if grad_clip > 0:

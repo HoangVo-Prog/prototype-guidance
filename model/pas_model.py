@@ -1088,10 +1088,12 @@ class PASModel(nn.Module):
         outputs['debug']['host_loss_total'] = host_losses['loss_total'].detach()
         outputs['debug']['host_loss_ret'] = host_losses['loss_ret'].detach()
         outputs['debug']['host_loss_cid'] = host_losses.get('loss_cid', host_losses['loss_total'].new_zeros(())).detach()
-        for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'surrogate_pairwise_logits', 'host_pairwise_logits'):
-            tensor = outputs.get(grad_tensor_key)
-            if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
-                tensor.retain_grad()
+        track_output_grads = bool(getattr(self.args, 'log_debug_metrics', True)) or should_return_debug
+        if track_output_grads:
+            for grad_tensor_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'surrogate_pairwise_logits'):
+                tensor = outputs.get(grad_tensor_key)
+                if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
+                    tensor.retain_grad()
         if should_return_debug:
             outputs['debug'] = self._build_debug_outputs(image_output, text_output, host_outputs, prototype_outputs)
         return outputs
@@ -1115,7 +1117,6 @@ def build_model(args, num_classes, train_loader=None):
         if model.prototype_head is not None:
             model.prototype_head.float()
     return model
-
 
 
 

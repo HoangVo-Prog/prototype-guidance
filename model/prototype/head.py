@@ -74,6 +74,7 @@ class PrototypeConditionedTextHead(nn.Module):
         contrastive_temperature_init: float = 0.07,
         learnable_contrastive_temperature: bool = False,
         dead_prototype_threshold: float = 0.005,
+        collect_debug_metrics: bool = True,
     ):
         super().__init__()
         self.input_dim = int(input_dim)
@@ -82,6 +83,7 @@ class PrototypeConditionedTextHead(nn.Module):
         self.projector_output_dim = int(projector_output_dim)
         self.dead_prototype_threshold = float(dead_prototype_threshold)
         self.use_image_conditioned_pooling = bool(use_image_conditioned_pooling)
+        self.collect_debug_metrics = bool(collect_debug_metrics)
 
         self.image_adapter = image_adapter if image_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
         self.text_adapter = text_adapter if text_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
@@ -761,33 +763,36 @@ class PrototypeConditionedTextHead(nn.Module):
             return_debug=return_debug,
             prepared_text=prepared_text,
         )
-        scalar_metrics = self._collect_scalar_metrics(
-            prototypes=context['prototypes'],
-            contextualized_prototypes=context['contextualized_prototypes'],
-            routing_weights=image_outputs['routing_weights'],
-            summary=image_outputs['summary'],
-            exact_token_weights=exact_outputs['token_weights'],
-            token_valid_mask=exact_outputs['token_valid_mask'],
-            token_keep_mask=exact_outputs['token_keep_mask'],
-            surrogate_pooled_text=surrogate_pooled_text,
-            exact_pooled_text=exact_outputs['pooled_text'],
-            image_features=image_outputs['image_embedding'],
-            image_projector_debug=image_outputs['image_projector_debug'],
-            surrogate_text_projector_debug=surrogate_text_projector_debug,
-            exact_text_projector_debug=exact_outputs['text_projector_debug'],
-            special_token_positions=exact_outputs['special_token_positions'],
-            contextualizer_debug=context.get('contextualizer_debug'),
-            router_debug=image_outputs['router_debug'],
-            pooler_debug=exact_outputs['pooler_debug'],
-        )
-        scalar_metrics.update(
-            self._compute_routing_certification_metrics(
+        collect_debug_diagnostics = self.collect_debug_metrics or bool(return_debug)
+        scalar_metrics = {}
+        if collect_debug_diagnostics:
+            scalar_metrics = self._collect_scalar_metrics(
+                prototypes=context['prototypes'],
+                contextualized_prototypes=context['contextualized_prototypes'],
                 routing_weights=image_outputs['routing_weights'],
-                basis_bank=basis_outputs['basis_bank'],
-                surrogate_text_projected=surrogate_text_projected,
-                exact_text_projected=exact_outputs['text_projected'],
+                summary=image_outputs['summary'],
+                exact_token_weights=exact_outputs['token_weights'],
+                token_valid_mask=exact_outputs['token_valid_mask'],
+                token_keep_mask=exact_outputs['token_keep_mask'],
+                surrogate_pooled_text=surrogate_pooled_text,
+                exact_pooled_text=exact_outputs['pooled_text'],
+                image_features=image_outputs['image_embedding'],
+                image_projector_debug=image_outputs['image_projector_debug'],
+                surrogate_text_projector_debug=surrogate_text_projector_debug,
+                exact_text_projector_debug=exact_outputs['text_projector_debug'],
+                special_token_positions=exact_outputs['special_token_positions'],
+                contextualizer_debug=context.get('contextualizer_debug'),
+                router_debug=image_outputs['router_debug'],
+                pooler_debug=exact_outputs['pooler_debug'],
             )
-        )
+            scalar_metrics.update(
+                self._compute_routing_certification_metrics(
+                    routing_weights=image_outputs['routing_weights'],
+                    basis_bank=basis_outputs['basis_bank'],
+                    surrogate_text_projected=surrogate_text_projected,
+                    exact_text_projected=exact_outputs['text_projected'],
+                )
+            )
         surrogate_pairwise_logits = None
         if self.losses.use_loss_ret:
             surrogate_pairwise_logits = self.compute_surrogate_pairwise_logits(
@@ -808,7 +813,8 @@ class PrototypeConditionedTextHead(nn.Module):
             return_debug=return_debug,
             disable_proxy_losses=disable_proxy_losses,
         )
-        scalar_metrics.update(loss_outputs.get('debug_metrics', {}))
+        if collect_debug_diagnostics:
+            scalar_metrics.update(loss_outputs.get('debug_metrics', {}))
 
         outputs = {
             'image_embedding': image_outputs['image_embedding'],
@@ -893,7 +899,6 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
-
 
 
 

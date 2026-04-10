@@ -436,10 +436,12 @@ class ClipHostModel(nn.Module):
                 'host_loss_ret': losses['loss_ret'].detach(),
             },
         }
-        for grad_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'surrogate_pairwise_logits', 'host_pairwise_logits'):
-            tensor = outputs.get(grad_key)
-            if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
-                tensor.retain_grad()
+        track_output_grads = bool(getattr(self.args, 'log_debug_metrics', True)) or should_return_debug
+        if track_output_grads:
+            for grad_key in ('z_v', 'z_t_hat_diag', 'z_t_exact_diag', 'surrogate_pairwise_logits'):
+                tensor = outputs.get(grad_key)
+                if isinstance(tensor, torch.Tensor) and tensor.requires_grad:
+                    tensor.retain_grad()
         if should_return_debug:
             outputs['debug'].update(
                 {

@@ -131,4 +131,5 @@ def build_prototype_head(
         contrastive_temperature_init=getattr(args, 'temperature', 0.07),
         learnable_contrastive_temperature=False,
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
+        collect_debug_metrics=bool(getattr(args, 'log_debug_metrics', True)),
     )
