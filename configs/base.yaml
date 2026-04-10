@@ -57,11 +57,11 @@ prototype:
   num_prototypes: 0
   prototype_dim: 512
   prototype_init: normalized_random
-  prototype_init_path: null
+  prototype_init_path:
   prototype_init_hybrid_ratio: 0.5
   prototype_init_max_iters: 50
   prototype_init_tol: 1.0e-4
-  prototype_init_seed: null
+  prototype_init_seed:
   routing_type: cosine
   routing_temperature: 0.07
   contextualization_enabled: false
@@ -207,12 +207,13 @@ dataset:
 logging:
   use_wandb: true
   project: itself_base
-  entity: null
-  run_name: null
+  entity:
+  run_name:
   group: itself_base
   mode: online
   tags: [itself, canonical_base]
-  notes: Single source config centered on ITSELF hyperparameters and shared training-process controls.
+  notes: Single source config centered on ITSELF hyperparameters and shared training-process
+    controls.
   log_interval: 50
   log_code: false
   log_debug_metrics: false

@@ -1,35 +1,166 @@
-# Direction 2 / Stage 2 / Option A
-# Frozen prototype transfer: host learns from stabilized prototype branch with frozen bank/routing.
+# Canonical single config file.
+# Decision policy:
+# - Keep: ITSELF hyperparameters from adapter/WACV2026-Oral-ITSELF/utils/options.py
+# - Keep: shared training-process/runtime controls from this repo (optimizer scheduler logging eval process)
+# - Remove from active use: legacy training_mode/stage routing and split loss section
 
 experiment:
   name: DIRECTION2_STAGE2_OPTIONA_FROZEN_TRANSFER
+  output_dir: run_logs
+  seed: 1
+  local_rank: 0
 
 model:
+  name: ITSELF
   variant: direction2_stage2_optionA_frozen_transfer_itself_head
-  training_mode: pas
+  pretrain_choice: ViT-B/16
+  image_backbone: clip_visual
+  text_backbone: clip_text_transformer
+  embedding_dim: 512
+  projection_dim: 256
+  projector_hidden_dim: 512
+  projector_dropout: 0.0
+  projector_type: mlp2
+  normalize_projector_outputs: true
+  use_custom_projector: true
+  backbone_precision: fp32
+  prototype_precision: fp32
+  temperature: 0.02
+  img_size: [384, 128]
+  stride_size: 16
+  text_length: 77
+  vocab_size: 49408
   use_prototype_branch: true
   use_prototype_bank: true
   use_image_conditioned_pooling: true
+  return_debug_outputs: false
 
+  training_mode: pas
 host:
   type: itself
+  freeze_projectors: false
+  itself_loss_names: tal+cid
+  itself_only_global: false
+  itself_select_ratio: 0.4
+  itself_grab_embed_dim: 4096
+  itself_score_weight_global: 0.32
+  itself_tau: 0.015
+  itself_margin: 0.1
+  itself_return_all: false
+  itself_topk_type: mean
+  itself_layer_index: -1
+  itself_average_attn_weights: true
+  itself_modify_k: false
+  itself_lambda1_weight: 0.5
+  itself_lambda2_weight: 3.5
 
 prototype:
   num_prototypes: 32
+  prototype_dim: 512
+  prototype_init: normalized_random
+  prototype_init_path:
+  prototype_init_hybrid_ratio: 0.5
+  prototype_init_max_iters: 50
+  prototype_init_tol: 1.0e-4
+  prototype_init_seed:
+  routing_type: cosine
+  routing_temperature: 0.07
   contextualization_enabled: true
   contextualization_type: self_attention
+  contextualization_residual: false
+  normalize_for_self_interaction: true
+  normalize_for_routing: true
+  dead_prototype_threshold: 0.005
 
 fusion:
   enabled: true
   coefficient: 1.0
+  coefficient_source: fixed
+
+objectives:
+  objectives:
+    use_host_loss: true
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: false
+    use_loss_diag: false
+    use_loss_ret: false
+    retrieval_mode: surrogate_i2t
+    use_loss_support: false
+    support_min: 2.0
+    use_balancing_loss: false
+    use_diversity_loss: false
+  lambda:
+    host: 1.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.0
+    diag: 0.0
+    ret: 0.0
+    support: 0.0
+    balance: 0.0
+    diversity: 0.0
+
+text_pooling:
+  token_policy: content_only
+  scoring_type: cosine
+  normalize_for_token_scoring: true
+  token_temperature: 0.07
+  special_token_ids:
+    bos_token_id: 49406
+    eos_token_id: 49407
+    pad_token_id: 0
+  error_on_empty_kept_tokens: true
 
 training:
   log_debug_metrics: true
+  batch_size: 256
   epochs: 40
   log_period: 50
   prototype_selection_metric: R1
+  eval_frequency: 1
+  save_interval: 1
+  resume: false
+  resume_ckpt_file: ''
   finetune: ''
+  pretrain: ''
+  img_aug: true
+  txt_aug: true
+  sampler: identity
+  num_instance: 2
+  num_workers: 4
+  training: true
+  freeze_image_backbone: false
+  freeze_text_backbone: false
   freeze_prototype_side: false
+  freeze_host_projectors: false
+  grad_clip: 0.0
+  amp: false
+  amp_dtype: fp16
+  proxy_temperature: 0.07
+  # Optional: epoch-based freeze/lr/loss schedule.
+  # If omitted, runtime keeps the legacy static freeze flags and optimizer setup.
+  # freeze_schedule:
+  #   - name: warmup
+  #     epoch_start: 1
+  #     epoch_end: 5
+  #     trainable_groups: [prototype_bank, prototype_projector, routing, fusion]
+  #     frozen_groups: [host_backbone, host_retrieval]
+  #     lr_overrides:
+  #       prototype_bank: 1.0e-4
+  #       prototype_projector: 1.0e-4
+  #       routing: 1.0e-4
+  #       fusion: 1.0e-4
+  #     loss_weights:
+  #       lambda_host: 0.0
+  #       lambda_ret: 1.0
+  #       lambda_diag: 1.0
+  #       lambda_bal: 0.01
+  #       lambda_div: 0.01
+
   freeze_schedule:
     # Stage 2: host active, full host loss, prototype bank/routing fixed.
     - name: stage2_frozen_transfer
@@ -52,11 +183,69 @@ training:
 optimizer:
   type: AdamW
   lr: 1.0e-5
+  lr_prototype_bank: 0.0
+  lr_projectors: 0.0
+  lr_prototype_routing: 0.0
+  lr_prototype_pooling: 0.0
+  lr_prototype_contextualization: 0.0
+  lr_host_projectors: 1.0e-5
   lr_image_backbone: 5.0e-6
   lr_text_backbone: 5.0e-6
+  weight_decay: 4.0e-5
+  weight_decay_prototype_bank: 0.0
+  weight_decay_projectors: 0.0
+  weight_decay_prototype_routing: 0.0
+  weight_decay_prototype_pooling: 0.0
+  weight_decay_prototype_contextualization: 0.0
+  weight_decay_host_projectors: 4.0e-5
+  lr_class_proxies: 0.0
+  weight_decay_class_proxies: 0.0
+  weight_decay_image_backbone: 4.0e-5
+  weight_decay_text_backbone: 4.0e-5
+  momentum: 0.9
+  alpha: 0.9
+  beta: 0.999
+  lr_factor: 5.0
+  bias_lr_factor: 2.0
+  weight_decay_bias: 0.0
+  optimizer_eps: 1.0e-3
+  milestones: [45, 50]
+  gamma: 0.1
+  warmup_factor: 0.1
+  warmup_epochs: 5
+  warmup_method: linear
+  scheduler: cosine
+  target_lr: 0.0
+  power: 0.9
+
+dataset:
+  dataset_name: RSTPReid
+  root_dir: data
+  val_dataset: test
+  num_workers: 4
 
 logging:
   use_wandb: true
   project: direction2_stage2_optionA_frozen_transfer_itself_head
+  entity:
+  run_name:
+  group: itself_base
+  mode: online
+  tags: [itself, canonical_base]
+  notes: Single source config centered on ITSELF hyperparameters and shared training-process
+    controls.
+  log_interval: 50
+  log_code: false
+  log_debug_metrics: false
 
+evaluation:
+  checkpoint_path: ''
+  device: cuda
+  cross_domain_generalization: false
+  target_domain: CUHK-PEDES
+  retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
+  batch_size: 512
+  prototype_image_chunk_size: 32
+  prototype_text_chunk_size: 128
+  retrieval_scorer: exact
 

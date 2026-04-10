@@ -1,10 +1,18 @@
+# Canonical single config file.
+# Decision policy:
+# - Keep: ITSELF hyperparameters from adapter/WACV2026-Oral-ITSELF/utils/options.py
+# - Keep: shared training-process/runtime controls from this repo (optimizer scheduler logging eval process)
+# - Remove from active use: legacy training_mode/stage routing and split loss section
+
 experiment:
   name: ITSELF_PROTOTYPE_FROM_LEGACY
+  output_dir: run_logs
+  seed: 1
+  local_rank: 0
 
 model:
   name: PAS
   variant: itself_prototype_from_legacy
-  training_mode: pas
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
   text_backbone: clip_text_transformer
@@ -27,6 +35,7 @@ model:
   use_image_conditioned_pooling: true
   return_debug_outputs: false
 
+  training_mode: pas
 host:
   type: itself
   freeze_projectors: true
@@ -49,11 +58,11 @@ prototype:
   num_prototypes: 32
   prototype_dim: 512
   prototype_init: kmeans_centroids
-  prototype_init_path: null
+  prototype_init_path:
   prototype_init_hybrid_ratio: 0.5
   prototype_init_max_iters: 50
   prototype_init_tol: 1.0e-4
-  prototype_init_seed: null
+  prototype_init_seed:
   routing_type: cosine
   routing_temperature: 0.07
   contextualization_enabled: true
@@ -108,10 +117,10 @@ text_pooling:
 
 training:
   log_debug_metrics: true
-  stage: stage1
   batch_size: 256
   epochs: 15
   log_period: 50
+  prototype_selection_metric: R1
   eval_frequency: 1
   save_interval: 1
   resume: false
@@ -132,35 +141,56 @@ training:
   amp: false
   amp_dtype: fp16
   proxy_temperature: 0.07
-  prototype_selection_metric: R1
+  # Optional: epoch-based freeze/lr/loss schedule.
+  # If omitted, runtime keeps the legacy static freeze flags and optimizer setup.
+  # freeze_schedule:
+  #   - name: warmup
+  #     epoch_start: 1
+  #     epoch_end: 5
+  #     trainable_groups: [prototype_bank, prototype_projector, routing, fusion]
+  #     frozen_groups: [host_backbone, host_retrieval]
+  #     lr_overrides:
+  #       prototype_bank: 1.0e-4
+  #       prototype_projector: 1.0e-4
+  #       routing: 1.0e-4
+  #       fusion: 1.0e-4
+  #     loss_weights:
+  #       lambda_host: 0.0
+  #       lambda_ret: 1.0
+  #       lambda_diag: 1.0
+  #       lambda_bal: 0.01
+  #       lambda_div: 0.01
 
+  stage: stage1
 optimizer:
-  # keep ITSELF backbone protected
+  type: Adam
   lr: 1.0e-5
-  lr_image_backbone: 1.0e-5
-  lr_text_backbone: 1.0e-5
-  lr_host_projectors: 2.0e-5
-
-  # prototype side: 5x backbone (good default start)
   lr_prototype_bank: 5.0e-5
   lr_projectors: 5.0e-5
   lr_prototype_routing: 5.0e-5
   lr_prototype_pooling: 5.0e-5
   lr_prototype_contextualization: 5.0e-5
-  lr_class_proxies: 5.0e-5
-
+  lr_host_projectors: 2.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
   weight_decay: 4.0e-5
-  weight_decay_image_backbone: 4.0e-5
-  weight_decay_text_backbone: 4.0e-5
-  weight_decay_host_projectors: 4.0e-5
   weight_decay_prototype_bank: 1.0e-4
   weight_decay_projectors: 1.0e-4
   weight_decay_prototype_routing: 1.0e-4
   weight_decay_prototype_pooling: 1.0e-4
   weight_decay_prototype_contextualization: 1.0e-4
+  weight_decay_host_projectors: 4.0e-5
+  lr_class_proxies: 5.0e-5
   weight_decay_class_proxies: 1.0e-4
-
-  # Scheduler 
+  weight_decay_image_backbone: 4.0e-5
+  weight_decay_text_backbone: 4.0e-5
+  momentum: 0.9
+  alpha: 0.9
+  beta: 0.999
+  lr_factor: 5.0
+  bias_lr_factor: 2.0
+  weight_decay_bias: 0.0
+  optimizer_eps: 1.0e-3
   milestones: [45, 50]
   gamma: 0.1
   warmup_factor: 0.1
@@ -179,8 +209,8 @@ dataset:
 logging:
   use_wandb: true
   project: itself_prototype_from_legacy
-  entity: null
-  run_name: null
+  entity:
+  run_name:
   group: stage1_itself_host_plus_prototype
   mode: online
   tags: [pas, itself, stage1, prototype]

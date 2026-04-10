@@ -310,9 +310,8 @@ SECTION_TEMPLATE = {
 
 
 # `loss` is retained as an alias-only section for backward compatibility.
-AUXILIARY_SECTION_KEYS = {'itself_reference', 'loss'}
+AUXILIARY_SECTION_KEYS = {'loss'}
 SECTION_KEYS = set(SECTION_TEMPLATE.keys()) | AUXILIARY_SECTION_KEYS
-ITSELF_REFERENCE_SECTION_KEYS = {'enabled', 'path'}
 OBJECTIVES_NESTED_SECTION_KEYS = {'objectives', 'lambda'}
 TRAINING_NESTED_SECTION_KEYS = {'freeze_schedule'}
 SUPPORTED_SPECIAL_TOKEN_ID_KEYS = {
@@ -462,83 +461,6 @@ def deep_merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str
     return merged
 
 
-def _resolve_reference_path(path: str, anchor_path: Optional[str] = None) -> str:
-    if os.path.isabs(path):
-        return path
-    anchor_dir = os.path.dirname(anchor_path) if anchor_path else ''
-    return os.path.normpath(os.path.join(anchor_dir or os.getcwd(), path))
-
-
-def load_itself_reference_runtime_overrides(
-    config_data: Dict[str, Any],
-    anchor_path: Optional[str] = None,
-    dataset_name: Optional[str] = None,
-    host_type: Optional[str] = None,
-) -> Dict[str, Any]:
-    itself_reference = config_data.get('itself_reference')
-    if not isinstance(itself_reference, dict):
-        return {}
-    if not bool(itself_reference.get('enabled', True)):
-        return {}
-
-    active_host_type = str(host_type or config_data.get('host', {}).get('type', 'clip')).lower()
-    if active_host_type != 'itself':
-        return {}
-
-    reference_path = str(itself_reference.get('path', '') or '').strip()
-    if not reference_path:
-        raise ValueError('itself_reference.path is required when itself_reference.enabled=true.')
-    resolved_path = _resolve_reference_path(reference_path, anchor_path=anchor_path)
-    reference_data = _read_yaml(resolved_path)
-
-    active_dataset = dataset_name or config_data.get('dataset', {}).get('dataset_name')
-    if not active_dataset:
-        raise ValueError('Unable to resolve dataset for itself_reference. Set dataset.dataset_name.')
-
-    shared_args = reference_data.get('shared_base_original_itself_args', {})
-    dataset_entries = reference_data.get('datasets', {})
-    dataset_entry = dataset_entries.get(active_dataset)
-    if not isinstance(dataset_entry, dict):
-        raise ValueError(
-            f'ITSELF dataset reference file {resolved_path!r} does not contain datasets.{active_dataset}.')
-
-    overrides: Dict[str, Any] = {}
-
-    def _set(path_head: str, key: str, value: Any) -> None:
-        if value is None:
-            return
-        overrides.setdefault(path_head, {})[key] = copy.deepcopy(value)
-
-    shared_to_pas = {
-        ('model', 'pretrain_choice'): 'pretrain_choice',
-        ('model', 'img_size'): 'img_size',
-        ('model', 'stride_size'): 'stride_size',
-        ('model', 'text_length'): 'text_length',
-        ('model', 'vocab_size'): 'vocab_size',
-        ('host', 'itself_loss_names'): 'loss_names',
-        ('host', 'itself_only_global'): 'only_global',
-        ('host', 'itself_select_ratio'): 'select_ratio',
-        ('host', 'itself_tau'): 'tau',
-        ('host', 'itself_margin'): 'margin',
-        ('host', 'itself_return_all'): 'return_all',
-        ('host', 'itself_topk_type'): 'topk_type',
-        ('host', 'itself_layer_index'): 'layer_index',
-        ('host', 'itself_average_attn_weights'): 'average_attn_weights',
-        ('host', 'itself_modify_k'): 'modify_k',
-        ('host', 'itself_lambda1_weight'): 'lambda1_weight',
-        ('host', 'itself_lambda2_weight'): 'lambda2_weight',
-    }
-    for (section, key), source_key in shared_to_pas.items():
-        _set(section, key, shared_args.get(source_key))
-
-    _set('host', 'itself_score_weight_global', dataset_entry.get('host_itself_score_weight_global'))
-    _set('dataset', 'dataset_name', active_dataset)
-    if 'target_domain' not in config_data.get('evaluation', {}):
-        _set('evaluation', 'target_domain', active_dataset)
-
-    return overrides
-
-
 def _path_exists(config_data: Dict[str, Any], path: Tuple[str, ...]) -> bool:
     current: Any = config_data
     for key in path:
@@ -561,17 +483,6 @@ def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
     for section_name, section_value in config_data.items():
         if not isinstance(section_value, dict):
             raise ValueError(f'Config section `{section_name}` must contain a mapping.')
-        if section_name == 'itself_reference':
-            unknown_keys = sorted(set(section_value.keys()) - ITSELF_REFERENCE_SECTION_KEYS)
-            if unknown_keys:
-                raise ValueError(
-                    'Unsupported itself_reference keys: '
-                    f'{unknown_keys}. Supported keys: {sorted(ITSELF_REFERENCE_SECTION_KEYS)}'
-                )
-            for key, value in section_value.items():
-                if isinstance(value, dict):
-                    raise ValueError(f'Unsupported nested config mapping at `itself_reference.{key}`.')
-            continue
 
         for key, value in section_value.items():
             path = (section_name, key)

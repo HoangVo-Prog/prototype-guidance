@@ -3,7 +3,7 @@ import copy
 import os
 import sys
 
-from utils.config import apply_config_to_args, flatten_config_dict, load_itself_reference_runtime_overrides, load_yaml_config, validate_runtime_args_namespace
+from utils.config import apply_config_to_args, load_yaml_config, validate_runtime_args_namespace
 
 
 CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs')
@@ -44,27 +44,6 @@ def _prevalidate_removed_cli_flags(argv):
         option = token.split('=', 1)[0]
         if option in LEGACY_RETRIEVAL_FLAGS:
             raise ValueError(LEGACY_RETRIEVAL_FLAGS[option])
-
-
-def _apply_itself_reference(args):
-    config_data = getattr(args, 'config_data', {}) or {}
-    override_config_data = getattr(args, 'override_config_data', {}) or {}
-    reference_source = override_config_data if isinstance(override_config_data.get('itself_reference'), dict) else config_data
-    overrides = load_itself_reference_runtime_overrides(
-        reference_source,
-        anchor_path=getattr(args, 'config_file', '') or DEFAULT_CONFIG_PATH,
-        dataset_name=getattr(args, 'dataset_name', None),
-        host_type=getattr(args, 'host_type', None),
-    )
-    if not overrides:
-        return args
-    cli_dests = getattr(args, 'cli_dests', set())
-    for dest, value in flatten_config_dict(overrides).items():
-        if dest in cli_dests:
-            continue
-        setattr(args, dest, value)
-    args.itself_reference_overrides = overrides
-    return args
 
 
 def build_parser():
@@ -285,8 +264,6 @@ def _finalize_args(args):
         args.prototype_init_path = None
     if not args.retrieval_metrics:
         args.retrieval_metrics = list(DEFAULT_RETRIEVAL_METRICS)
-    args.host_type = str(getattr(args, 'host_type', 'clip')).lower()
-    args = _apply_itself_reference(args)
     args.host_type = str(getattr(args, 'host_type', 'clip')).lower()
     override_config_data = getattr(args, 'override_config_data', {}) or {}
     model_config = override_config_data.get('model', {}) if isinstance(override_config_data.get('model', {}), dict) else {}

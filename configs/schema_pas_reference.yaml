@@ -1,111 +1,83 @@
-# Canonical PAS/ITSELF config schema reference (current).
-#
-# Routing policy:
-# - model family routing is by host.type only: clip | itself
-# - model.training_mode and training.stage remain alias-compatible for legacy prototype configs
-# - objectives + loss are unified into:
-#     objectives.objectives
-#     objectives.lambda
-#
-# Marker legend:
-# - [CANONICAL]        actively used in configs/base.yaml
-# - [ALIAS_ONLY]       still accepted by utils/config.py for backward compatibility
-# - [REMOVED]          rejected by validator with guidance
+# Canonical single config file.
+# Decision policy:
+# - Keep: ITSELF hyperparameters from adapter/WACV2026-Oral-ITSELF/utils/options.py
+# - Keep: shared training-process/runtime controls from this repo (optimizer scheduler logging eval process)
+# - Remove from active use: legacy training_mode/stage routing and split loss section
 
 experiment:
-  name: example_run            # [CANONICAL]
-  output_dir: runs             # [CANONICAL]
-  seed: 1                      # [CANONICAL]
-  local_rank: 0                # [CANONICAL]
+  name: example_run
+  output_dir: runs
+  seed: 1
+  local_rank: 0
 
 model:
-  name: ITSELF                 # [CANONICAL]
-  variant: itself_base         # [CANONICAL]
-  pretrain_choice: ViT-B/16    # [CANONICAL]
-  image_backbone: clip_visual  # [CANONICAL]
-  text_backbone: clip_text_transformer  # [CANONICAL]
-  embedding_dim: 512           # [CANONICAL]
-  projection_dim: 256          # [CANONICAL]
-  projector_hidden_dim: 512    # [CANONICAL]
-  projector_dropout: 0.0       # [CANONICAL]
-  projector_type: mlp2         # [CANONICAL]
-  normalize_projector_outputs: true     # [CANONICAL]
-  use_custom_projector: true            # [CANONICAL]
-  backbone_precision: fp32     # [CANONICAL], {fp16, fp32}
-  prototype_precision: fp32    # [CANONICAL], {fp16, fp32}
-  temperature: 0.02            # [CANONICAL]
+  name: ITSELF
+  variant: itself_base
+  pretrain_choice: ViT-B/16
+  image_backbone: clip_visual
+  text_backbone: clip_text_transformer
+  embedding_dim: 512
+  projection_dim: 256
+  projector_hidden_dim: 512
+  projector_dropout: 0.0
+  projector_type: mlp2
+  normalize_projector_outputs: true
+  use_custom_projector: true
+  backbone_precision: fp32
+  prototype_precision: fp32
+  temperature: 0.02
   img_size: [384, 128]         # [CANONICAL]
-  stride_size: 16              # [CANONICAL]
-  text_length: 77              # [CANONICAL]
-  vocab_size: 49408            # [CANONICAL]
-  use_prototype_branch: false  # [CANONICAL]
-  use_prototype_bank: false    # [CANONICAL]
-  use_image_conditioned_pooling: false  # [CANONICAL]
-  return_debug_outputs: false  # [CANONICAL]
-
-  # [ALIAS_ONLY] accepted for legacy configs
-  # training_mode: pas
+  stride_size: 16
+  text_length: 77
+  vocab_size: 49408
+  use_prototype_branch: false
+  use_prototype_bank: false
+  use_image_conditioned_pooling: false
+  return_debug_outputs: false
 
 host:
-  type: itself                 # [CANONICAL], {clip, itself}
-  freeze_projectors: false     # [CANONICAL]
-
-  itself_loss_names: tal+cid   # [CANONICAL]
-  itself_only_global: false    # [CANONICAL]
-  itself_select_ratio: 0.4     # [CANONICAL]
-  itself_grab_embed_dim: 4096  # [CANONICAL]
-  itself_score_weight_global: 0.32  # [CANONICAL]
-  itself_tau: 0.015            # [CANONICAL]
-  itself_margin: 0.1           # [CANONICAL]
-  itself_return_all: false     # [CANONICAL]
-  itself_topk_type: mean       # [CANONICAL], {mean, std, layer_index, custom}
-  itself_layer_index: -1       # [CANONICAL]
-  itself_average_attn_weights: true  # [CANONICAL]
-  itself_modify_k: false       # [CANONICAL]
-  itself_lambda1_weight: 0.5   # [CANONICAL]
-  itself_lambda2_weight: 3.5   # [CANONICAL]
-
-  # [ALIAS_ONLY] accepted in code, intentionally not in base.yaml
-  # enabled: true
-  # loss_weight: 1.0
-  # loss_names: tal+cid
-  # only_global: false
-  # select_ratio: 0.4
-  # tau: 0.015
-  # margin: 0.1
-  # return_all: false
-  # topk_type: mean
-  # layer_index: -1
-  # average_attn_weights: true
-  # modify_k: false
-  # lambda1_weight: 0.5
-  # lambda2_weight: 3.5
+  type: itself
+  freeze_projectors: false
+  itself_loss_names: tal+cid
+  itself_only_global: false
+  itself_select_ratio: 0.4
+  itself_grab_embed_dim: 4096
+  itself_score_weight_global: 0.32
+  itself_tau: 0.015
+  itself_margin: 0.1
+  itself_return_all: false
+  itself_topk_type: mean
+  itself_layer_index: -1
+  itself_average_attn_weights: true
+  itself_modify_k: false
+  itself_lambda1_weight: 0.5
+  itself_lambda2_weight: 3.5
 
 prototype:
-  num_prototypes: 0            # [CANONICAL]
-  prototype_dim: 512           # [CANONICAL]
-  prototype_init: normalized_random  # [CANONICAL]
-  prototype_init_path: null    # [CANONICAL]
-  prototype_init_hybrid_ratio: 0.5  # [CANONICAL]
-  prototype_init_max_iters: 50 # [CANONICAL]
-  prototype_init_tol: 1.0e-4   # [CANONICAL]
-  prototype_init_seed: null    # [CANONICAL]
-  routing_type: cosine         # [CANONICAL], {cosine, dot}
-  routing_temperature: 0.07    # [CANONICAL]
-  contextualization_enabled: false  # [CANONICAL]
-  contextualization_type: none # [CANONICAL], {self_attention, dense_self_attention, none}
-  contextualization_residual: false  # [CANONICAL]
-  normalize_for_self_interaction: true  # [CANONICAL]
-  normalize_for_routing: true  # [CANONICAL]
-  dead_prototype_threshold: 0.005  # [CANONICAL]
+  num_prototypes: 0
+  prototype_dim: 512
+  prototype_init: normalized_random
+  prototype_init_path:
+  prototype_init_hybrid_ratio: 0.5
+  prototype_init_max_iters: 50
+  prototype_init_tol: 1.0e-4
+  prototype_init_seed:
+  routing_type: cosine
+  routing_temperature: 0.07
+  contextualization_enabled: false
+  contextualization_type: none
+  contextualization_residual: false
+  normalize_for_self_interaction: true
+  normalize_for_routing: true
+  dead_prototype_threshold: 0.005
 
 fusion:
-  enabled: false               # [CANONICAL]
-  coefficient: 0.0             # [CANONICAL]
-  coefficient_source: fixed    # [CANONICAL]
+  enabled: false
+  coefficient: 0.0
+  coefficient_source: fixed
 
 objectives:
-  objectives:                  # [CANONICAL]
+  objectives:
     use_host_loss: true
     use_loss_proxy_image: false
     use_loss_proxy_text: false
@@ -113,13 +85,12 @@ objectives:
     use_loss_align: false
     use_loss_diag: false
     use_loss_ret: false
-    retrieval_mode: surrogate_i2t    # {surrogate_i2t, clip_bidirectional}
+    retrieval_mode: surrogate_i2t
     use_loss_support: false
     support_min: 2.0
     use_balancing_loss: false
     use_diversity_loss: false
-
-  lambda:                      # [CANONICAL]
+  lambda:
     host: 1.0
     proxy: 0.0
     proxy_image: 0.0
@@ -132,81 +103,63 @@ objectives:
     balance: 0.0
     diversity: 0.0
 
-  # [ALIAS_ONLY] accepted in code, intentionally not in base.yaml
-  # use_host_loss: true
-  # lambda_host: 1.0
-  # use_proto_loss_ret: false
-  # lambda_proto_ret: 0.0
-  # use_diag_fidelity: false
-  # lambda_diag: 0.0
-  # use_diversity: false
-  # lambda_diversity: 0.0
-  # use_balance: false
-  # lambda_balance: 0.0
-
-# [ALIAS_ONLY] legacy section accepted in code, intentionally not in base.yaml
-# loss:
-#   lambda_proxy: 0.0
-#   lambda_proxy_image: 0.0
-#   lambda_proxy_text: 0.0
-#   lambda_proxy_text_exact: 0.0
-#   use_loss_proxy_image: false
-#   use_loss_proxy_text: false
-#   use_loss_proxy_text_exact: false
-#   use_loss_align: false
-#   lambda_align: 0.0
-#   use_loss_diag: false
-#   lambda_diag: 0.0
-#   use_loss_ret: false
-#   retrieval_mode: surrogate_i2t
-#   lambda_ret: 0.0
-#   use_loss_support: false
-#   lambda_support: 0.0
-#   support_min: 2.0
-#   use_balancing_loss: false
-#   balance_loss_weight: 0.0
-#   use_diversity_loss: false
-#   diversity_loss_weight: 0.0
-
 text_pooling:
-  token_policy: content_only   # [CANONICAL], {content_only, content_plus_special, eos_only}
-  scoring_type: cosine         # [CANONICAL], {cosine, dot}
-  normalize_for_token_scoring: true  # [CANONICAL]
-  token_temperature: 0.07      # [CANONICAL]
-  special_token_ids:           # [CANONICAL]
+  token_policy: content_only
+  scoring_type: cosine
+  normalize_for_token_scoring: true
+  token_temperature: 0.07
+  special_token_ids:
     bos_token_id: 49406
     eos_token_id: 49407
     pad_token_id: 0
-  error_on_empty_kept_tokens: true   # [CANONICAL]
+  error_on_empty_kept_tokens: true
 
 training:
   log_debug_metrics: true
-  batch_size: 256              # [CANONICAL]
-  epochs: 60                   # [CANONICAL]
-  log_period: 50               # [CANONICAL]
+  batch_size: 256
+  epochs: 60
+  log_period: 50
   prototype_selection_metric: R1
-  eval_frequency: 1            # [CANONICAL]
-  save_interval: 1             # [CANONICAL]
-  resume: false                # [CANONICAL]
-  resume_ckpt_file: ''         # [CANONICAL]
-  finetune: ''                 # [CANONICAL]
-  pretrain: ''                 # [CANONICAL]
-  img_aug: true                # [CANONICAL]
-  txt_aug: true                # [CANONICAL]
-  sampler: identity            # [CANONICAL]
-  num_instance: 2              # [CANONICAL]
-  num_workers: 4               # [CANONICAL]
-  training: true               # [CANONICAL]
-  freeze_image_backbone: false # [CANONICAL]
-  freeze_text_backbone: false  # [CANONICAL]
-  freeze_prototype_side: true  # [CANONICAL]
-  freeze_host_projectors: false  # [CANONICAL]
-  grad_clip: 0.0               # [CANONICAL]
-  amp: false                   # [CANONICAL]
-  amp_dtype: fp16              # [CANONICAL], {fp16, bf16}
-  proxy_temperature: 0.07      # [CANONICAL]
-  # Optional epoch schedule (new). If absent, legacy static behavior is unchanged.
-  # Epochs can be 1-based [1..epochs] or 0-based [0..epochs-1] (auto-normalized).
+  eval_frequency: 1
+  save_interval: 1
+  resume: false
+  resume_ckpt_file: ''
+  finetune: ''
+  pretrain: ''
+  img_aug: true
+  txt_aug: true
+  sampler: identity
+  num_instance: 2
+  num_workers: 4
+  training: true
+  freeze_image_backbone: false
+  freeze_text_backbone: false
+  freeze_prototype_side: true
+  freeze_host_projectors: false
+  grad_clip: 0.0
+  amp: false
+  amp_dtype: fp16
+  proxy_temperature: 0.07
+  # Optional: epoch-based freeze/lr/loss schedule.
+  # If omitted, runtime keeps the legacy static freeze flags and optimizer setup.
+  # freeze_schedule:
+  #   - name: warmup
+  #     epoch_start: 1
+  #     epoch_end: 5
+  #     trainable_groups: [prototype_bank, prototype_projector, routing, fusion]
+  #     frozen_groups: [host_backbone, host_retrieval]
+  #     lr_overrides:
+  #       prototype_bank: 1.0e-4
+  #       prototype_projector: 1.0e-4
+  #       routing: 1.0e-4
+  #       fusion: 1.0e-4
+  #     loss_weights:
+  #       lambda_host: 0.0
+  #       lambda_ret: 1.0
+  #       lambda_diag: 1.0
+  #       lambda_bal: 0.01
+  #       lambda_div: 0.01
+
   freeze_schedule:             # [CANONICAL OPTIONAL]
     - name: warmup
       epoch_start: 1           # inclusive
@@ -227,7 +180,8 @@ training:
     - name: joint
       epoch_start: 6
       epoch_end: 60
-      trainable_groups: [host_backbone, host_retrieval, prototype_projector, routing, fusion]
+      trainable_groups: [host_backbone, host_retrieval, prototype_projector, routing,
+        fusion]
       frozen_groups: []
       lr_overrides:
         host_backbone: 1.0e-5
@@ -244,7 +198,7 @@ training:
   # stage: stage1
 
 optimizer:
-  type: Adam                   # [CANONICAL], {SGD, Adam, AdamW}
+  type: Adam
   lr: 1.0e-5
   lr_prototype_bank: 0.0
   lr_projectors: 0.0
@@ -277,41 +231,38 @@ optimizer:
   warmup_factor: 0.1
   warmup_epochs: 5
   warmup_method: linear
-  scheduler: cosine            # {step, exp, poly, cosine, linear}
+  scheduler: cosine
   target_lr: 0.0
   power: 0.9
 
 dataset:
-  dataset_name: CUHK-PEDES     # [CANONICAL], {CUHK-PEDES, ICFG-PEDES, RSTPReid}
-  root_dir: data               # [CANONICAL]
-  val_dataset: test            # [CANONICAL], {val, test}
-  num_workers: 4               # [CANONICAL]
+  dataset_name: CUHK-PEDES
+  root_dir: data
+  val_dataset: test
+  num_workers: 4
 
 logging:
-  use_wandb: true              # [CANONICAL]
-  project: itself_base         # [CANONICAL]
-  entity: null                 # [CANONICAL]
-  run_name: null               # [CANONICAL]
-  group: itself_base           # [CANONICAL]
-  mode: online                 # [CANONICAL]
+  use_wandb: true
+  project: itself_base
+  entity:
+  run_name:
+  group: itself_base
+  mode: online
   tags: [itself, canonical_base]  # [CANONICAL]
-  notes: Single source config centered on ITSELF hyperparameters and shared training-process controls.
-  log_interval: 50             # [CANONICAL]
-  log_code: false              # [CANONICAL]
-  log_debug_metrics: false     # [CANONICAL]
+  notes: Single source config centered on ITSELF hyperparameters and shared training-process
+    controls.
+  log_interval: 50
+  log_code: false
+  log_debug_metrics: false
 
 evaluation:
-  checkpoint_path: ''          # [CANONICAL]
-  device: cuda                 # [CANONICAL]
-  cross_domain_generalization: false  # [CANONICAL]
-  target_domain: CUHK-PEDES    # [CANONICAL]
+  checkpoint_path: ''
+  device: cuda
+  cross_domain_generalization: false
+  target_domain: CUHK-PEDES
   retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]  # [CANONICAL]
-  batch_size: 512              # [CANONICAL]
-  prototype_image_chunk_size: 32   # [CANONICAL]
-  prototype_text_chunk_size: 128   # [CANONICAL]
-  retrieval_scorer: exact      # [CANONICAL], {exact, approximate}
-
-itself_reference:              # [CANONICAL OPTIONAL]
-  enabled: true
-  path: itself_dataset_reference.yaml
+  batch_size: 512
+  prototype_image_chunk_size: 32
+  prototype_text_chunk_size: 128
+  retrieval_scorer: exact
 
