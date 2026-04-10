@@ -116,7 +116,7 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 256
+  batch_size: 128
   epochs: 20
   log_period: 50
   prototype_selection_metric: L_diag
