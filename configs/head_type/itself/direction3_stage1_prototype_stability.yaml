@@ -82,7 +82,6 @@ fusion:
     - { name: "proto_020", lambda_host: 0.80, lambda_prototype: 0.20 }
     - { name: "proto_030", lambda_host: 0.70, lambda_prototype: 0.30 }
     - { name: "proto_100", lambda_host: 0.00, lambda_prototype: 1.00 }
-<<<<<<< HEAD
 
 objectives:
   objectives:
@@ -254,5 +253,3 @@ evaluation:
   retrieval_scorer: exact
 
 
-=======
->>>>>>> 871e29c11bd1b306e747a80bd36aa0a8a34e6f44

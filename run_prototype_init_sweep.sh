@@ -28,10 +28,8 @@ PROTOTYPE_INITS=(
 # Do not pass --nohup into train.py here, otherwise each training run will
 # detach immediately and the loop will start the next run right away.
 for prototype_init in "${PROTOTYPE_INITS[@]}"; do
-  echo "============================================================"
   echo "Running train.py with --prototype_init ${prototype_init}"
   echo "Config: ${CONFIG_FILE}"
-  echo "============================================================"
 
   CUDA_VISIBLE_DEVICES="${CUDA_DEVICES}" \
   "${PYTHON_BIN}" train.py \

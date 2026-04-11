@@ -677,7 +677,6 @@ class CLIP(nn.Module):
             try:
                 self.state_dict()[k].copy_(v)
             except:
-                print(f'===========================ERROR occur in copy {k}, {v.shape}=========================')
                 print('shape do not match in k :{}: param_dict{} vs self.state_dict(){}'.format(k, v.shape,
                                                                                                 self.state_dict()[
                                                                                                     k].shape))
