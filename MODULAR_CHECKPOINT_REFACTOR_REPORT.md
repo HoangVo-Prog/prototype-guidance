@@ -7,7 +7,6 @@ Primary checkpoint groups are now:
 - `host`
 - `prototype_bank`
 - `prototype_projector`
-- `routing`
 - `fusion`
 
 The previous coarse `prototype_best` checkpoint-selection flow in training was replaced by a centralized modular flow driven by validation `R1`.
@@ -24,7 +23,6 @@ checkpointing:
     host: { enabled: true }
     prototype_bank: { enabled: true }
     prototype_projector: { enabled: true }
-    routing: { enabled: true }
     fusion: { enabled: true }
   save:
     dir: null
@@ -44,10 +42,6 @@ checkpointing:
         enabled: true
         filename_latest: checkpoint_prototype_projector_latest.pth
         filename_best: checkpoint_prototype_projector_best.pth
-      routing:
-        enabled: true
-        filename_latest: checkpoint_routing_latest.pth
-        filename_best: checkpoint_routing_best.pth
       fusion:
         enabled: true
         filename_latest: checkpoint_fusion_latest.pth
@@ -59,7 +53,6 @@ checkpointing:
       host: { enabled: false, path: null }
       prototype_bank: { enabled: false, path: null }
       prototype_projector: { enabled: false, path: null }
-      routing: { enabled: false, path: null }
       fusion: { enabled: false, path: null }
 ```
 
@@ -77,7 +70,6 @@ Mapping:
   - `host_retrieval`: `host_head.*`
 - `prototype_bank`: `prototype_head.prototype_bank.*`
 - `prototype_projector`: `prototype_head.image_projector.*`, `prototype_head.text_projector.*`, `prototype_head.image_adapter.*`, `prototype_head.text_adapter.*`, `prototype_head.losses.class_proxies`
-- `routing`: `prototype_head.router.*`, `prototype_head.contextualizer.*`
 - `fusion`: `prototype_head.text_pool_query.*`, `prototype_head.token_pooler.*`, `prototype_head.token_scorer.*`, `prototype_head.token_mask_builder.*`, `prototype_head.aggregator.*`, `fusion_module.*`
 
 ## Host Abstraction (`host.type`)
@@ -145,3 +137,4 @@ Updated examples:
 - Existing full-model `best.pth` / `last.pth` saving via `Checkpointer` is still preserved for compatibility and resume workflows.
 - `checkpointing.metric.name` currently falls back to `R1` selection if set to other values.
 - Runtime schema validation now accepts and validates the hierarchical `checkpointing` section.
+- Routing/contextualizer modules remain in training/freezing controls, but were removed from checkpoint save/load groups because they are parameter-free in the current implementation.

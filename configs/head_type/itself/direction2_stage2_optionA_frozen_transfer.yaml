@@ -257,8 +257,6 @@ checkpointing:
       enabled: true
     prototype_projector:
       enabled: true
-    routing:
-      enabled: true
     fusion:
       enabled: true
   save:
@@ -279,10 +277,6 @@ checkpointing:
         enabled: true
         filename_latest: checkpoint_prototype_projector_latest.pth
         filename_best: checkpoint_prototype_projector_best.pth
-      routing:
-        enabled: true
-        filename_latest: checkpoint_routing_latest.pth
-        filename_best: checkpoint_routing_best.pth
       fusion:
         enabled: true
         filename_latest: checkpoint_fusion_latest.pth
@@ -300,9 +294,6 @@ checkpointing:
       prototype_projector:
         enabled: true
         path: /path/to/stage1/checkpoint_prototype_projector_best.pth
-      routing:
-        enabled: true
-        path: /path/to/stage1/checkpoint_routing_best.pth
       fusion:
         enabled: true
         path: /path/to/stage1/checkpoint_fusion_best.pth

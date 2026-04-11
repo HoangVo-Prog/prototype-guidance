@@ -35,7 +35,6 @@ DEFAULT_CHECKPOINTING_CONFIG = {
         'host': {'enabled': True},
         'prototype_bank': {'enabled': True},
         'prototype_projector': {'enabled': True},
-        'routing': {'enabled': True},
         'fusion': {'enabled': True},
     },
     'save': {
@@ -59,11 +58,6 @@ DEFAULT_CHECKPOINTING_CONFIG = {
                 'filename_latest': 'checkpoint_prototype_projector_latest.pth',
                 'filename_best': 'checkpoint_prototype_projector_best.pth',
             },
-            'routing': {
-                'enabled': True,
-                'filename_latest': 'checkpoint_routing_latest.pth',
-                'filename_best': 'checkpoint_routing_best.pth',
-            },
             'fusion': {
                 'enabled': True,
                 'filename_latest': 'checkpoint_fusion_latest.pth',
@@ -78,7 +72,6 @@ DEFAULT_CHECKPOINTING_CONFIG = {
             'host': {'enabled': False, 'path': None},
             'prototype_bank': {'enabled': False, 'path': None},
             'prototype_projector': {'enabled': False, 'path': None},
-            'routing': {'enabled': False, 'path': None},
             'fusion': {'enabled': False, 'path': None},
         },
     },
@@ -201,6 +194,15 @@ class ModularCheckpointManager:
     def _selected_groups(self):
         return [group_name for group_name in CHECKPOINT_GROUPS if self._group_is_enabled(group_name)]
 
+    def _log_parameterless_group_skip(self, group_name: str, action: str, source_path: Optional[str] = None):
+        base_message = (
+            'Skipping modular checkpoint %s for group=%s because current model exposes no parameters for this group.'
+            % (action, group_name)
+        )
+        if source_path:
+            base_message += f' path={source_path}'
+        self.logger.info(base_message)
+
     def _build_payload(self, model, group_name: str, epoch: int, global_step: int, metric_value: Optional[float]):
         group_state_dict = get_group_state_dict(model, group_name)
         if not group_state_dict:
@@ -232,7 +234,7 @@ class ModularCheckpointManager:
             metric_value=metric_value,
         )
         if payload is None:
-            self.logger.info('Skipping modular checkpoint save for group=%s (no parameters matched).', group_name)
+            self._log_parameterless_group_skip(group_name=group_name, action='save')
             return
         torch.save(payload, output_path)
         self.logger.info(
@@ -333,6 +335,7 @@ class ModularCheckpointManager:
         strict = bool(self.config.get('load', {}).get('strict', True))
         checked_groups = 0
         groups_with_issues = 0
+        skipped_parameterless_groups = 0
         for group_name in CHECKPOINT_GROUPS:
             source_cfg = self.config.get('load', {}).get('sources', {}).get(group_name, {})
             if not bool(source_cfg.get('enabled', False)):
@@ -340,6 +343,16 @@ class ModularCheckpointManager:
             source_path = source_cfg.get('path')
             if not source_path:
                 self.logger.info('Skipping checkpoint group load for %s (path is empty).', group_name)
+                continue
+
+            # Explicitly skip loading groups that have no parameters in the current model.
+            if not get_group_state_dict(model, group_name):
+                skipped_parameterless_groups += 1
+                self._log_parameterless_group_skip(
+                    group_name=group_name,
+                    action='load',
+                    source_path=str(source_path),
+                )
                 continue
 
             checked_groups += 1
@@ -421,8 +434,9 @@ class ModularCheckpointManager:
             )
         else:
             self.logger.info(
-                'Modular checkpoint load summary: checked_groups=%d groups_with_issues=%d groups_clean=%d',
+                'Modular checkpoint load summary: checked_groups=%d groups_with_issues=%d groups_clean=%d skipped_parameterless_groups=%d',
                 checked_groups,
                 groups_with_issues,
                 checked_groups - groups_with_issues,
+                skipped_parameterless_groups,
             )

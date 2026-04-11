@@ -47,7 +47,6 @@ CHECKPOINT_GROUP_MEMBERS: Dict[str, Tuple[str, ...]] = {
     'host': ('host_backbone', 'host_retrieval'),
     'prototype_bank': ('prototype_bank',),
     'prototype_projector': ('prototype_projector',),
-    'routing': ('routing',),
     'fusion': ('fusion',),
 }
 
@@ -145,4 +144,3 @@ def load_group_state_dict(model, group_name: str, state_dict: Dict[str, torch.Te
         'unexpected_keys': unexpected_keys,
         'shape_mismatches': shape_mismatches,
     }
-
