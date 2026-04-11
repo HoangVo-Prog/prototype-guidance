@@ -159,6 +159,10 @@ def _prepare_finetune_state_dict(raw_state_dict, model, args):
 
 
 def log_parameter_trainability(logger, model, args):
+    if getattr(args, 'freeze_schedule', None):
+        logger.info(
+            'Initial parameter trainability snapshot (before epoch-based freeze_schedule activation at epoch start).'
+        )
     total_params, trainable_params = _count_parameters(model.parameters())
     logger.info(
         'Parameter trainability: trainable=%d / total=%d (%.2f%%)',

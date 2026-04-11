@@ -257,6 +257,32 @@ def _parameter_matches_group(parameter_name: str, group_name: str) -> bool:
     return any(parameter_name.startswith(prefix) for prefix in prefixes)
 
 
+def get_group_trainability_snapshot(model, groups: Optional[Sequence[str]] = None) -> Dict[str, Dict[str, int]]:
+    selected_groups = tuple(groups) if groups is not None else LOGICAL_MODULE_GROUPS
+    snapshot: Dict[str, Dict[str, int]] = {}
+    for group_name in selected_groups:
+        total_tensors = 0
+        trainable_tensors = 0
+        total_params = 0
+        trainable_params = 0
+        for parameter_name, parameter in model.named_parameters():
+            if not _parameter_matches_group(parameter_name, group_name):
+                continue
+            total_tensors += 1
+            tensor_params = int(parameter.numel())
+            total_params += tensor_params
+            if parameter.requires_grad:
+                trainable_tensors += 1
+                trainable_params += tensor_params
+        snapshot[group_name] = {
+            'trainable_tensors': trainable_tensors,
+            'total_tensors': total_tensors,
+            'trainable_params': trainable_params,
+            'total_params': total_params,
+        }
+    return snapshot
+
+
 def set_group_requires_grad(model, group_name: str, requires_grad: bool) -> int:
     touched = 0
     for parameter_name, parameter in model.named_parameters():

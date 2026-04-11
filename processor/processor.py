@@ -11,6 +11,7 @@ from utils.freeze_schedule import (
     apply_loss_weight_overrides,
     apply_optimizer_lr_overrides,
     apply_phase_trainability,
+    get_group_trainability_snapshot,
     get_active_phase,
     parse_freeze_schedule_config,
 )
@@ -260,6 +261,18 @@ def do_train(
                 active_phase.lr_overrides,
                 applied_loss_weights,
             )
+            phase_groups = tuple(sorted(set(active_phase.trainable_groups + active_phase.frozen_groups)))
+            if phase_groups:
+                snapshot = get_group_trainability_snapshot(runtime_model, groups=phase_groups)
+                logger.info('Phase `%s` trainability snapshot: %s', active_phase.name, snapshot)
+                for group_name in active_phase.frozen_groups:
+                    group_stats = snapshot.get(group_name, {})
+                    if int(group_stats.get('trainable_tensors', 0)) > 0:
+                        logger.warning(
+                            'Freeze schedule requested frozen group `%s`, but it still has trainable tensors: %s',
+                            group_name,
+                            group_stats,
+                        )
             if active_phase.lr_overrides:
                 logger.info('Phase `%s` optimizer lr override hit counts: %s', active_phase.name, lr_override_summary)
             for group_summary in optimizer_groups:
