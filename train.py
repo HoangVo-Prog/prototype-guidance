@@ -26,6 +26,7 @@ from utils.iotools import save_train_configs
 from utils.launch import build_nohup_log_path, build_run_name, get_effective_wandb_run_name, launch_with_nohup
 from utils.logger import setup_logger
 from utils.metrics import Evaluator as PASEvaluator
+from utils.modular_checkpoint import ModularCheckpointManager
 from utils.options import get_args
 
 warnings.filterwarnings('ignore')
@@ -307,11 +308,19 @@ if __name__ == '__main__':
     train_loader, val_img_loader, val_txt_loader, num_classes = build_dataloader(args)
     eval_loss_loader = getattr(train_loader, 'eval_loss_loader', None)
     model = build_model(args, num_classes, train_loader=train_loader)
-    logger.info('Total params: %2.fM', sum(p.numel() for p in model.parameters()) / 1000000.0)
-    log_parameter_trainability(logger, model, args)
-    model.to(device)
-
-    if finetune_path:
+    modular_checkpoint_manager = ModularCheckpointManager(args=args, save_dir=args.output_dir, logger=logger)
+    if modular_checkpoint_manager.has_enabled_group_loading():
+        if finetune_path:
+            logger.warning(
+                'Ignoring deprecated training.finetune=%s because checkpointing.load.enabled sources are active.',
+                finetune_path,
+            )
+        modular_checkpoint_manager.load_configured_groups(model)
+    elif finetune_path:
+        logger.warning(
+            'training.finetune is deprecated as a primary load path. '
+            'Prefer checkpointing.load.sources.<group>.path for modular loads.'
+        )
         logger.info('Loading finetune checkpoint from %s', finetune_path)
         checkpoint_payload = torch.load(finetune_path, map_location='cpu')
         param_dict = _extract_finetune_model_state_dict(checkpoint_payload)
@@ -365,6 +374,9 @@ if __name__ == '__main__':
                 )
         if unexpected_keys:
             logger.warning('Finetune checkpoint has unexpected keys: %s', unexpected_keys[:20])
+    logger.info('Total params: %2.fM', sum(p.numel() for p in model.parameters()) / 1000000.0)
+    log_parameter_trainability(logger, model, args)
+    model.to(device)
     optimizer = build_optimizer(args, model)
     optimizer_group_summaries = summarize_optimizer_param_groups(optimizer)
     if use_original_itself:
@@ -451,6 +463,7 @@ if __name__ == '__main__':
                 checkpointer,
                 experiment_tracker=experiment_tracker,
                 eval_loss_loader=eval_loss_loader,
+                modular_checkpoint_manager=modular_checkpoint_manager,
             )
     finally:
         if experiment_tracker is not None:

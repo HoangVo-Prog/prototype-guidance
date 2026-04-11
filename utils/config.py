@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import yaml
 
 from utils.freeze_schedule import parse_freeze_schedule_config
+from utils.module_group_registry import CHECKPOINT_GROUPS
 from utils.precision import AMP_DTYPE_ALIASES, BACKBONE_PRECISION_ALIASES, PROTOTYPE_PRECISION_ALIASES
 
 
@@ -306,6 +307,7 @@ SECTION_TEMPLATE = {
     'dataset': {},
     'logging': {},
     'evaluation': {},
+    'checkpointing': {},
 }
 
 
@@ -314,6 +316,10 @@ AUXILIARY_SECTION_KEYS = {'loss'}
 SECTION_KEYS = set(SECTION_TEMPLATE.keys()) | AUXILIARY_SECTION_KEYS
 OBJECTIVES_NESTED_SECTION_KEYS = {'objectives', 'lambda'}
 TRAINING_NESTED_SECTION_KEYS = {'freeze_schedule'}
+CHECKPOINTING_GROUP_KEYS = set(CHECKPOINT_GROUPS)
+CHECKPOINTING_METRIC_KEYS = {'name', 'mode'}
+CHECKPOINTING_SAVE_KEYS = {'dir', 'save_latest', 'save_best', 'keep_last_n', 'artifacts'}
+CHECKPOINTING_LOAD_KEYS = {'enabled', 'strict', 'sources'}
 SUPPORTED_SPECIAL_TOKEN_ID_KEYS = {
     'bos_token_id',
     'cls_token_id',
@@ -476,6 +482,110 @@ def _validate_known_sections(config_data: Dict[str, Any]) -> None:
             raise ValueError(f'Unknown config section `{key}`. Supported sections: {sorted(SECTION_KEYS)}')
 
 
+def _validate_checkpointing_section(checkpointing_value: Any) -> None:
+    if not isinstance(checkpointing_value, dict):
+        raise ValueError('checkpointing must contain a mapping.')
+
+    allowed_root_keys = {'metric', 'groups', 'save', 'load'}
+    unknown_root_keys = sorted(set(checkpointing_value.keys()) - allowed_root_keys)
+    if unknown_root_keys:
+        raise ValueError(
+            f'Unknown checkpointing keys: {unknown_root_keys}. Allowed keys: {sorted(allowed_root_keys)}'
+        )
+
+    metric_cfg = checkpointing_value.get('metric')
+    if metric_cfg is not None:
+        if not isinstance(metric_cfg, dict):
+            raise ValueError('checkpointing.metric must be a mapping.')
+        unknown_metric_keys = sorted(set(metric_cfg.keys()) - CHECKPOINTING_METRIC_KEYS)
+        if unknown_metric_keys:
+            raise ValueError(
+                f'Unknown checkpointing.metric keys: {unknown_metric_keys}. Allowed keys: {sorted(CHECKPOINTING_METRIC_KEYS)}'
+            )
+        metric_name = metric_cfg.get('name')
+        if metric_name is not None and not isinstance(metric_name, str):
+            raise ValueError('checkpointing.metric.name must be a string.')
+        metric_mode = metric_cfg.get('mode')
+        if metric_mode is not None and str(metric_mode).lower() not in {'max', 'min'}:
+            raise ValueError('checkpointing.metric.mode must be one of: max, min.')
+
+    groups_cfg = checkpointing_value.get('groups')
+    if groups_cfg is not None:
+        if not isinstance(groups_cfg, dict):
+            raise ValueError('checkpointing.groups must be a mapping.')
+        unknown_groups = sorted(set(groups_cfg.keys()) - CHECKPOINTING_GROUP_KEYS)
+        if unknown_groups:
+            raise ValueError(
+                f'Unknown checkpointing.groups keys: {unknown_groups}. Allowed keys: {sorted(CHECKPOINTING_GROUP_KEYS)}'
+            )
+        for group_name, group_cfg in groups_cfg.items():
+            if not isinstance(group_cfg, dict):
+                raise ValueError(f'checkpointing.groups.{group_name} must be a mapping.')
+            unknown_group_keys = sorted(set(group_cfg.keys()) - {'enabled'})
+            if unknown_group_keys:
+                raise ValueError(
+                    f'Unknown checkpointing.groups.{group_name} keys: {unknown_group_keys}. Allowed keys: ["enabled"]'
+                )
+
+    save_cfg = checkpointing_value.get('save')
+    if save_cfg is not None:
+        if not isinstance(save_cfg, dict):
+            raise ValueError('checkpointing.save must be a mapping.')
+        unknown_save_keys = sorted(set(save_cfg.keys()) - CHECKPOINTING_SAVE_KEYS)
+        if unknown_save_keys:
+            raise ValueError(
+                f'Unknown checkpointing.save keys: {unknown_save_keys}. Allowed keys: {sorted(CHECKPOINTING_SAVE_KEYS)}'
+            )
+        artifacts_cfg = save_cfg.get('artifacts')
+        if artifacts_cfg is not None:
+            if not isinstance(artifacts_cfg, dict):
+                raise ValueError('checkpointing.save.artifacts must be a mapping.')
+            unknown_artifact_groups = sorted(set(artifacts_cfg.keys()) - CHECKPOINTING_GROUP_KEYS)
+            if unknown_artifact_groups:
+                raise ValueError(
+                    f'Unknown checkpointing.save.artifacts groups: {unknown_artifact_groups}. '
+                    f'Allowed keys: {sorted(CHECKPOINTING_GROUP_KEYS)}'
+                )
+            for group_name, artifact_cfg in artifacts_cfg.items():
+                if not isinstance(artifact_cfg, dict):
+                    raise ValueError(f'checkpointing.save.artifacts.{group_name} must be a mapping.')
+                unknown_artifact_keys = sorted(set(artifact_cfg.keys()) - {'enabled', 'filename_latest', 'filename_best'})
+                if unknown_artifact_keys:
+                    raise ValueError(
+                        f'Unknown checkpointing.save.artifacts.{group_name} keys: {unknown_artifact_keys}. '
+                        'Allowed keys: ["enabled", "filename_latest", "filename_best"]'
+                    )
+
+    load_cfg = checkpointing_value.get('load')
+    if load_cfg is not None:
+        if not isinstance(load_cfg, dict):
+            raise ValueError('checkpointing.load must be a mapping.')
+        unknown_load_keys = sorted(set(load_cfg.keys()) - CHECKPOINTING_LOAD_KEYS)
+        if unknown_load_keys:
+            raise ValueError(
+                f'Unknown checkpointing.load keys: {unknown_load_keys}. Allowed keys: {sorted(CHECKPOINTING_LOAD_KEYS)}'
+            )
+        sources_cfg = load_cfg.get('sources')
+        if sources_cfg is not None:
+            if not isinstance(sources_cfg, dict):
+                raise ValueError('checkpointing.load.sources must be a mapping.')
+            unknown_source_groups = sorted(set(sources_cfg.keys()) - CHECKPOINTING_GROUP_KEYS)
+            if unknown_source_groups:
+                raise ValueError(
+                    f'Unknown checkpointing.load.sources groups: {unknown_source_groups}. '
+                    f'Allowed keys: {sorted(CHECKPOINTING_GROUP_KEYS)}'
+                )
+            for group_name, source_cfg in sources_cfg.items():
+                if not isinstance(source_cfg, dict):
+                    raise ValueError(f'checkpointing.load.sources.{group_name} must be a mapping.')
+                unknown_source_keys = sorted(set(source_cfg.keys()) - {'enabled', 'path'})
+                if unknown_source_keys:
+                    raise ValueError(
+                        f'Unknown checkpointing.load.sources.{group_name} keys: {unknown_source_keys}. '
+                        'Allowed keys: ["enabled", "path"]'
+                    )
+
+
 def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
     supported_paths = set(PRIMARY_CONFIG_KEY_MAP.keys()) | set(READ_ALIAS_CONFIG_KEY_MAP.keys())
     supported_leafs = {(path[0], path[1]) for path in supported_paths if len(path) == 2}
@@ -486,6 +596,11 @@ def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
 
         for key, value in section_value.items():
             path = (section_name, key)
+
+            if section_name == 'checkpointing':
+                # Full nested validation is handled at section-level because this config is intentionally hierarchical.
+                _validate_checkpointing_section(section_value)
+                break
 
             if path == ('text_pooling', 'special_token_ids'):
                 if not isinstance(value, dict):
@@ -769,6 +884,9 @@ def build_runtime_config(args) -> Dict[str, Any]:
     freeze_schedule = getattr(args, 'freeze_schedule', None)
     if freeze_schedule is not None:
         config.setdefault('training', {})['freeze_schedule'] = copy.deepcopy(freeze_schedule)
+    checkpointing = getattr(args, 'checkpointing', None)
+    if isinstance(checkpointing, dict) and checkpointing:
+        config['checkpointing'] = copy.deepcopy(checkpointing)
     return config
 
 

@@ -1,4 +1,4 @@
-# Canonical single config file.
+﻿# Canonical single config file.
 # Decision policy:
 # - Keep: ITSELF hyperparameters from adapter/WACV2026-Oral-ITSELF/utils/options.py
 # - Keep: shared training-process/runtime controls from this repo (optimizer scheduler logging eval process)
@@ -119,12 +119,10 @@ training:
   batch_size: 128
   epochs: 60
   log_period: 50
-  prototype_selection_metric: R1
   eval_frequency: 1
   save_interval: 1
   resume: false
   resume_ckpt_file: ''
-  finetune: ''
   pretrain: ''
   img_aug: true
   txt_aug: true
@@ -264,4 +262,5 @@ evaluation:
   prototype_image_chunk_size: 32
   prototype_text_chunk_size: 128
   retrieval_scorer: exact
+
 

@@ -13,6 +13,7 @@ from utils.checkpoint import Checkpointer
 from utils.env import load_runtime_environment
 from utils.iotools import load_train_configs
 from utils.logger import setup_logger
+from utils.modular_checkpoint import ModularCheckpointManager
 from utils.options import get_args
 
 
@@ -62,13 +63,16 @@ if __name__ == '__main__':
     else:
         test_img_loader, test_txt_loader, num_classes = build_dataloader(args)
 
-    checkpoint_path = args.checkpoint or op.join(args.output_dir, 'best.pth')
-    if not op.exists(checkpoint_path):
-        raise FileNotFoundError(f'Checkpoint not found: {checkpoint_path}')
-
     model = build_model(args, num_classes)
-    checkpointer = Checkpointer(model)
-    checkpointer.load(f=checkpoint_path)
+    modular_checkpoint_manager = ModularCheckpointManager(args=args, save_dir=args.output_dir, logger=logger)
+    if modular_checkpoint_manager.has_enabled_group_loading():
+        modular_checkpoint_manager.load_configured_groups(model)
+    else:
+        checkpoint_path = args.checkpoint or op.join(args.output_dir, 'best.pth')
+        if not op.exists(checkpoint_path):
+            raise FileNotFoundError(f'Checkpoint not found: {checkpoint_path}')
+        checkpointer = Checkpointer(model)
+        checkpointer.load(f=checkpoint_path)
     model = model.to(device)
     if use_original_itself:
         do_inference_fn = get_original_itself_inference_fn(args)

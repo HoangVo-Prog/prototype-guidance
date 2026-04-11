@@ -167,7 +167,7 @@ def build_parser():
         dest='prototype_selection_metric',
         type=str,
         default=None,
-        help='Optional val metric(s) for prototype best checkpoint selection: L_total, L_diag, or R1. Use comma-separated values (e.g., R1,L_total,L_diag) or ALL.',
+        help='Deprecated. Use checkpointing.metric/checkpointing.save for modular best/latest checkpointing.',
     )
     parser.add_argument('--grad_clip', type=float, default=1.0)
     parser.add_argument('--amp', type=_str2bool, nargs='?', const=True, default=False)
@@ -286,6 +286,8 @@ def _finalize_args(args):
     args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
     config_data = getattr(args, 'config_data', {}) or {}
     training_config = config_data.get('training', {}) if isinstance(config_data.get('training', {}), dict) else {}
+    checkpointing_config = config_data.get('checkpointing', {}) if isinstance(config_data.get('checkpointing', {}), dict) else {}
+    args.checkpointing = copy.deepcopy(checkpointing_config)
     freeze_schedule = training_config.get('freeze_schedule')
     args.freeze_schedule = copy.deepcopy(freeze_schedule) if freeze_schedule is not None else None
     selection_metric = getattr(args, 'prototype_selection_metric', None)
