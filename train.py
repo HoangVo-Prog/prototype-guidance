@@ -332,6 +332,8 @@ if __name__ == '__main__':
             len(missing_keys),
             len(unexpected_keys),
         )
+        if missing_keys:
+            logger.info('Finetune missing model keys (all): %s', missing_keys)
         if remap_stats['skipped_shape_mismatch_keys']:
             logger.warning(
                 'Finetune skipped shape-mismatched keys (all): %s',
