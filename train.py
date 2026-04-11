@@ -191,6 +191,9 @@ if __name__ == '__main__':
     logger.info('Using %s GPUs', num_gpus)
     logger.info('W&B/log run name: %s', get_effective_wandb_run_name(args))
     logger.info(str(args).replace(',', '\n'))
+    finetune_path = str(getattr(args, 'finetune', '') or '').strip()
+    if finetune_path:
+        logger.info('Finetuning enabled (training.finetune): %s', finetune_path)
     if use_original_itself:
         _bridge_original_itself_loggers(logger)
         module_paths = get_original_itself_module_paths()
@@ -216,9 +219,9 @@ if __name__ == '__main__':
     log_parameter_trainability(logger, model, args)
     model.to(device)
 
-    if args.finetune:
-        logger.info('Loading finetune checkpoint from %s', args.finetune)
-        param_dict = torch.load(args.finetune, map_location='cpu')['model']
+    if finetune_path:
+        logger.info('Loading finetune checkpoint from %s', finetune_path)
+        param_dict = torch.load(finetune_path, map_location='cpu')['model']
         refined = {}
         for key, value in param_dict.items():
             refined[key.replace('module.', '')] = value.detach().clone()
