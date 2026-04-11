@@ -16,6 +16,7 @@ from model.hosts import (
     prepare_itself_legacy_args,
     should_use_original_itself_runtime,
 )
+from model.prototype import init_mode_requires_data
 from processor.processor import do_train as do_train_pas
 from solver import build_lr_scheduler, build_optimizer, summarize_optimizer_param_groups
 from utils.checkpoint import Checkpointer
@@ -284,6 +285,7 @@ if __name__ == '__main__':
     logger.info('Using %s GPUs', num_gpus)
     logger.info('W&B/log run name: %s', get_effective_wandb_run_name(args))
     logger.info(str(args).replace(',', '\n'))
+    modular_checkpoint_manager = ModularCheckpointManager(args=args, save_dir=args.output_dir, logger=logger)
     finetune_path = str(getattr(args, 'finetune', '') or '').strip()
     if finetune_path:
         logger.info('Finetuning enabled (training.finetune): %s', finetune_path)
@@ -298,17 +300,30 @@ if __name__ == '__main__':
             module_paths['metrics'],
         )
 
-    save_train_configs(args.output_dir, args)
-    os.makedirs(op.join(args.output_dir, 'img'), exist_ok=True)
-
     experiment_tracker = None
     if not use_original_itself:
         experiment_tracker = ExperimentTracker(args, args.output_dir, distributed_rank=get_rank())
 
+    if bool(getattr(args, 'use_prototype_bank', False)) and modular_checkpoint_manager.has_group_loading_enabled('prototype_bank'):
+        init_mode = str(getattr(args, 'prototype_init', 'normalized_random'))
+        init_path = str(getattr(args, 'prototype_init_path', '') or '').strip()
+        if init_mode_requires_data(init_mode) and not init_path:
+            source_cfg = modular_checkpoint_manager.get_group_load_source('prototype_bank')
+            source_path = str(source_cfg.get('path', '') or '').strip()
+            logger.info(
+                'Prototype-bank checkpoint load is enabled (path=%s); overriding prototype_init from %s to normalized_random '
+                'to skip automatic train-image-embedding fallback before checkpoint restore.',
+                source_path,
+                init_mode,
+            )
+            args.prototype_init = 'normalized_random'
+
+    save_train_configs(args.output_dir, args)
+    os.makedirs(op.join(args.output_dir, 'img'), exist_ok=True)
+
     train_loader, val_img_loader, val_txt_loader, num_classes = build_dataloader(args)
     eval_loss_loader = getattr(train_loader, 'eval_loss_loader', None)
     model = build_model(args, num_classes, train_loader=train_loader)
-    modular_checkpoint_manager = ModularCheckpointManager(args=args, save_dir=args.output_dir, logger=logger)
     if modular_checkpoint_manager.has_enabled_group_loading():
         if finetune_path:
             logger.warning(

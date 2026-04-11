@@ -327,6 +327,19 @@ class ModularCheckpointManager:
                 return True
         return False
 
+    def get_group_load_source(self, group_name: str):
+        if group_name not in CHECKPOINT_GROUPS:
+            return {}
+        return self.config.get('load', {}).get('sources', {}).get(group_name, {}) or {}
+
+    def has_group_loading_enabled(self, group_name: str):
+        if group_name not in CHECKPOINT_GROUPS:
+            return False
+        if not bool(self.config.get('load', {}).get('enabled', False)):
+            return False
+        source_cfg = self.get_group_load_source(group_name)
+        return bool(source_cfg.get('enabled', False)) and bool(source_cfg.get('path'))
+
     def load_configured_groups(self, model):
         if not bool(self.config.get('load', {}).get('enabled', False)):
             self.logger.info('Modular checkpoint loading disabled (checkpointing.load.enabled=false).')
