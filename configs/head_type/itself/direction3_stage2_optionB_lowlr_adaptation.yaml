@@ -35,7 +35,6 @@ model:
   use_image_conditioned_pooling: true
   return_debug_outputs: false
 
-  training_mode: pas
 host:
   type: itself
   freeze_projectors: false
@@ -46,11 +45,11 @@ host:
   itself_score_weight_global: 0.32
   itself_tau: 0.015
   itself_margin: 0.1
-  itself_return_all: false
-  itself_topk_type: mean
+  itself_return_all: true
+  itself_topk_type: custom
   itself_layer_index: -1
   itself_average_attn_weights: true
-  itself_modify_k: false
+  itself_modify_k: true
   itself_lambda1_weight: 0.5
   itself_lambda2_weight: 3.5
 

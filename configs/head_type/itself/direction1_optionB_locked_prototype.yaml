@@ -35,7 +35,6 @@ model:
   use_image_conditioned_pooling: true
   return_debug_outputs: false
 
-  training_mode: pas
 host:
   type: itself
   freeze_projectors: false
