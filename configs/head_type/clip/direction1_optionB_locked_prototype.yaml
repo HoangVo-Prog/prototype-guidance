@@ -116,7 +116,6 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  log_debug_metrics: true
   batch_size: 128
   epochs: 60
   log_period: 50
@@ -251,7 +250,7 @@ logging:
     controls.
   log_interval: 50
   log_code: false
-  log_debug_metrics: false
+  log_debug_metrics: true
 
 evaluation:
   checkpoint_path: ''
