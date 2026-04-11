@@ -72,9 +72,16 @@ prototype:
   dead_prototype_threshold: 0.005
 
 fusion:
-  enabled: false
-  coefficient: 0.0
+  enabled: true
+  lambda_host: 0.50
+  lambda_prototype: 0.50
   coefficient_source: fixed
+  eval_subsets:
+    - { name: "host_only", lambda_host: 1.00, lambda_prototype: 0.00 }
+    - { name: "proto_010", lambda_host: 0.90, lambda_prototype: 0.10 }
+    - { name: "proto_020", lambda_host: 0.80, lambda_prototype: 0.20 }
+    - { name: "proto_030", lambda_host: 0.70, lambda_prototype: 0.30 }
+    - { name: "proto_100", lambda_host: 0.00, lambda_prototype: 1.00 }
 
 objectives:
   objectives:

@@ -72,9 +72,11 @@ prototype:
   dead_prototype_threshold: 0.005
 
 fusion:
-  enabled: false
-  coefficient: 0.0
+  enabled: true
+  lambda_host: 1.0
+  lambda_prototype: 0.0
   coefficient_source: fixed
+  eval_subsets:
 
 objectives:
   objectives:

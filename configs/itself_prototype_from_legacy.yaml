@@ -74,8 +74,10 @@ prototype:
 
 fusion:
   enabled: true
-  coefficient: 1.0
+  lambda_host: 1.0
+  lambda_prototype: 0.0
   coefficient_source: fixed
+  eval_subsets:
 
 objectives:
   objectives:

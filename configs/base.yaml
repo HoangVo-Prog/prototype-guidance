@@ -72,8 +72,9 @@ prototype:
   dead_prototype_threshold: 0.005
 
 fusion:
-  enabled: false
-  coefficient: 0.0
+  enabled: true
+  lambda_host: 0.50
+  lambda_prototype: 0.50
   coefficient_source: fixed
 
 objectives:
