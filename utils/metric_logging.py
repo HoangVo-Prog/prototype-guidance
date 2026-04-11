@@ -43,6 +43,8 @@ DEBUG_METRIC_MAP = {
     'host_logit_scale': 'debug/host_logit_scale',
     'host_retrieval_temperature': 'debug/host_retrieval_temperature',
     'fusion_coefficient': 'debug/fusion_coefficient',
+    'fusion_lambda_host': 'debug/fusion_lambda_host',
+    'fusion_lambda_prototype': 'debug/fusion_lambda_prototype',
     'host_loss_total': 'debug/host_loss_total',
     'host_loss_ret': 'debug/host_loss_ret',
     'proxy_temperature': 'debug/proxy_temperature',
@@ -310,6 +312,8 @@ _TRAIN_MODEL_KEYS = {
     'host_logit_scale',
     'host_retrieval_temperature',
     'fusion_coefficient',
+    'fusion_lambda_host',
+    'fusion_lambda_prototype',
     'proxy_temperature',
     'retrieval_temperature',
     'host_loss_total',
@@ -724,6 +728,5 @@ def build_validation_metrics(
         for metric_key, metric_value in evaluator.latest_metrics.items():
             metrics[map_validation_metric_key(metric_key)] = metric_value
     return metrics
-
 
 

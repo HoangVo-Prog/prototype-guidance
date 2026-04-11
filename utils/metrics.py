@@ -1,4 +1,6 @@
 import logging
+import re
+from typing import Dict, List, Optional, Tuple
 
 from prettytable import PrettyTable
 import torch
@@ -90,6 +92,88 @@ class Evaluator:
                 'evaluation.retrieval_scorer=approximate requires an active prototype bank; falling back to exact retrieval scoring.'
             )
             self.retrieval_scorer = 'exact'
+        (
+            self.default_fusion_lambda_host,
+            self.default_fusion_lambda_prototype,
+        ) = self._resolve_default_fusion_weights()
+        self.eval_fusion_subsets = self._resolve_fusion_eval_subsets()
+
+    @staticmethod
+    def _pair_close(lhs: float, rhs: float, tol: float = 1e-6) -> bool:
+        return abs(float(lhs) - float(rhs)) <= tol
+
+    @classmethod
+    def _pair_key(cls, lambda_host: float, lambda_prototype: float) -> Tuple[int, int]:
+        return (int(round(float(lambda_host) * 1_000_000)), int(round(float(lambda_prototype) * 1_000_000)))
+
+    @classmethod
+    def _validate_unit_subset_pair(cls, lambda_host: float, lambda_prototype: float, field_name: str) -> None:
+        if lambda_host < 0.0 or lambda_host > 1.0:
+            raise ValueError(f'{field_name}.lambda_host must be within [0, 1], got {lambda_host}.')
+        if lambda_prototype < 0.0 or lambda_prototype > 1.0:
+            raise ValueError(f'{field_name}.lambda_prototype must be within [0, 1], got {lambda_prototype}.')
+        pair_sum = lambda_host + lambda_prototype
+        if not cls._pair_close(pair_sum, 1.0):
+            raise ValueError(f'{field_name}.lambda_host + {field_name}.lambda_prototype must equal 1.0, got {pair_sum}.')
+
+    def _resolve_default_fusion_weights(self) -> Tuple[float, float]:
+        lambda_host = getattr(self.args, 'fusion_lambda_host', None)
+        lambda_prototype = getattr(self.args, 'fusion_lambda_prototype', None)
+        if lambda_host is None and lambda_prototype is None:
+            legacy_coefficient = getattr(self.args, 'fusion_coefficient', None)
+            if legacy_coefficient is not None:
+                return 1.0, float(legacy_coefficient)
+            if bool(getattr(self.args, 'use_prototype_branch', False)):
+                return 1.0, 1.0
+            return 1.0, 0.0
+        if lambda_host is None:
+            return 1.0 - float(lambda_prototype), float(lambda_prototype)
+        if lambda_prototype is None:
+            return float(lambda_host), 1.0 - float(lambda_host)
+        return float(lambda_host), float(lambda_prototype)
+
+    def _resolve_fusion_eval_subsets(self) -> List[Dict[str, object]]:
+        raw_subsets = getattr(self.args, 'fusion_eval_subsets', None)
+        if raw_subsets is None:
+            return []
+        if not isinstance(raw_subsets, list):
+            raise ValueError('fusion_eval_subsets must be a list of subset mappings.')
+        normalized = []
+        for subset_index, subset in enumerate(raw_subsets):
+            field_name = f'fusion_eval_subsets[{subset_index}]'
+            if not isinstance(subset, dict):
+                raise ValueError(f'{field_name} must be a mapping.')
+            if 'lambda_host' not in subset or 'lambda_prototype' not in subset:
+                raise ValueError(f'{field_name} must include lambda_host and lambda_prototype.')
+            lambda_host = float(subset['lambda_host'])
+            lambda_prototype = float(subset['lambda_prototype'])
+            self._validate_unit_subset_pair(lambda_host, lambda_prototype, field_name=field_name)
+            subset_name = subset.get('name')
+            if subset_name is not None and not isinstance(subset_name, str):
+                raise ValueError(f'{field_name}.name must be a string when provided.')
+            normalized.append(
+                {
+                    'name': subset_name.strip() if isinstance(subset_name, str) else None,
+                    'lambda_host': lambda_host,
+                    'lambda_prototype': lambda_prototype,
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _metric_slug(value: str) -> str:
+        normalized = re.sub(r'[^a-zA-Z0-9]+', '_', str(value).strip().lower()).strip('_')
+        return normalized or 'row'
+
+    @classmethod
+    def _format_fusion_row_name(cls, lambda_host: float, lambda_prototype: float) -> str:
+        if cls._pair_close(lambda_host, 1.0) and cls._pair_close(lambda_prototype, 0.0):
+            return 'host-t2i'
+        if cls._pair_close(lambda_host, 0.0) and cls._pair_close(lambda_prototype, 1.0):
+            return 'prototype-t2i'
+        if cls._pair_close(lambda_host + lambda_prototype, 1.0):
+            return f'host+prototype({lambda_prototype:.2f})-t2i'
+        return f'host({lambda_host:.2f})+prototype({lambda_prototype:.2f})-t2i'
 
     def _concat_feature_batches(self, batches):
         first = batches[0]
@@ -223,6 +307,111 @@ class Evaluator:
 
         return build_validation_debug_metrics(metrics)
 
+    def _check_similarity_matrix(self, similarity: torch.Tensor, expected_shape: Tuple[int, int], field_name: str) -> torch.Tensor:
+        if not isinstance(similarity, torch.Tensor):
+            raise TypeError(f'{field_name} must be a tensor.')
+        if tuple(similarity.shape) != expected_shape:
+            raise ValueError(
+                f'{field_name} has shape {tuple(similarity.shape)} but expected {expected_shape} '
+                'from concatenated text/image ordering.'
+            )
+        if not torch.isfinite(similarity).all():
+            raise FloatingPointError(f'{field_name} contains NaN or Inf values after evaluation.')
+        return similarity.float().cpu()
+
+    def _fuse_from_components(
+        self,
+        model,
+        host_similarity: torch.Tensor,
+        prototype_similarity: Optional[torch.Tensor],
+        lambda_host: float,
+        lambda_prototype: float,
+    ) -> torch.Tensor:
+        core_model = model.module if hasattr(model, 'module') else model
+        if hasattr(core_model, 'fuse_retrieval_similarity'):
+            return core_model.fuse_retrieval_similarity(
+                host_similarity=host_similarity,
+                prototype_similarity=prototype_similarity,
+                lambda_host=lambda_host,
+                lambda_prototype=lambda_prototype,
+            ).float()
+
+        if prototype_similarity is None:
+            if abs(lambda_prototype) > 1e-12:
+                raise RuntimeError(
+                    'prototype_similarity is unavailable for this model, but lambda_prototype is non-zero '
+                    f'({lambda_prototype}).'
+                )
+            return (lambda_host * host_similarity).float()
+
+        if host_similarity.shape != prototype_similarity.shape:
+            raise ValueError('Host and prototype similarities must have identical shapes for fusion sweep.')
+        return ((lambda_host * host_similarity) + (lambda_prototype * prototype_similarity)).float()
+
+    def _build_similarity_rows(
+        self,
+        model,
+        host_similarity: Optional[torch.Tensor],
+        prototype_similarity: Optional[torch.Tensor],
+        default_similarity: torch.Tensor,
+    ) -> List[Tuple[str, torch.Tensor]]:
+        rows: List[Tuple[str, torch.Tensor]] = [('pas-t2i', default_similarity.float().cpu())]
+        if not isinstance(host_similarity, torch.Tensor):
+            return rows
+
+        host_similarity = host_similarity.float().cpu()
+        prototype_similarity = prototype_similarity.float().cpu() if isinstance(prototype_similarity, torch.Tensor) else None
+
+        candidate_specs: List[Dict[str, object]] = [
+            {'name': 'host-t2i', 'lambda_host': 1.0, 'lambda_prototype': 0.0},
+        ]
+        if prototype_similarity is not None:
+            candidate_specs.append({'name': 'prototype-t2i', 'lambda_host': 0.0, 'lambda_prototype': 1.0})
+        candidate_specs.extend(self.eval_fusion_subsets)
+        candidate_specs.append(
+            {
+                'name': None,
+                'lambda_host': self.default_fusion_lambda_host,
+                'lambda_prototype': self.default_fusion_lambda_prototype,
+            }
+        )
+
+        emitted_names = {'pas-t2i'}
+        emitted_pairs = set()
+        for spec in candidate_specs:
+            lambda_host = float(spec['lambda_host'])
+            lambda_prototype = float(spec['lambda_prototype'])
+            pair_key = self._pair_key(lambda_host, lambda_prototype)
+            if pair_key in emitted_pairs:
+                continue
+            if prototype_similarity is None and abs(lambda_prototype) > 1e-12:
+                self.logger.warning(
+                    'Skipping fusion subset (lambda_host=%.4f, lambda_prototype=%.4f): prototype similarity is unavailable.',
+                    lambda_host,
+                    lambda_prototype,
+                )
+                continue
+
+            similarity = self._fuse_from_components(
+                model=model,
+                host_similarity=host_similarity,
+                prototype_similarity=prototype_similarity,
+                lambda_host=lambda_host,
+                lambda_prototype=lambda_prototype,
+            ).cpu()
+            row_name = spec.get('name') or self._format_fusion_row_name(lambda_host, lambda_prototype)
+            row_name = str(row_name).strip() or self._format_fusion_row_name(lambda_host, lambda_prototype)
+            if not row_name.endswith('-t2i'):
+                row_name = f'{row_name}-t2i'
+            if row_name in emitted_names:
+                row_name = self._format_fusion_row_name(lambda_host, lambda_prototype)
+            if row_name in emitted_names:
+                row_name = f'{row_name}-{len(emitted_names)}'
+            rows.append((row_name, similarity))
+            emitted_pairs.add(pair_key)
+            emitted_names.add(row_name)
+        return rows
+
     def _compute_similarity(self, model):
         model = model.eval()
         device = next(model.parameters()).device
@@ -264,31 +453,71 @@ class Evaluator:
         text_features = self._feature_to_device(text_features, device)
         image_features = self._feature_to_device(image_features, device)
 
+        core_model = model.module if hasattr(model, 'module') else model
+        host_similarity = None
+        prototype_similarity = None
         with torch.no_grad():
             with build_autocast_context(self.args, device):
                 if self.retrieval_scorer == 'approximate':
-                    similarity = model.compute_approximate_retrieval_similarity(image_features, text_features).cpu()
+                    if hasattr(core_model, 'compute_approximate_retrieval_similarity_components'):
+                        host_similarity, prototype_similarity = core_model.compute_approximate_retrieval_similarity_components(
+                            image_features,
+                            text_features,
+                        )
+                        similarity = self._fuse_from_components(
+                            model=model,
+                            host_similarity=host_similarity,
+                            prototype_similarity=prototype_similarity,
+                            lambda_host=self.default_fusion_lambda_host,
+                            lambda_prototype=self.default_fusion_lambda_prototype,
+                        )
+                    else:
+                        similarity = model.compute_approximate_retrieval_similarity(image_features, text_features)
                 else:
-                    similarity = model.compute_retrieval_similarity(image_features, text_features).cpu()
+                    if hasattr(core_model, 'compute_retrieval_similarity_components'):
+                        host_similarity, prototype_similarity = core_model.compute_retrieval_similarity_components(
+                            image_features,
+                            text_features,
+                        )
+                        similarity = self._fuse_from_components(
+                            model=model,
+                            host_similarity=host_similarity,
+                            prototype_similarity=prototype_similarity,
+                            lambda_host=self.default_fusion_lambda_host,
+                            lambda_prototype=self.default_fusion_lambda_prototype,
+                        )
+                    else:
+                        similarity = model.compute_retrieval_similarity(image_features, text_features)
 
         expected_shape = (int(text_ids.numel()), int(image_ids.numel()))
-        if tuple(similarity.shape) != expected_shape:
-            raise ValueError(
-                f'Retrieval similarity has shape {tuple(similarity.shape)} but expected {expected_shape} '
-                'from concatenated text/image ordering.'
-            )
-        if not torch.isfinite(similarity).all():
-            raise FloatingPointError('Retrieval similarity contains NaN or Inf values after evaluation.')
+        similarity = self._check_similarity_matrix(similarity, expected_shape, field_name='Retrieval similarity')
+        if isinstance(host_similarity, torch.Tensor):
+            host_similarity = self._check_similarity_matrix(host_similarity, expected_shape, field_name='Host retrieval similarity')
+        if isinstance(prototype_similarity, torch.Tensor):
+            prototype_similarity = self._check_similarity_matrix(prototype_similarity, expected_shape, field_name='Prototype retrieval similarity')
 
+        similarity_rows = self._build_similarity_rows(
+            model=model,
+            host_similarity=host_similarity,
+            prototype_similarity=prototype_similarity,
+            default_similarity=similarity,
+        )
         debug_metrics = self._compute_eval_debug_metrics(model, similarity, text_ids, image_ids, image_features, text_features)
-        return similarity, text_ids, image_ids, debug_metrics
+        return similarity_rows, text_ids, image_ids, debug_metrics
 
     def eval(self, model):
-        similarity, text_ids, image_ids, debug_metrics = self._compute_similarity(model)
-        metrics = get_metrics(similarity, text_ids, image_ids, 'pas-t2i')
+        similarity_rows, text_ids, image_ids, debug_metrics = self._compute_similarity(model)
+        metrics_rows = [
+            get_metrics(similarity=row_similarity, qids=text_ids, gids=image_ids, name=row_name)
+            for row_name, row_similarity in similarity_rows
+        ]
+        if not metrics_rows:
+            raise RuntimeError('Evaluation produced no similarity rows.')
+        metrics = metrics_rows[0]
 
         table = PrettyTable(['task'] + list(self.requested_metrics))
-        table.add_row([metrics['task']] + [metrics[metric_name] for metric_name in self.requested_metrics])
+        for row_metrics in metrics_rows:
+            table.add_row([row_metrics['task']] + [row_metrics[metric_name] for metric_name in self.requested_metrics])
         for metric_name in self.requested_metrics:
             table.custom_format[metric_name] = lambda _, value: f'{value:.2f}'
 
@@ -298,6 +527,15 @@ class Evaluator:
         }
         self.latest_metrics = build_validation_retrieval_metrics(retrieval_metrics)
         self.latest_metrics['val/top1'] = metrics['R1']
+        for row_metrics in metrics_rows:
+            row_slug = self._metric_slug(row_metrics['task'])
+            for metric_name in self.requested_metrics:
+                self.latest_metrics[f'val/retrieval_sweep/{row_slug}/{metric_name}'] = float(row_metrics[metric_name])
+            self.logger.info(
+                'Retrieval row [%s]: %s',
+                row_metrics['task'],
+                {metric_name: float(row_metrics[metric_name]) for metric_name in self.requested_metrics},
+            )
         self.latest_metrics.update(debug_metrics)
 
         self.logger.info('\n' + str(table))

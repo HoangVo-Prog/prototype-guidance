@@ -124,7 +124,9 @@ def build_parser():
     parser.add_argument('--use_prototype_bank', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_image_conditioned_pooling', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--fusion_enabled', type=_str2bool, nargs='?', const=True, default=None)
-    parser.add_argument('--fusion_coefficient', type=float, default=1.0)
+    parser.add_argument('--fusion_lambda_host', type=float, default=None)
+    parser.add_argument('--fusion_lambda_prototype', type=float, default=None)
+    parser.add_argument('--fusion_coefficient', type=float, default=None)
     parser.add_argument('--fusion_coefficient_source', type=str, default='fixed')
     parser.add_argument('--use_prototype_contextualization', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--return_debug_outputs', type=_str2bool, nargs='?', const=True, default=False)
@@ -302,6 +304,29 @@ def _finalize_args(args):
     if args.fusion_enabled is None:
         args.fusion_enabled = args.use_prototype_branch
     args.fusion_enabled = bool(args.fusion_enabled) and args.use_prototype_branch
+    fusion_lambda_host = getattr(args, 'fusion_lambda_host', None)
+    fusion_lambda_prototype = getattr(args, 'fusion_lambda_prototype', None)
+    fusion_coefficient = getattr(args, 'fusion_coefficient', None)
+    if fusion_lambda_host is None and fusion_lambda_prototype is not None:
+        fusion_lambda_host = 1.0 - float(fusion_lambda_prototype)
+    elif fusion_lambda_prototype is None and fusion_lambda_host is not None:
+        fusion_lambda_prototype = 1.0 - float(fusion_lambda_host)
+
+    if fusion_lambda_host is not None or fusion_lambda_prototype is not None:
+        args.fusion_lambda_host = float(fusion_lambda_host)
+        args.fusion_lambda_prototype = float(fusion_lambda_prototype)
+        args.fusion_legacy_coefficient_mode = False
+    elif fusion_coefficient is not None:
+        args.fusion_lambda_host = 1.0
+        args.fusion_lambda_prototype = float(fusion_coefficient)
+        args.fusion_legacy_coefficient_mode = True
+    else:
+        args.fusion_lambda_host = 1.0
+        args.fusion_lambda_prototype = 0.0
+        args.fusion_legacy_coefficient_mode = False
+    if fusion_coefficient is None:
+        args.fusion_coefficient = float(args.fusion_lambda_prototype)
+    args.fusion_eval_subsets = copy.deepcopy(getattr(args, 'fusion_eval_subsets', None))
 
     legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)
     authoritative_contextualization = getattr(args, 'prototype_contextualization_enabled', None)

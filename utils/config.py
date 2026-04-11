@@ -75,7 +75,9 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'dead_prototype_threshold'): 'prototype_dead_threshold',
 
     ('fusion', 'enabled'): 'fusion_enabled',
-    ('fusion', 'coefficient'): 'fusion_coefficient',
+    ('fusion', 'lambda_host'): 'fusion_lambda_host',
+    ('fusion', 'lambda_prototype'): 'fusion_lambda_prototype',
+    ('fusion', 'eval_subsets'): 'fusion_eval_subsets',
     ('fusion', 'coefficient_source'): 'fusion_coefficient_source',
 
     ('objectives', 'objectives', 'use_host_loss'): 'use_host_loss',
@@ -289,6 +291,7 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('host', 'enabled'): 'use_host_loss',
     ('host', 'loss_weight'): 'lambda_host',
     ('training', 'val_dataset'): 'val_dataset',
+    ('fusion', 'coefficient'): 'fusion_coefficient',
 }
 
 SECTION_TEMPLATE = {
@@ -447,6 +450,118 @@ def _validate_retrieval_metrics_value(field_name: str, value: Any) -> None:
         raise ValueError(
             f'Invalid value for {field_name}: {invalid_values!r}. Allowed values: {_format_allowed_values(allowed_values)}'
         )
+
+
+FUSION_WEIGHT_SUM_TOLERANCE = 1e-6
+
+
+def _coerce_float(field_name: str, value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f'{field_name} must be a float, got {value!r}.')
+
+
+def _validate_fusion_weight_value(field_name: str, value: Any) -> float:
+    scalar = _coerce_float(field_name, value)
+    if scalar < 0.0 or scalar > 1.0:
+        raise ValueError(f'{field_name} must be within [0, 1], got {scalar}.')
+    return scalar
+
+
+def _validate_fusion_weight_pair(
+    field_prefix: str,
+    lambda_host: Any,
+    lambda_prototype: Any,
+    require_unit_sum: bool = True,
+) -> Tuple[float, float]:
+    host_weight = _validate_fusion_weight_value(f'{field_prefix}.lambda_host', lambda_host)
+    prototype_weight = _validate_fusion_weight_value(f'{field_prefix}.lambda_prototype', lambda_prototype)
+    if require_unit_sum:
+        pair_sum = host_weight + prototype_weight
+        if abs(pair_sum - 1.0) > FUSION_WEIGHT_SUM_TOLERANCE:
+            raise ValueError(
+                f'{field_prefix}.lambda_host + {field_prefix}.lambda_prototype must equal 1.0 '
+                f'(tolerance={FUSION_WEIGHT_SUM_TOLERANCE}), got {pair_sum}.'
+            )
+    return host_weight, prototype_weight
+
+
+def _validate_fusion_eval_subsets(field_name: str, value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise ValueError(f'{field_name} must be a list of subset mappings.')
+    for subset_index, subset in enumerate(value):
+        subset_prefix = f'{field_name}[{subset_index}]'
+        if not isinstance(subset, dict):
+            raise ValueError(f'{subset_prefix} must be a mapping.')
+        unknown_keys = sorted(set(subset.keys()) - {'name', 'lambda_host', 'lambda_prototype'})
+        if unknown_keys:
+            raise ValueError(
+                f'Unknown keys in {subset_prefix}: {unknown_keys}. '
+                'Allowed keys: ["name", "lambda_host", "lambda_prototype"]'
+            )
+        if 'name' in subset and subset['name'] is not None and not isinstance(subset['name'], str):
+            raise ValueError(f'{subset_prefix}.name must be a string when provided.')
+        if 'lambda_host' not in subset or 'lambda_prototype' not in subset:
+            raise ValueError(f'{subset_prefix} must include both lambda_host and lambda_prototype.')
+        _validate_fusion_weight_pair(
+            field_prefix=subset_prefix,
+            lambda_host=subset['lambda_host'],
+            lambda_prototype=subset['lambda_prototype'],
+            require_unit_sum=True,
+        )
+
+
+def _validate_fusion_config_data(config_data: Dict[str, Any]) -> None:
+    fusion_cfg = config_data.get('fusion')
+    if not isinstance(fusion_cfg, dict):
+        return
+
+    has_lambda_host = 'lambda_host' in fusion_cfg
+    has_lambda_prototype = 'lambda_prototype' in fusion_cfg
+    has_legacy_coefficient = 'coefficient' in fusion_cfg
+
+    if has_lambda_host or has_lambda_prototype:
+        if not (has_lambda_host and has_lambda_prototype):
+            raise ValueError('fusion.lambda_host and fusion.lambda_prototype must be provided together.')
+        _validate_fusion_weight_pair(
+            field_prefix='fusion',
+            lambda_host=fusion_cfg.get('lambda_host'),
+            lambda_prototype=fusion_cfg.get('lambda_prototype'),
+            require_unit_sum=True,
+        )
+    elif has_legacy_coefficient:
+        _validate_fusion_weight_value('fusion.coefficient', fusion_cfg.get('coefficient'))
+
+    _validate_fusion_eval_subsets('fusion.eval_subsets', fusion_cfg.get('eval_subsets'))
+
+
+def _validate_runtime_fusion_args(args: Any) -> None:
+    if bool(getattr(args, 'fusion_legacy_coefficient_mode', False)):
+        if hasattr(args, 'fusion_coefficient') and getattr(args, 'fusion_coefficient') is not None:
+            _validate_fusion_weight_value('fusion_coefficient', getattr(args, 'fusion_coefficient'))
+        _validate_fusion_eval_subsets('fusion_eval_subsets', getattr(args, 'fusion_eval_subsets', None))
+        return
+
+    has_lambda_host = hasattr(args, 'fusion_lambda_host') and getattr(args, 'fusion_lambda_host') is not None
+    has_lambda_prototype = hasattr(args, 'fusion_lambda_prototype') and getattr(args, 'fusion_lambda_prototype') is not None
+    has_legacy_coefficient = hasattr(args, 'fusion_coefficient') and getattr(args, 'fusion_coefficient') is not None
+
+    if has_lambda_host or has_lambda_prototype:
+        if not (has_lambda_host and has_lambda_prototype):
+            raise ValueError('fusion_lambda_host and fusion_lambda_prototype must be provided together.')
+        _validate_fusion_weight_pair(
+            field_prefix='fusion',
+            lambda_host=getattr(args, 'fusion_lambda_host'),
+            lambda_prototype=getattr(args, 'fusion_lambda_prototype'),
+            require_unit_sum=True,
+        )
+    elif has_legacy_coefficient:
+        _validate_fusion_weight_value('fusion_coefficient', getattr(args, 'fusion_coefficient'))
+
+    _validate_fusion_eval_subsets('fusion_eval_subsets', getattr(args, 'fusion_eval_subsets', None))
 
 
 def _read_yaml(path: str) -> Dict[str, Any]:
@@ -637,6 +752,10 @@ def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
                             )
                 continue
 
+            if section_name == 'fusion' and key == 'eval_subsets':
+                _validate_fusion_eval_subsets('fusion.eval_subsets', value)
+                continue
+
             if isinstance(value, dict):
                 raise ValueError(f'Unsupported nested config mapping at `{section_name}.{key}`.')
             if path not in supported_leafs and path not in UNSUPPORTED_CONFIG_PATHS:
@@ -661,6 +780,7 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         _validate_enum_value('.'.join(path), current, allowed_values)
     if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
         _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
+    _validate_fusion_config_data(config_data)
 
     flat = flatten_config_dict(config_data)
     host_type = str(flat.get('host_type', 'clip')).lower()
@@ -744,6 +864,7 @@ def validate_runtime_args_namespace(args) -> None:
     retrieval_metrics = getattr(args, 'retrieval_metrics', None)
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
+    _validate_runtime_fusion_args(args)
     parse_freeze_schedule_config(
         getattr(args, 'freeze_schedule', None),
         num_epoch=getattr(args, 'num_epoch', None),

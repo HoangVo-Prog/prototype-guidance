@@ -542,16 +542,16 @@ class ModelInterfaceContractTests(unittest.TestCase):
         model = self._build_model(retrieval_scorer='exact').eval()
         evaluator = Evaluator(self.image_loader, self.text_loader, self._build_args(retrieval_scorer='exact'))
         with mock.patch.object(model, 'compute_retrieval_similarity', wraps=model.compute_retrieval_similarity) as exact_mock:
-            with mock.patch.object(model, 'compute_approximate_retrieval_similarity', wraps=model.compute_approximate_retrieval_similarity) as approx_mock:
-                top1 = evaluator.eval(model)
+            with mock.patch.object(model, 'compute_retrieval_similarity_components', wraps=model.compute_retrieval_similarity_components) as exact_components_mock:
+                with mock.patch.object(model, 'compute_approximate_retrieval_similarity', wraps=model.compute_approximate_retrieval_similarity) as approx_mock:
+                    top1 = evaluator.eval(model)
         self.assertTrue(torch.isfinite(torch.tensor(top1)))
-        self.assertGreater(exact_mock.call_count, 0)
+        self.assertGreater(exact_mock.call_count + exact_components_mock.call_count, 0)
         self.assertEqual(approx_mock.call_count, 0)
 
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
-
 
 
 

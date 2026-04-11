@@ -42,6 +42,46 @@ class ConfigSurfaceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'evaluation.retrieval_scorer'):
             load_yaml_config(None, path)
 
+    def test_fusion_explicit_lambdas_require_unit_sum(self):
+        path = self._write_config(
+            {
+                'fusion': {
+                    'lambda_host': 0.8,
+                    'lambda_prototype': 0.3,
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'fusion.lambda_host'):
+            load_yaml_config(None, path)
+
+    def test_fusion_eval_subsets_validate_unit_sum(self):
+        path = self._write_config(
+            {
+                'fusion': {
+                    'lambda_host': 1.0,
+                    'lambda_prototype': 0.0,
+                    'eval_subsets': [
+                        {'name': 'host_only', 'lambda_host': 1.0, 'lambda_prototype': 0.0},
+                        {'name': 'bad_pair', 'lambda_host': 0.8, 'lambda_prototype': 0.3},
+                    ],
+                },
+            }
+        )
+        with self.assertRaisesRegex(ValueError, 'fusion.eval_subsets'):
+            load_yaml_config(None, path)
+
+    def test_fusion_legacy_coefficient_alias_still_loads(self):
+        path = self._write_config(
+            {
+                'fusion': {
+                    'coefficient': 0.6,
+                },
+            }
+        )
+        args = get_args(['--config_file', path])
+        self.assertAlmostEqual(args.fusion_lambda_host, 1.0)
+        self.assertAlmostEqual(args.fusion_lambda_prototype, 0.6)
+
     def test_stage_must_be_known_enum(self):
         path = self._write_config({'training': {'stage': 'warmup'}})
         with self.assertRaisesRegex(ValueError, 'training.stage'):
@@ -444,7 +484,6 @@ class ConfigSurfaceTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
-
 
 
 
