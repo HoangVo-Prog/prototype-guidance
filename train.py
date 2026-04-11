@@ -111,8 +111,8 @@ def _prepare_finetune_state_dict(raw_state_dict, model, args):
         'loaded_keys': 0,
         'skipped_missing': 0,
         'skipped_shape_mismatch': 0,
-        'skipped_shape_mismatch_examples': [],
-        'skipped_missing_examples': [],
+        'skipped_shape_mismatch_keys': [],
+        'skipped_missing_keys': [],
     }
 
     for original_key, value in raw_state_dict.items():
@@ -135,17 +135,15 @@ def _prepare_finetune_state_dict(raw_state_dict, model, args):
 
         if key not in model_state_dict:
             stats['skipped_missing'] += 1
-            if len(stats['skipped_missing_examples']) < 20:
-                stats['skipped_missing_examples'].append(str(original_key))
+            stats['skipped_missing_keys'].append(str(original_key))
             continue
 
         model_tensor = model_state_dict[key]
         if tuple(model_tensor.shape) != tuple(value.shape):
             stats['skipped_shape_mismatch'] += 1
-            if len(stats['skipped_shape_mismatch_examples']) < 20:
-                stats['skipped_shape_mismatch_examples'].append(
-                    f'{key}: ckpt{tuple(value.shape)} != model{tuple(model_tensor.shape)}'
-                )
+            stats['skipped_shape_mismatch_keys'].append(
+                f'{key}: ckpt{tuple(value.shape)} != model{tuple(model_tensor.shape)}'
+            )
             continue
 
         prepared_state[key] = value.detach().clone()
@@ -330,15 +328,15 @@ if __name__ == '__main__':
             len(missing_keys),
             len(unexpected_keys),
         )
-        if remap_stats['skipped_shape_mismatch_examples']:
+        if remap_stats['skipped_shape_mismatch_keys']:
             logger.warning(
-                'Finetune skipped shape-mismatched keys (first 20): %s',
-                remap_stats['skipped_shape_mismatch_examples'],
+                'Finetune skipped shape-mismatched keys (all): %s',
+                remap_stats['skipped_shape_mismatch_keys'],
             )
-        if remap_stats['skipped_missing_examples']:
+        if remap_stats['skipped_missing_keys']:
             logger.info(
-                'Finetune ignored unmatched checkpoint keys (first 20): %s',
-                remap_stats['skipped_missing_examples'],
+                'Finetune ignored unmatched checkpoint keys (all): %s',
+                remap_stats['skipped_missing_keys'],
             )
         critical_prefixes = (
             'prototype_head.prototype_bank',
