@@ -31,6 +31,19 @@ from utils.options import get_args
 warnings.filterwarnings('ignore')
 
 
+_ITSELF_LEGACY_KEY_PREFIXES = (
+    ('classifier_bge.', 'host_head.classifier_global.'),
+    ('classifier_id_bge.', 'host_head.classifier_id_global.'),
+    ('mlp_bge.', 'host_head.mlp_global.'),
+    ('classifier_tse.', 'host_head.classifier_grab.'),
+    ('classifier_id_tse.', 'host_head.classifier_id_grab.'),
+    ('mlp_tse.', 'host_head.mlp_grab.'),
+    ('visul_emb_layer.', 'host_head.visual_embedding_layer.'),
+    ('visual_emb_layer.', 'host_head.visual_embedding_layer.'),
+    ('textual_emb_layer.', 'host_head.textual_embedding_layer.'),
+)
+
+
 def set_seed(seed=1):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -62,6 +75,83 @@ def _bridge_original_itself_loggers(base_logger):
         target_logger.handlers.clear()
         for handler in base_logger.handlers:
             target_logger.addHandler(handler)
+
+
+def _extract_finetune_model_state_dict(checkpoint_payload):
+    if isinstance(checkpoint_payload, dict):
+        model_state = checkpoint_payload.get('model')
+        if isinstance(model_state, dict):
+            return model_state
+        state_dict = checkpoint_payload.get('state_dict')
+        if isinstance(state_dict, dict):
+            return state_dict
+        if checkpoint_payload and all(isinstance(key, str) for key in checkpoint_payload.keys()):
+            return checkpoint_payload
+    raise ValueError(
+        'Finetune checkpoint must contain a model state dict under `model` or `state_dict`, '
+        'or be a plain state_dict mapping.'
+    )
+
+
+def _remap_legacy_itself_key(key):
+    for legacy_prefix, current_prefix in _ITSELF_LEGACY_KEY_PREFIXES:
+        if key.startswith(legacy_prefix):
+            return current_prefix + key[len(legacy_prefix):], True
+    return key, False
+
+
+def _prepare_finetune_state_dict(raw_state_dict, model, args):
+    model_state_dict = model.state_dict()
+    model_keys = set(model_state_dict.keys())
+    host_type = str(getattr(args, 'host_type', 'clip')).lower()
+    prepared_state = {}
+    stats = {
+        'legacy_renamed': 0,
+        'host_head_prefixed': 0,
+        'loaded_keys': 0,
+        'skipped_missing': 0,
+        'skipped_shape_mismatch': 0,
+        'skipped_shape_mismatch_examples': [],
+        'skipped_missing_examples': [],
+    }
+
+    for original_key, value in raw_state_dict.items():
+        key = str(original_key)
+        if key.startswith('module.'):
+            key = key[len('module.'):]
+        if key.startswith('model.') and key[len('model.'):] in model_keys:
+            key = key[len('model.'):]
+
+        if host_type == 'itself':
+            key, renamed = _remap_legacy_itself_key(key)
+            if renamed:
+                stats['legacy_renamed'] += 1
+            if (
+                not key.startswith(('host_head.', 'base_model.', 'prototype_head.'))
+                and ('host_head.' + key) in model_keys
+            ):
+                key = 'host_head.' + key
+                stats['host_head_prefixed'] += 1
+
+        if key not in model_state_dict:
+            stats['skipped_missing'] += 1
+            if len(stats['skipped_missing_examples']) < 20:
+                stats['skipped_missing_examples'].append(str(original_key))
+            continue
+
+        model_tensor = model_state_dict[key]
+        if tuple(model_tensor.shape) != tuple(value.shape):
+            stats['skipped_shape_mismatch'] += 1
+            if len(stats['skipped_shape_mismatch_examples']) < 20:
+                stats['skipped_shape_mismatch_examples'].append(
+                    f'{key}: ckpt{tuple(value.shape)} != model{tuple(model_tensor.shape)}'
+                )
+            continue
+
+        prepared_state[key] = value.detach().clone()
+        stats['loaded_keys'] += 1
+
+    return prepared_state, stats
 
 
 def log_parameter_trainability(logger, model, args):
@@ -221,10 +311,17 @@ if __name__ == '__main__':
 
     if finetune_path:
         logger.info('Loading finetune checkpoint from %s', finetune_path)
-        param_dict = torch.load(finetune_path, map_location='cpu')['model']
-        refined = {}
-        for key, value in param_dict.items():
-            refined[key.replace('module.', '')] = value.detach().clone()
+        checkpoint_payload = torch.load(finetune_path, map_location='cpu')
+        param_dict = _extract_finetune_model_state_dict(checkpoint_payload)
+        refined, remap_stats = _prepare_finetune_state_dict(param_dict, model, args)
+        logger.info(
+            'Finetune key remap summary: loaded=%d legacy_renamed=%d host_head_prefixed=%d skipped_missing=%d skipped_shape_mismatch=%d',
+            remap_stats['loaded_keys'],
+            remap_stats['legacy_renamed'],
+            remap_stats['host_head_prefixed'],
+            remap_stats['skipped_missing'],
+            remap_stats['skipped_shape_mismatch'],
+        )
         incompatible = model.load_state_dict(refined, strict=False)
         missing_keys = list(getattr(incompatible, 'missing_keys', []))
         unexpected_keys = list(getattr(incompatible, 'unexpected_keys', []))
@@ -233,6 +330,16 @@ if __name__ == '__main__':
             len(missing_keys),
             len(unexpected_keys),
         )
+        if remap_stats['skipped_shape_mismatch_examples']:
+            logger.warning(
+                'Finetune skipped shape-mismatched keys (first 20): %s',
+                remap_stats['skipped_shape_mismatch_examples'],
+            )
+        if remap_stats['skipped_missing_examples']:
+            logger.info(
+                'Finetune ignored unmatched checkpoint keys (first 20): %s',
+                remap_stats['skipped_missing_examples'],
+            )
         critical_prefixes = (
             'prototype_head.prototype_bank',
             'prototype_head.image_projector',
@@ -242,10 +349,16 @@ if __name__ == '__main__':
         )
         critical_missing = [key for key in missing_keys if any(key.startswith(prefix) for prefix in critical_prefixes)]
         if critical_missing:
-            logger.warning(
-                'Finetune checkpoint is missing critical PAS modules: %s',
-                critical_missing[:20],
-            )
+            loaded_prototype_keys = any(key.startswith('prototype_head.') for key in refined.keys())
+            if loaded_prototype_keys:
+                logger.warning(
+                    'Finetune checkpoint is missing critical PAS modules: %s',
+                    critical_missing[:20],
+                )
+            else:
+                logger.info(
+                    'Finetune checkpoint has no prototype_head weights; missing PAS prototype modules are expected when loading host-only checkpoints.'
+                )
         if unexpected_keys:
             logger.warning('Finetune checkpoint has unexpected keys: %s', unexpected_keys[:20])
     optimizer = build_optimizer(args, model)
