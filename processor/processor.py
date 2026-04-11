@@ -32,6 +32,66 @@ METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key !
 CONSOLE_LOSS_LOG_KEYS = tuple(key for key in TRAIN_LOSS_KEYS if key in METER_KEYS)
 
 
+_VALID_PROTOTYPE_SELECTION_METRICS = ('R1', 'L_TOTAL', 'L_DIAG')
+
+
+def _canonicalize_prototype_metric_name(metric_name: str):
+    normalized = str(metric_name).strip().upper().replace('-', '_')
+    alias_map = {
+        'LTOTAL': 'L_TOTAL',
+        'LTOTAL_LOSS': 'L_TOTAL',
+        'LDIAG': 'L_DIAG',
+        'LDIAG_LOSS': 'L_DIAG',
+    }
+    return alias_map.get(normalized, normalized)
+
+
+def _resolve_prototype_selection_metrics(raw_metric_config):
+    if raw_metric_config is None:
+        return []
+
+    if isinstance(raw_metric_config, str):
+        stripped = raw_metric_config.strip()
+        if not stripped:
+            return []
+        if stripped.upper() == 'ALL':
+            tokens = list(_VALID_PROTOTYPE_SELECTION_METRICS)
+        else:
+            tokens = [token.strip() for token in stripped.split(',')]
+    elif isinstance(raw_metric_config, (list, tuple, set)):
+        tokens = [str(token).strip() for token in raw_metric_config]
+    else:
+        tokens = [str(raw_metric_config).strip()]
+
+    canonical_metrics = []
+    seen = set()
+    for token in tokens:
+        if not token:
+            continue
+        canonical = _canonicalize_prototype_metric_name(token)
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        canonical_metrics.append(canonical)
+    return canonical_metrics
+
+
+def _prototype_metric_checkpoint_stem(metric_name: str):
+    return f'prototype_best_{metric_name.lower()}'
+
+
+def _resolve_prototype_metric_score(metric_name: str, top1: float, eval_loss_metrics: dict):
+    if metric_name == 'R1':
+        return float(top1)
+    if metric_name == 'L_TOTAL':
+        value = eval_loss_metrics.get('loss_total')
+        return float(value) if value is not None else None
+    if metric_name == 'L_DIAG':
+        value = eval_loss_metrics.get('loss_diag')
+        return float(value) if value is not None else None
+    return None
+
+
 
 
 
@@ -208,32 +268,39 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
     best_epoch = start_epoch
     last_epoch = start_epoch - 1
     stage_name = str(getattr(args, 'training_stage', 'joint')).lower()
-    prototype_selection_metric = getattr(args, 'prototype_selection_metric', None)
-    if prototype_selection_metric is not None:
-        prototype_selection_metric = str(prototype_selection_metric).strip().upper()
-        if prototype_selection_metric == '':
-            prototype_selection_metric = None
-    valid_prototype_metrics = {'L_TOTAL', 'L_DIAG', 'R1'}
-    if prototype_selection_metric is not None and prototype_selection_metric not in valid_prototype_metrics:
+    prototype_selection_metrics = _resolve_prototype_selection_metrics(
+        getattr(args, 'prototype_selection_metric', None)
+    )
+    invalid_prototype_metrics = [
+        metric for metric in prototype_selection_metrics
+        if metric not in _VALID_PROTOTYPE_SELECTION_METRICS
+    ]
+    if invalid_prototype_metrics:
         raise ValueError(
-            f'Unsupported prototype_selection_metric={prototype_selection_metric!r}. '
-            f'Allowed values: {sorted(valid_prototype_metrics)}'
+            f'Unsupported prototype_selection_metric values={invalid_prototype_metrics!r}. '
+            f'Allowed values: {list(_VALID_PROTOTYPE_SELECTION_METRICS)} (or comma-separated list / ALL).'
         )
     prototype_selection_enabled = (
-        prototype_selection_metric is not None
+        len(prototype_selection_metrics) > 0
         and bool(getattr(args, 'use_prototype_branch', False))
         and stage_name in {'stage1', 'stage2', 'stage3', 'joint'}
     )
-    prototype_best_score = None
-    prototype_best_epoch = None
-    prototype_metric_warning_emitted = False
-    if prototype_selection_metric is not None and not prototype_selection_enabled:
+    prototype_primary_metric = prototype_selection_metrics[0] if prototype_selection_metrics else None
+    prototype_best_scores = {metric: None for metric in prototype_selection_metrics}
+    prototype_best_epochs = {metric: None for metric in prototype_selection_metrics}
+    prototype_metric_warning_emitted = {metric: False for metric in prototype_selection_metrics}
+    if prototype_selection_metrics and not prototype_selection_enabled:
         logger.info(
             'prototype_selection_metric=%s provided, but prototype-related stage is inactive '
-            '(use_prototype_branch=%s, training_stage=%s). prototype_best.pth will not be produced.',
-            prototype_selection_metric,
+            '(use_prototype_branch=%s, training_stage=%s). prototype best checkpoints will not be produced.',
+            prototype_selection_metrics,
             bool(getattr(args, 'use_prototype_branch', False)),
             stage_name,
+        )
+    elif prototype_selection_enabled:
+        logger.info(
+            'Prototype best-checkpoint tracking enabled for metrics: %s',
+            prototype_selection_metrics,
         )
     log_debug_metrics = bool(getattr(args, 'log_debug_metrics', True))
     coverage_tracker = RoutingCoverageTracker() if log_debug_metrics else None
@@ -415,37 +482,48 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
                 validation_metrics = build_validation_metrics(epoch, evaluator=evaluator, loss_metrics=eval_loss_metrics)
                 experiment_tracker.log(validation_metrics)
             if prototype_selection_enabled:
-                candidate_score = None
-                if prototype_selection_metric == 'R1':
-                    candidate_score = float(top1)
-                elif prototype_selection_metric == 'L_TOTAL':
-                    value = eval_loss_metrics.get('loss_total')
-                    candidate_score = float(value) if value is not None else None
-                elif prototype_selection_metric == 'L_DIAG':
-                    value = eval_loss_metrics.get('loss_diag')
-                    candidate_score = float(value) if value is not None else None
+                for prototype_selection_metric in prototype_selection_metrics:
+                    candidate_score = _resolve_prototype_metric_score(
+                        prototype_selection_metric,
+                        top1=top1,
+                        eval_loss_metrics=eval_loss_metrics,
+                    )
+                    if candidate_score is None:
+                        if not prototype_metric_warning_emitted[prototype_selection_metric]:
+                            logger.warning(
+                                'prototype_selection_metric=%s requested, but metric is unavailable on validation. '
+                                'Checkpoint update for this metric will wait until it is present.',
+                                prototype_selection_metric,
+                            )
+                            prototype_metric_warning_emitted[prototype_selection_metric] = True
+                        continue
 
-                if candidate_score is None:
-                    if not prototype_metric_warning_emitted:
-                        logger.warning(
-                            'prototype_selection_metric=%s requested, but metric is unavailable on validation. '
-                            'prototype_best.pth will not update until this metric is present.',
-                            prototype_selection_metric,
-                        )
-                        prototype_metric_warning_emitted = True
-                else:
                     minimize_metric = prototype_selection_metric.startswith('L_')
+                    prototype_best_score = prototype_best_scores[prototype_selection_metric]
                     is_better = (
                         prototype_best_score is None
                         or (candidate_score < prototype_best_score if minimize_metric else candidate_score > prototype_best_score)
                     )
-                    if is_better:
-                        prototype_best_score = candidate_score
-                        prototype_best_epoch = epoch
-                        arguments['epoch'] = epoch
+                    if not is_better:
+                        continue
+
+                    prototype_best_scores[prototype_selection_metric] = candidate_score
+                    prototype_best_epochs[prototype_selection_metric] = epoch
+                    arguments['epoch'] = epoch
+                    checkpoint_stem = _prototype_metric_checkpoint_stem(prototype_selection_metric)
+                    checkpointer.save(checkpoint_stem, **arguments)
+                    logger.info(
+                        'Updated %s.pth using %s=%.6f at epoch %d.',
+                        checkpoint_stem,
+                        prototype_selection_metric,
+                        candidate_score,
+                        epoch,
+                    )
+                    if prototype_selection_metric == prototype_primary_metric:
+                        # Keep legacy filename for downstream tooling that expects prototype_best.pth.
                         checkpointer.save('prototype_best', **arguments)
                         logger.info(
-                            'Updated prototype_best.pth using %s=%.6f at epoch %d.',
+                            'Updated prototype_best.pth (legacy alias) from primary metric %s=%.6f at epoch %d.',
                             prototype_selection_metric,
                             candidate_score,
                             epoch,
@@ -460,11 +538,29 @@ def do_train(start_epoch, args, model, train_loader, evaluator, optimizer, sched
         if last_epoch >= start_epoch:
             arguments['epoch'] = last_epoch
             checkpointer.save('last', **arguments)
-        if prototype_selection_enabled and prototype_best_epoch is None:
-            logger.warning(
-                'prototype_selection_metric=%s was enabled but no prototype_best.pth was produced.',
-                prototype_selection_metric,
-            )
+        if prototype_selection_enabled:
+            missing_best_metrics = [
+                metric for metric, best_epoch_value in prototype_best_epochs.items()
+                if best_epoch_value is None
+            ]
+            if missing_best_metrics:
+                logger.warning(
+                    'prototype_selection_metric=%s was enabled but no best checkpoint was produced for: %s',
+                    prototype_selection_metrics,
+                    missing_best_metrics,
+                )
+            else:
+                logger.info(
+                    'Prototype best checkpoints saved for metrics: %s',
+                    {
+                        metric: {
+                            'best_score': prototype_best_scores[metric],
+                            'best_epoch': prototype_best_epochs[metric],
+                            'checkpoint': f'{_prototype_metric_checkpoint_stem(metric)}.pth',
+                        }
+                        for metric in prototype_selection_metrics
+                    },
+                )
         logger.info(f'best R1: {best_top1} at epoch {best_epoch}')
 
     tb_writer.close()

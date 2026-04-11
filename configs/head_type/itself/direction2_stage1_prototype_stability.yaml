@@ -119,7 +119,7 @@ training:
   batch_size: 128
   epochs: 20
   log_period: 50
-  prototype_selection_metric: L_diag
+  prototype_selection_metric: [R1, L_total, L_diag]
   eval_frequency: 1
   save_interval: 1
   resume: false

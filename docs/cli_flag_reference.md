@@ -708,7 +708,7 @@ Notes:
 - Default: `None`
 - Primary Config Keys: `training.prototype_selection_metric`
 - Alias Config Keys: -
-- Help: Optional val metric for prototype best checkpoint selection: L_total, L_diag, or R1.
+- Help: Optional val metric(s) for prototype best checkpoint selection: L_total, L_diag, or R1. Use comma-separated values (e.g., R1,L_total,L_diag) or ALL.
 
 ## `grad_clip`
 - Flags: `--grad_clip`

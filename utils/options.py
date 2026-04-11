@@ -167,7 +167,7 @@ def build_parser():
         dest='prototype_selection_metric',
         type=str,
         default=None,
-        help='Optional val metric for prototype best checkpoint selection: L_total, L_diag, or R1.',
+        help='Optional val metric(s) for prototype best checkpoint selection: L_total, L_diag, or R1. Use comma-separated values (e.g., R1,L_total,L_diag) or ALL.',
     )
     parser.add_argument('--grad_clip', type=float, default=1.0)
     parser.add_argument('--amp', type=_str2bool, nargs='?', const=True, default=False)
@@ -290,8 +290,12 @@ def _finalize_args(args):
     args.freeze_schedule = copy.deepcopy(freeze_schedule) if freeze_schedule is not None else None
     selection_metric = getattr(args, 'prototype_selection_metric', None)
     if selection_metric is not None:
-        selection_metric = str(selection_metric).strip()
-        args.prototype_selection_metric = selection_metric if selection_metric else None
+        if isinstance(selection_metric, (list, tuple, set)):
+            normalized_metrics = [str(metric).strip() for metric in selection_metric if str(metric).strip()]
+            args.prototype_selection_metric = normalized_metrics if normalized_metrics else None
+        else:
+            selection_metric = str(selection_metric).strip()
+            args.prototype_selection_metric = selection_metric if selection_metric else None
     args.retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
     if args.fusion_enabled is None:
         args.fusion_enabled = args.use_prototype_branch
