@@ -1,6 +1,6 @@
 from collections import OrderedDict
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from torch.utils.data import DataLoader
 
@@ -73,8 +73,14 @@ class PASModel(nn.Module):
         self.use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', True)) if self.use_prototype_branch else False
         default_fusion_enabled = self.use_prototype_branch
         self.fusion_enabled = bool(getattr(args, 'fusion_enabled', default_fusion_enabled)) and self.use_prototype_branch
-        self.fusion_coefficient = float(getattr(args, 'fusion_coefficient', 1.0 if self.use_prototype_branch else 0.0))
         self.fusion_coefficient_source = str(getattr(args, 'fusion_coefficient_source', 'fixed')).lower()
+        (
+            self.fusion_lambda_host,
+            self.fusion_lambda_prototype,
+            self.fusion_legacy_coefficient_mode,
+        ) = self._resolve_fusion_weights_from_args()
+        # Backward-compatible diagnostic alias retained for existing logs.
+        self.fusion_coefficient = self.fusion_lambda_prototype
         explicit_stage = getattr(args, 'training_stage', None)
         self.training_stage = 'joint' if explicit_stage is None else str(explicit_stage).lower()
         if self.host_type == 'itself':
@@ -106,7 +112,8 @@ class PASModel(nn.Module):
             )
         self.fusion_module = ResidualScoreFusion(
             enabled=self.fusion_enabled,
-            coefficient=self.fusion_coefficient,
+            lambda_host=self.fusion_lambda_host,
+            lambda_prototype=self.fusion_lambda_prototype,
             coefficient_source=self.fusion_coefficient_source,
         )
         self._log_runtime_mode_summary()
@@ -121,11 +128,42 @@ class PASModel(nn.Module):
                 f'Got {pretrain_choice!r}.'
             )
 
+    def _resolve_fusion_weights_from_args(self) -> Tuple[float, float, bool]:
+        raw_lambda_host = getattr(self.args, 'fusion_lambda_host', None)
+        raw_lambda_prototype = getattr(self.args, 'fusion_lambda_prototype', None)
+        raw_legacy_coefficient = getattr(self.args, 'fusion_coefficient', None)
+
+        explicit_lambda_host = raw_lambda_host is not None
+        explicit_lambda_prototype = raw_lambda_prototype is not None
+        if explicit_lambda_host or explicit_lambda_prototype:
+            lambda_host = float(raw_lambda_host) if explicit_lambda_host else (1.0 - float(raw_lambda_prototype))
+            lambda_prototype = float(raw_lambda_prototype) if explicit_lambda_prototype else (1.0 - lambda_host)
+            return lambda_host, lambda_prototype, False
+
+        if raw_legacy_coefficient is None:
+            raw_legacy_coefficient = 1.0 if self.use_prototype_branch else 0.0
+        return 1.0, float(raw_legacy_coefficient), True
+
+    def _validate_fusion_weights(self) -> None:
+        for field_name, value in (
+            ('fusion.lambda_host', self.fusion_lambda_host),
+            ('fusion.lambda_prototype', self.fusion_lambda_prototype),
+        ):
+            if value < 0.0 or value > 1.0:
+                raise ValueError(f'{field_name} must be within [0, 1], got {value}.')
+
+        if not self.fusion_legacy_coefficient_mode:
+            pair_sum = self.fusion_lambda_host + self.fusion_lambda_prototype
+            if abs(pair_sum - 1.0) > 1e-6:
+                raise ValueError(
+                    'fusion.lambda_host + fusion.lambda_prototype must equal 1.0 '
+                    f'(tolerance=1e-6), got {pair_sum}.'
+                )
 
     def _log_runtime_mode_summary(self):
         logger = logging.getLogger('pas.model')
         logger.info(
-            'Runtime mode: training_mode=%s host_type=%s host_loss=%s prototype_branch=%s prototype_bank=%s image_conditioned_pooling=%s fusion_enabled=%s fusion_coefficient=%s fusion_source=%s',
+            'Runtime mode: training_mode=%s host_type=%s host_loss=%s prototype_branch=%s prototype_bank=%s image_conditioned_pooling=%s fusion_enabled=%s fusion_lambda_host=%s fusion_lambda_prototype=%s fusion_source=%s legacy_fusion_coefficient_mode=%s',
             self.training_mode,
             self.host_type,
             self.use_host_loss,
@@ -133,8 +171,10 @@ class PASModel(nn.Module):
             self.use_prototype_bank,
             self.use_image_conditioned_pooling,
             self.fusion_enabled,
-            self.fusion_coefficient,
+            self.fusion_lambda_host,
+            self.fusion_lambda_prototype,
             self.fusion_coefficient_source,
+            self.fusion_legacy_coefficient_mode,
         )
 
     def _validate_backbone_contract(self, base_cfg):
@@ -155,6 +195,7 @@ class PASModel(nn.Module):
 
     def _validate_configuration(self):
         model_logger = logging.getLogger('pas.model')
+        self._validate_fusion_weights()
         if self.training_mode not in {'pas', 'vanilla_clip'}:
             raise ValueError(f"model.training_mode must be one of ['pas', 'vanilla_clip']; got {self.training_mode!r}.")
         if self.host_type not in {'clip', 'itself'}:
@@ -799,7 +840,28 @@ class PASModel(nn.Module):
             raise FloatingPointError('Host retrieval similarity contains NaN or Inf values.')
         return similarity.float()
 
-    def compute_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def fuse_retrieval_similarity(
+        self,
+        host_similarity: torch.Tensor,
+        prototype_similarity: Optional[torch.Tensor] = None,
+        lambda_host: Optional[float] = None,
+        lambda_prototype: Optional[float] = None,
+    ) -> torch.Tensor:
+        similarity = self.fusion_module(
+            host_similarity=host_similarity,
+            prototype_similarity=prototype_similarity,
+            lambda_host=lambda_host,
+            lambda_prototype=lambda_prototype,
+        )
+        if not torch.isfinite(similarity).all():
+            raise FloatingPointError('Retrieval similarity contains NaN or Inf values.')
+        return similarity.float()
+
+    def compute_retrieval_similarity_components(
+        self,
+        image_features: Dict[str, torch.Tensor],
+        text_features: Dict[str, torch.Tensor],
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         host_similarity = self._compute_host_similarity(image_features, text_features)
         prototype_similarity = None
         if self.prototype_head is not None and 'text_token_states' in text_features:
@@ -813,12 +875,20 @@ class PASModel(nn.Module):
                 image_chunk_size=self.prototype_eval_image_chunk_size,
                 text_chunk_size=self.prototype_eval_text_chunk_size,
             ).float()
-        similarity = self.fusion_module(host_similarity, prototype_similarity)
-        if not torch.isfinite(similarity).all():
-            raise FloatingPointError('Retrieval similarity contains NaN or Inf values.')
-        return similarity.float()
+        return host_similarity.float(), prototype_similarity.float() if isinstance(prototype_similarity, torch.Tensor) else None
 
-    def compute_approximate_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_basis_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def compute_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        host_similarity, prototype_similarity = self.compute_retrieval_similarity_components(
+            image_features=image_features,
+            text_features=text_features,
+        )
+        return self.fuse_retrieval_similarity(host_similarity, prototype_similarity)
+
+    def compute_approximate_retrieval_similarity_components(
+        self,
+        image_features: Dict[str, torch.Tensor],
+        text_basis_features: Dict[str, torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.prototype_head is None or not self.use_prototype_bank:
             raise RuntimeError('compute_approximate_retrieval_similarity is unavailable when model.use_prototype_bank=false. Use evaluation.retrieval_scorer=exact.')
         host_similarity = self._compute_host_similarity(
@@ -835,7 +905,14 @@ class PASModel(nn.Module):
             image_chunk_size=self.prototype_eval_image_chunk_size,
             text_chunk_size=self.prototype_eval_text_chunk_size,
         ).float()
-        similarity = self.fusion_module(host_similarity, prototype_similarity)
+        return host_similarity.float(), prototype_similarity.float()
+
+    def compute_approximate_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_basis_features: Dict[str, torch.Tensor]) -> torch.Tensor:
+        host_similarity, prototype_similarity = self.compute_approximate_retrieval_similarity_components(
+            image_features=image_features,
+            text_basis_features=text_basis_features,
+        )
+        similarity = self.fuse_retrieval_similarity(host_similarity, prototype_similarity)
         if not torch.isfinite(similarity).all():
             raise FloatingPointError('Approximate retrieval similarity contains NaN or Inf values.')
         return similarity.float()
@@ -852,6 +929,8 @@ class PASModel(nn.Module):
         debug.update(
             {
                 'fusion_coefficient': torch.tensor(self.fusion_coefficient, device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
+                'fusion_lambda_host': torch.tensor(self.fusion_lambda_host, device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
+                'fusion_lambda_prototype': torch.tensor(self.fusion_lambda_prototype, device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
                 'fusion_enabled': torch.tensor(float(self.fusion_enabled), device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
                 'image_global': image_output.projected_pooled.detach(),
                 'text_tokens': self._resolve_text_states(text_output).detach(),
@@ -1075,6 +1154,8 @@ class PASModel(nn.Module):
             'host_retrieval_temperature': host_losses['retrieval_temperature'].detach(),
             'host_logit_scale': host_losses['logit_scale'].detach(),
             'fusion_coefficient': host_losses['loss_total'].new_tensor(self.fusion_coefficient),
+            'fusion_lambda_host': host_losses['loss_total'].new_tensor(self.fusion_lambda_host),
+            'fusion_lambda_prototype': host_losses['loss_total'].new_tensor(self.fusion_lambda_prototype),
             'alpha': prototype_outputs['routing_weights'].detach(),
             'z_v': host_outputs['image_projected'],
             'z_t_hat_diag': prototype_outputs['surrogate_text_projected'],
@@ -1085,6 +1166,8 @@ class PASModel(nn.Module):
         }
         outputs['debug'].update(prototype_outputs.get('metrics', {}))
         outputs['debug']['fusion_coefficient'] = self.fusion_coefficient
+        outputs['debug']['fusion_lambda_host'] = self.fusion_lambda_host
+        outputs['debug']['fusion_lambda_prototype'] = self.fusion_lambda_prototype
         outputs['debug']['host_loss_total'] = host_losses['loss_total'].detach()
         outputs['debug']['host_loss_ret'] = host_losses['loss_ret'].detach()
         outputs['debug']['host_loss_cid'] = host_losses.get('loss_cid', host_losses['loss_total'].new_zeros(())).detach()
@@ -1117,9 +1200,6 @@ def build_model(args, num_classes, train_loader=None):
         if model.prototype_head is not None:
             model.prototype_head.float()
     return model
-
-
-
 
 
 
