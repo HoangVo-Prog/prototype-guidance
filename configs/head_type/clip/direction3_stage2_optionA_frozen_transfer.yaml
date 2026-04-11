@@ -57,7 +57,7 @@ host:
 prototype:
   num_prototypes: 32
   prototype_dim: 512
-  prototype_init: normalized_random
+  prototype_init: kmeans_centroids
   prototype_init_path:
   prototype_init_hybrid_ratio: 0.5
   prototype_init_max_iters: 50
