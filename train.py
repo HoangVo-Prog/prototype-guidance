@@ -32,6 +32,9 @@ warnings.filterwarnings('ignore')
 
 
 _ITSELF_LEGACY_KEY_PREFIXES = (
+    # Legacy typo/field-name variants seen in original ITSELF checkpoints.
+    ('visul_emb_layer.linear.', 'host_head.visual_embedding_layer.fc.'),
+    ('visual_emb_layer.linear.', 'host_head.visual_embedding_layer.fc.'),
     ('classifier_bge.', 'host_head.classifier_global.'),
     ('classifier_id_bge.', 'host_head.classifier_id_global.'),
     ('mlp_bge.', 'host_head.mlp_global.'),
@@ -40,6 +43,7 @@ _ITSELF_LEGACY_KEY_PREFIXES = (
     ('mlp_tse.', 'host_head.mlp_grab.'),
     ('visul_emb_layer.', 'host_head.visual_embedding_layer.'),
     ('visual_emb_layer.', 'host_head.visual_embedding_layer.'),
+    ('texual_emb_layer.', 'host_head.textual_embedding_layer.'),
     ('textual_emb_layer.', 'host_head.textual_embedding_layer.'),
 )
 
