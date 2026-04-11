@@ -3,11 +3,27 @@ from __future__ import annotations
 import copy
 import glob
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 
 from utils.module_group_registry import CHECKPOINT_GROUPS, get_group_state_dict, load_group_state_dict
+
+
+_ITSELF_LEGACY_KEY_PREFIXES: Tuple[Tuple[str, str], ...] = (
+    ('visul_emb_layer.linear.', 'host_head.visual_embedding_layer.fc.'),
+    ('visual_emb_layer.linear.', 'host_head.visual_embedding_layer.fc.'),
+    ('classifier_bge.', 'host_head.classifier_global.'),
+    ('classifier_id_bge.', 'host_head.classifier_id_global.'),
+    ('mlp_bge.', 'host_head.mlp_global.'),
+    ('classifier_tse.', 'host_head.classifier_grab.'),
+    ('classifier_id_tse.', 'host_head.classifier_id_grab.'),
+    ('mlp_tse.', 'host_head.mlp_grab.'),
+    ('visul_emb_layer.', 'host_head.visual_embedding_layer.'),
+    ('visual_emb_layer.', 'host_head.visual_embedding_layer.'),
+    ('texual_emb_layer.', 'host_head.textual_embedding_layer.'),
+    ('textual_emb_layer.', 'host_head.textual_embedding_layer.'),
+)
 
 
 DEFAULT_CHECKPOINTING_CONFIG = {
@@ -87,6 +103,70 @@ def resolve_checkpointing_config(config_data: Optional[dict]):
         checkpointing_from_config = config_data.get('checkpointing', {}) or {}
     config = _deep_merge(DEFAULT_CHECKPOINTING_CONFIG, checkpointing_from_config)
     return config
+
+
+def _extract_state_dict_from_checkpoint_payload(payload):
+    if isinstance(payload, dict):
+        modular_state = payload.get('state_dict')
+        if isinstance(modular_state, dict) and 'group_name' in payload:
+            return modular_state, 'modular_group_payload'
+
+        model_state = payload.get('model')
+        if isinstance(model_state, dict):
+            return model_state, 'legacy_full_checkpoint_model_field'
+
+        generic_state = payload.get('state_dict')
+        if isinstance(generic_state, dict):
+            return generic_state, 'generic_state_dict_field'
+
+        if payload and all(isinstance(key, str) for key in payload.keys()):
+            return payload, 'plain_state_dict'
+
+    raise ValueError('Checkpoint payload does not contain a valid state_dict mapping.')
+
+
+def _normalize_checkpoint_key(key: str):
+    normalized = str(key)
+    if normalized.startswith('module.'):
+        normalized = normalized[len('module.'):]
+    if normalized.startswith('model.'):
+        normalized = normalized[len('model.'):]
+    return normalized
+
+
+def _remap_legacy_itself_host_key(key: str):
+    for legacy_prefix, current_prefix in _ITSELF_LEGACY_KEY_PREFIXES:
+        if key.startswith(legacy_prefix):
+            return current_prefix + key[len(legacy_prefix):], True
+    return key, False
+
+
+def _prepare_state_dict_for_group_compatibility(group_name: str, state_dict: dict, model, host_type: str):
+    if group_name != 'host':
+        return state_dict, {'legacy_renamed': 0, 'host_head_prefixed': 0}
+
+    model_keys = set(model.state_dict().keys())
+    prepared = {}
+    stats = {'legacy_renamed': 0, 'host_head_prefixed': 0}
+
+    for raw_key, value in state_dict.items():
+        key = _normalize_checkpoint_key(str(raw_key))
+
+        if host_type == 'itself':
+            key, renamed = _remap_legacy_itself_host_key(key)
+            if renamed:
+                stats['legacy_renamed'] += 1
+
+            if (
+                not key.startswith(('host_head.', 'base_model.', 'prototype_head.'))
+                and ('host_head.' + key) in model_keys
+            ):
+                key = 'host_head.' + key
+                stats['host_head_prefixed'] += 1
+
+        prepared[key] = value
+
+    return prepared, stats
 
 
 class ModularCheckpointManager:
@@ -251,6 +331,8 @@ class ModularCheckpointManager:
             return
 
         strict = bool(self.config.get('load', {}).get('strict', True))
+        checked_groups = 0
+        groups_with_issues = 0
         for group_name in CHECKPOINT_GROUPS:
             source_cfg = self.config.get('load', {}).get('sources', {}).get(group_name, {})
             if not bool(source_cfg.get('enabled', False)):
@@ -260,6 +342,7 @@ class ModularCheckpointManager:
                 self.logger.info('Skipping checkpoint group load for %s (path is empty).', group_name)
                 continue
 
+            checked_groups += 1
             self.logger.info(
                 'Loading checkpoint group=%s path=%s strict=%s',
                 group_name,
@@ -267,14 +350,27 @@ class ModularCheckpointManager:
                 strict,
             )
             payload = torch.load(str(source_path), map_location='cpu')
-            state_dict = payload.get('state_dict') if isinstance(payload, dict) and isinstance(payload.get('state_dict'), dict) else payload
-            if not isinstance(state_dict, dict):
-                raise ValueError(f'Checkpoint payload at {source_path} does not contain a valid state_dict mapping.')
+            state_dict, payload_type = _extract_state_dict_from_checkpoint_payload(payload)
+            host_type = str(getattr(self.args, 'host_type', 'clip')).lower()
+            compatible_state_dict, compat_stats = _prepare_state_dict_for_group_compatibility(
+                group_name=group_name,
+                state_dict=state_dict,
+                model=model,
+                host_type=host_type,
+            )
+            if group_name == 'host' and payload_type != 'modular_group_payload':
+                self.logger.info(
+                    'Host load compatibility mode active: payload_type=%s host_type=%s legacy_renamed=%d host_head_prefixed=%d',
+                    payload_type,
+                    host_type,
+                    compat_stats['legacy_renamed'],
+                    compat_stats['host_head_prefixed'],
+                )
 
             load_summary = load_group_state_dict(
                 model=model,
                 group_name=group_name,
-                state_dict=state_dict,
+                state_dict=compatible_state_dict,
                 strict=strict,
             )
             self.logger.info(
@@ -289,3 +385,44 @@ class ModularCheckpointManager:
             self.logger.info('Group %s missing keys: %s', group_name, load_summary['missing_keys'])
             self.logger.info('Group %s unexpected keys: %s', group_name, load_summary['unexpected_keys'])
             self.logger.info('Group %s shape mismatches: %s', group_name, load_summary['shape_mismatches'])
+
+            missing_keys = list(load_summary.get('missing_keys', []))
+            unexpected_keys = list(load_summary.get('unexpected_keys', []))
+            shape_mismatches = list(load_summary.get('shape_mismatches', []))
+            ignored_keys = sorted(set(unexpected_keys + [entry.split(':', 1)[0] for entry in shape_mismatches]))
+            has_missing = bool(missing_keys)
+            has_ignored = bool(ignored_keys)
+            has_unexpected = bool(unexpected_keys)
+
+            if has_missing or has_ignored or has_unexpected:
+                groups_with_issues += 1
+                self.logger.warning(
+                    'Group %s load diagnostics: has_missing=%s has_ignored=%s has_unexpected=%s',
+                    group_name,
+                    has_missing,
+                    has_ignored,
+                    has_unexpected,
+                )
+                if has_missing:
+                    self.logger.warning('Group %s missing model keys (all): %s', group_name, missing_keys)
+                if has_ignored:
+                    self.logger.warning('Group %s ignored checkpoint keys (all): %s', group_name, ignored_keys)
+                if has_unexpected:
+                    self.logger.warning('Group %s unexpected checkpoint keys (all): %s', group_name, unexpected_keys)
+            else:
+                self.logger.info(
+                    'Group %s load diagnostics: has_missing=false has_ignored=false has_unexpected=false',
+                    group_name,
+                )
+
+        if checked_groups == 0:
+            self.logger.warning(
+                'Modular checkpoint load enabled but no group had both enabled=true and a non-empty source path.'
+            )
+        else:
+            self.logger.info(
+                'Modular checkpoint load summary: checked_groups=%d groups_with_issues=%d groups_clean=%d',
+                checked_groups,
+                groups_with_issues,
+                checked_groups - groups_with_issues,
+            )
