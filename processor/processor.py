@@ -8,6 +8,7 @@ from solver import build_lr_scheduler, build_optimizer, summarize_optimizer_para
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
 from utils.freeze_schedule import (
+    LOGICAL_TO_OPTIMIZER_GROUPS,
     apply_loss_weight_overrides,
     apply_optimizer_lr_overrides,
     apply_phase_trainability,
@@ -31,6 +32,35 @@ from utils.precision import build_autocast_context, build_grad_scaler, canonical
 
 METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key != 'loss_total')
 CONSOLE_LOSS_LOG_KEYS = tuple(key for key in TRAIN_LOSS_KEYS if key in METER_KEYS)
+
+
+def _format_ratio(trainable: int, total: int):
+    percentage = (100.0 * float(trainable) / max(int(total), 1)) if int(total) > 0 else 0.0
+    return f'{int(trainable)}/{int(total)} ({percentage:.2f}%)'
+
+
+def _summarize_effective_lrs_by_logical_group(optimizer_group_summaries, logical_groups):
+    lr_by_optimizer_group = {
+        str(summary.get('name', '')): float(summary.get('lr', 0.0))
+        for summary in optimizer_group_summaries
+        if int(summary.get('tensor_count', 0)) > 0
+    }
+    formatted = []
+    for logical_group in logical_groups:
+        optimizer_group_names = LOGICAL_TO_OPTIMIZER_GROUPS.get(logical_group, tuple())
+        matches = [
+            (group_name, lr_by_optimizer_group[group_name])
+            for group_name in optimizer_group_names
+            if group_name in lr_by_optimizer_group
+        ]
+        if not matches:
+            continue
+        if len(matches) == 1:
+            formatted.append(f'{logical_group}={matches[0][1]:.2e}')
+            continue
+        parts = ','.join(f'{name}:{lr:.2e}' for name, lr in matches)
+        formatted.append(f'{logical_group}=[{parts}]')
+    return ', '.join(formatted) if formatted else 'none'
 
 
 def _compute_eval_loss_metrics(model, val_loss_loader, args):
@@ -240,7 +270,7 @@ def do_train(
         active_phase = get_active_phase(freeze_schedule_phases, epoch)
         if active_phase is not None and active_phase.name != active_freeze_phase_name:
             runtime_model = _unwrap_model(model)
-            trainability_summary = apply_phase_trainability(runtime_model, active_phase)
+            apply_phase_trainability(runtime_model, active_phase)
             applied_loss_weights = apply_loss_weight_overrides(runtime_model, args, active_phase.loss_weights)
 
             previous_optimizer = optimizer
@@ -252,19 +282,32 @@ def do_train(
             _rewind_scheduler_to_epoch(scheduler, epoch - 1)
 
             optimizer_groups = summarize_optimizer_param_groups(optimizer)
+            logger.info('Activated freeze phase `%s` at epoch %d.', active_phase.name, epoch)
             logger.info(
-                'Activated freeze phase `%s` at epoch %d: trainable=%s frozen=%s lr_overrides=%s loss_weights=%s',
-                active_phase.name,
-                epoch,
-                trainability_summary.get('trainable', {}),
-                trainability_summary.get('frozen', {}),
-                active_phase.lr_overrides,
+                'Phase groups: trainable=%s frozen=%s loss_weights=%s',
+                list(active_phase.trainable_groups),
+                list(active_phase.frozen_groups),
                 applied_loss_weights,
             )
             phase_groups = tuple(sorted(set(active_phase.trainable_groups + active_phase.frozen_groups)))
+            model_total_params = sum(int(parameter.numel()) for parameter in runtime_model.parameters())
+            model_trainable_params = sum(
+                int(parameter.numel()) for parameter in runtime_model.parameters() if parameter.requires_grad
+            )
             if phase_groups:
                 snapshot = get_group_trainability_snapshot(runtime_model, groups=phase_groups)
-                logger.info('Phase `%s` trainability snapshot: %s', active_phase.name, snapshot)
+                portion_entries = []
+                for group_name in phase_groups:
+                    group_stats = snapshot.get(group_name, {})
+                    group_total = int(group_stats.get('total_params', 0))
+                    group_trainable = int(group_stats.get('trainable_params', 0))
+                    if group_total > 0:
+                        portion_entries.append(f'{group_name}={_format_ratio(group_trainable, group_total)}')
+                logger.info(
+                    'Phase trainability portions: global=%s groups={%s}',
+                    _format_ratio(model_trainable_params, model_total_params),
+                    ', '.join(portion_entries) if portion_entries else 'none',
+                )
                 for group_name in active_phase.frozen_groups:
                     group_stats = snapshot.get(group_name, {})
                     if int(group_stats.get('trainable_tensors', 0)) > 0:
@@ -274,16 +317,20 @@ def do_train(
                             group_stats,
                         )
             if active_phase.lr_overrides:
-                logger.info('Phase `%s` optimizer lr override hit counts: %s', active_phase.name, lr_override_summary)
-            for group_summary in optimizer_groups:
-                logger.info(
-                    'Phase optimizer group %-28s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
-                    group_summary['name'],
-                    group_summary['lr'],
-                    group_summary['weight_decay'],
-                    group_summary['tensor_count'],
-                    group_summary['parameter_count'],
+                missing_override_hits = sorted(
+                    group_name for group_name, hit_count in lr_override_summary.items() if int(hit_count) <= 0
                 )
+                if missing_override_hits:
+                    logger.warning(
+                        'Phase `%s` lr_overrides did not hit optimizer groups for: %s',
+                        active_phase.name,
+                        missing_override_hits,
+                    )
+            lr_scope_groups = phase_groups if phase_groups else tuple(LOGICAL_TO_OPTIMIZER_GROUPS.keys())
+            logger.info(
+                'Phase effective lrs: %s',
+                _summarize_effective_lrs_by_logical_group(optimizer_groups, lr_scope_groups),
+            )
             active_freeze_phase_name = active_phase.name
         elif freeze_schedule_phases and active_phase is None and not missing_phase_warning_emitted:
             logger.warning(

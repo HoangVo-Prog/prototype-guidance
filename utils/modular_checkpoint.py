@@ -407,10 +407,6 @@ class ModularCheckpointManager:
                 len(load_summary['unexpected_keys']),
                 len(load_summary['shape_mismatches']),
             )
-            self.logger.info('Group %s loaded keys: %s', group_name, load_summary['loaded_keys'])
-            self.logger.info('Group %s missing keys: %s', group_name, load_summary['missing_keys'])
-            self.logger.info('Group %s unexpected keys: %s', group_name, load_summary['unexpected_keys'])
-            self.logger.info('Group %s shape mismatches: %s', group_name, load_summary['shape_mismatches'])
 
             missing_keys = list(load_summary.get('missing_keys', []))
             unexpected_keys = list(load_summary.get('unexpected_keys', []))
@@ -429,17 +425,13 @@ class ModularCheckpointManager:
                     has_ignored,
                     has_unexpected,
                 )
+                self.logger.warning('Group %s loaded keys (all): %s', group_name, load_summary.get('loaded_keys', []))
                 if has_missing:
                     self.logger.warning('Group %s missing model keys (all): %s', group_name, missing_keys)
                 if has_ignored:
                     self.logger.warning('Group %s ignored checkpoint keys (all): %s', group_name, ignored_keys)
                 if has_unexpected:
                     self.logger.warning('Group %s unexpected checkpoint keys (all): %s', group_name, unexpected_keys)
-            else:
-                self.logger.info(
-                    'Group %s load diagnostics: has_missing=false has_ignored=false has_unexpected=false',
-                    group_name,
-                )
 
         if checked_groups == 0:
             self.logger.warning(

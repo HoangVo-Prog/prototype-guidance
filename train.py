@@ -23,6 +23,7 @@ from utils.checkpoint import Checkpointer
 from utils.comm import get_rank, synchronize
 from utils.env import load_runtime_environment
 from utils.experiment import ExperimentTracker
+from utils.freeze_schedule import get_group_trainability_snapshot
 from utils.iotools import save_train_configs
 from utils.launch import build_nohup_log_path, build_run_name, get_effective_wandb_run_name, launch_with_nohup
 from utils.logger import setup_logger
@@ -69,6 +70,20 @@ def _count_parameters(parameters):
         if parameter.requires_grad:
             trainable += count
     return total, trainable
+
+
+def _format_ratio(trainable: int, total: int):
+    percentage = (100.0 * float(trainable) / max(int(total), 1)) if int(total) > 0 else 0.0
+    return f'{int(trainable)}/{int(total)} ({percentage:.2f}%)'
+
+
+def _summarize_optimizer_lrs(optimizer_group_summaries):
+    lr_parts = []
+    for group_summary in optimizer_group_summaries:
+        if int(group_summary.get('tensor_count', 0)) <= 0:
+            continue
+        lr_parts.append(f"{group_summary['name']}={group_summary['lr']:.2e}")
+    return ', '.join(lr_parts) if lr_parts else 'none'
 
 
 def _bridge_original_itself_loggers(base_logger):
@@ -159,96 +174,49 @@ def _prepare_finetune_state_dict(raw_state_dict, model, args):
 
 
 def log_parameter_trainability(logger, model, args):
+    debug_mode = bool(getattr(args, 'log_debug_metrics', False))
     if getattr(args, 'freeze_schedule', None):
         logger.info(
             'Initial parameter trainability snapshot (before epoch-based freeze_schedule activation at epoch start).'
         )
     total_params, trainable_params = _count_parameters(model.parameters())
+    snapshot = get_group_trainability_snapshot(model)
+    trainable_groups = []
+    frozen_groups = []
+    parameterless_groups = []
+    group_portions = []
+    for group_name in sorted(snapshot.keys()):
+        group_stats = snapshot[group_name]
+        group_total = int(group_stats.get('total_params', 0))
+        group_trainable = int(group_stats.get('trainable_params', 0))
+        if group_total == 0:
+            parameterless_groups.append(group_name)
+            continue
+        group_portions.append(f'{group_name}={_format_ratio(group_trainable, group_total)}')
+        if group_trainable > 0:
+            trainable_groups.append(group_name)
+        else:
+            frozen_groups.append(group_name)
+
     logger.info(
-        'Parameter trainability: trainable=%d / total=%d (%.2f%%)',
-        trainable_params,
-        total_params,
-        100.0 * trainable_params / max(total_params, 1),
+        'Trainability summary: global=%s trainable_groups=%s frozen_groups=%s parameterless_groups=%s',
+        _format_ratio(trainable_params, total_params),
+        trainable_groups,
+        frozen_groups,
+        parameterless_groups,
     )
-    if hasattr(model, 'named_optimizer_groups'):
+    if group_portions:
+        logger.info('Trainability portions by logical group: %s', ', '.join(group_portions))
+    if debug_mode and hasattr(model, 'named_optimizer_groups'):
         for group_name, named_params in model.named_optimizer_groups().items():
             param_count = sum(parameter.numel() for _, parameter in named_params)
             tensor_count = len(named_params)
-            logger.info('Trainable group %-16s tensors=%d params=%d', group_name, tensor_count, param_count)
-
-    if should_use_original_itself_runtime(args):
-        if hasattr(model, 'base_model') and hasattr(model.base_model, 'visual'):
-            image_total, image_trainable = _count_parameters(model.base_model.visual.parameters())
-        else:
-            image_total, image_trainable = 0, 0
-
-        text_parameters = []
-        if hasattr(model, 'base_model'):
-            base_model = model.base_model
-            for attribute in ('transformer', 'token_embedding'):
-                module = getattr(base_model, attribute, None)
-                if module is not None:
-                    text_parameters.extend(list(module.parameters()))
-            for attribute in ('positional_embedding', 'text_projection'):
-                tensor = getattr(base_model, attribute, None)
-                if isinstance(tensor, torch.Tensor):
-                    text_parameters.append(tensor)
-            ln_final = getattr(base_model, 'ln_final', None)
-            if ln_final is not None:
-                for attribute in ('weight', 'bias'):
-                    tensor = getattr(ln_final, attribute, None)
-                    if isinstance(tensor, torch.Tensor):
-                        text_parameters.append(tensor)
-
-        text_total, text_trainable = _count_parameters(text_parameters)
-        logger.info(
-            'ITSELF module params: image_backbone=%d/%d text_backbone=%d/%d',
-            image_trainable,
-            image_total,
-            text_trainable,
-            text_total,
-        )
-        return
-
-    image_total, image_trainable = _count_parameters(model.base_model.visual.parameters())
-    text_parameters = list(model.base_model.transformer.parameters())
-    text_parameters.extend(model.base_model.token_embedding.parameters())
-    text_parameters.extend([model.base_model.positional_embedding, model.base_model.ln_final.weight, model.base_model.ln_final.bias, model.base_model.text_projection])
-    text_total, text_trainable = _count_parameters(text_parameters)
-    prototype_bank_module = getattr(model.prototype_head, 'prototype_bank', None)
-    prototype_total, prototype_trainable = _count_parameters(prototype_bank_module.parameters()) if prototype_bank_module is not None else (0, 0)
-
-    projector_params = []
-    for module_name in ('image_projector', 'text_projector', 'image_adapter', 'text_adapter'):
-        module = getattr(model.prototype_head, module_name, None)
-        if module is None:
-            continue
-        projector_params.extend(list(module.parameters()))
-    projector_total, projector_trainable = _count_parameters(projector_params)
-
-    class_proxies = getattr(getattr(model.prototype_head, 'losses', None), 'class_proxies', None)
-    proxy_total, proxy_trainable = _count_parameters([class_proxies]) if class_proxies is not None else (0, 0)
-    logger.info(
-        'Freeze status: host_type=%s image_backbone=%s text_backbone=%s prototype_side=%s projectors=%s',
-        str(getattr(args, 'host_type', 'clip')),
-        'frozen' if bool(getattr(args, 'freeze_image_backbone', True)) else 'trainable',
-        'frozen' if bool(getattr(args, 'freeze_text_backbone', True)) else 'trainable',
-        'frozen' if bool(getattr(args, 'freeze_prototype_side', False)) else 'trainable',
-        'frozen' if projector_trainable == 0 else 'trainable',
-    )
-    logger.info(
-        'Module params: image_backbone=%d/%d text_backbone=%d/%d prototype_bank=%d/%d projectors=%d/%d class_proxies=%d/%d',
-        image_trainable,
-        image_total,
-        text_trainable,
-        text_total,
-        prototype_trainable,
-        prototype_total,
-        projector_trainable,
-        projector_total,
-        proxy_trainable,
-        proxy_total,
-    )
+            logger.info(
+                'Debug trainable group %-24s tensors=%d params=%d',
+                group_name,
+                tensor_count,
+                param_count,
+            )
 
 
 if __name__ == '__main__':
@@ -398,38 +366,52 @@ if __name__ == '__main__':
     model.to(device)
     optimizer = build_optimizer(args, model)
     optimizer_group_summaries = summarize_optimizer_param_groups(optimizer)
+    debug_mode = bool(getattr(args, 'log_debug_metrics', False))
     if use_original_itself:
         total_groups = len(optimizer_group_summaries)
         total_tensors = sum(summary['tensor_count'] for summary in optimizer_group_summaries)
         total_params = sum(summary['parameter_count'] for summary in optimizer_group_summaries)
         logger.info(
-            'Original ITSELF optimizer summary: groups=%d tensors=%d params=%d',
+            'Original ITSELF optimizer summary: groups=%d tensors=%d params=%d effective_lrs={%s}',
             total_groups,
             total_tensors,
             total_params,
+            _summarize_optimizer_lrs(optimizer_group_summaries),
         )
-        preview_count = min(8, total_groups)
-        for group_summary in optimizer_group_summaries[:preview_count]:
-            logger.info(
-                'Optimizer preview %-24s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
-                group_summary['name'],
-                group_summary['lr'],
-                group_summary['weight_decay'],
-                group_summary['tensor_count'],
-                group_summary['parameter_count'],
-            )
-        if total_groups > preview_count:
-            logger.info('... %d additional optimizer groups omitted from log for brevity.', total_groups - preview_count)
+        if debug_mode:
+            preview_count = min(8, total_groups)
+            for group_summary in optimizer_group_summaries[:preview_count]:
+                logger.info(
+                    'Debug optimizer preview %-24s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
+                    group_summary['name'],
+                    group_summary['lr'],
+                    group_summary['weight_decay'],
+                    group_summary['tensor_count'],
+                    group_summary['parameter_count'],
+                )
+            if total_groups > preview_count:
+                logger.info('... %d additional optimizer groups omitted from debug preview.', total_groups - preview_count)
     else:
-        for group_summary in optimizer_group_summaries:
-            logger.info(
-                'Optimizer group %-28s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
-                group_summary['name'],
-                group_summary['lr'],
-                group_summary['weight_decay'],
-                group_summary['tensor_count'],
-                group_summary['parameter_count'],
-            )
+        total_groups = len(optimizer_group_summaries)
+        total_tensors = sum(summary['tensor_count'] for summary in optimizer_group_summaries)
+        total_params = sum(summary['parameter_count'] for summary in optimizer_group_summaries)
+        logger.info(
+            'Optimizer summary: groups=%d tensors=%d params=%d effective_lrs={%s}',
+            total_groups,
+            total_tensors,
+            total_params,
+            _summarize_optimizer_lrs(optimizer_group_summaries),
+        )
+        if debug_mode:
+            for group_summary in optimizer_group_summaries:
+                logger.info(
+                    'Debug optimizer group %-28s lr=%.6g weight_decay=%.6g tensors=%d params=%d',
+                    group_summary['name'],
+                    group_summary['lr'],
+                    group_summary['weight_decay'],
+                    group_summary['tensor_count'],
+                    group_summary['parameter_count'],
+                )
     scheduler = build_lr_scheduler(args, optimizer)
 
     if args.distributed:
