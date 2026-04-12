@@ -31,7 +31,17 @@ from utils.precision import build_autocast_context, build_grad_scaler, canonical
 
 
 METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key != 'loss_total')
-CONSOLE_LOSS_LOG_KEYS = tuple(key for key in TRAIN_LOSS_KEYS if key in METER_KEYS)
+_CONSOLE_LOSS_SKIP_KEYS = {
+    # Keep canonical naming in console logs.
+    'loss_proto_total',  # alias of loss_proto in current prototype path
+    'loss_diag',         # legacy alias of loss_dir
+    'loss_support',      # legacy alias of loss_sup
+    'loss_diag_weighted',    # legacy alias of loss_dir_weighted
+    'loss_support_weighted', # legacy alias of loss_sup_weighted
+}
+CONSOLE_LOSS_LOG_KEYS = tuple(
+    key for key in TRAIN_LOSS_KEYS if key in METER_KEYS and key not in _CONSOLE_LOSS_SKIP_KEYS
+)
 
 
 def _format_ratio(trainable: int, total: int):
