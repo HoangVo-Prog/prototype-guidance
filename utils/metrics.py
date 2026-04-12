@@ -534,11 +534,6 @@ class Evaluator:
             row_slug = self._metric_slug(row_metrics['task'])
             for metric_name in self.requested_metrics:
                 self.latest_metrics[f'val/retrieval_sweep/{row_slug}/{metric_name}'] = float(row_metrics[metric_name])
-            self.logger.info(
-                'Retrieval row [%s]: %s',
-                row_metrics['task'],
-                {metric_name: float(row_metrics[metric_name]) for metric_name in self.requested_metrics},
-            )
         self.latest_metrics.update(debug_metrics)
 
         self.logger.info('\n' + str(table))
