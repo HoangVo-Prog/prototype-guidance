@@ -90,9 +90,9 @@ objectives:
     use_loss_proxy_text: false
     use_loss_proxy_text_exact: false
     use_loss_align: false
-    use_loss_dir: false
+    use_loss_diag: false
     use_loss_gap: true
-    use_loss_sup: false
+    use_loss_support: false
     prototype_gap_margin: 0.05
     prototype_support_target: 4.0
     use_loss_ret: false
@@ -106,9 +106,9 @@ objectives:
     proxy_text: 0.0
     proxy_text_exact: 0.0
     align: 0.0
-    dir: 0.0
+    diag: 0.0
     gap: 0.0
-    sup: 0.0
+    support: 0.0
     ret: 0.0
     balance: 0.0
     diversity: 0.0
@@ -163,9 +163,9 @@ training:
   #     loss_weights:
   #       lambda_host: 0.0
   #       lambda_ret: 1.0
-  #       lambda_dir: 1.0
+  #       lambda_diag: 1.0
   #       lambda_gap: 0.5
-  #       lambda_sup: 0.1
+  #       lambda_support: 0.1
 
   freeze_schedule:             # [CANONICAL OPTIONAL]
     - name: warmup
@@ -181,9 +181,9 @@ training:
       loss_weights:
         lambda_host: 0.0
         lambda_ret: 1.0
-        lambda_dir: 1.0
+        lambda_diag: 1.0
         lambda_gap: 0.5
-        lambda_sup: 0.1
+        lambda_support: 0.1
     - name: joint
       epoch_start: 6
       epoch_end: 60
@@ -197,9 +197,9 @@ training:
       loss_weights:
         lambda_host: 1.0
         lambda_ret: 0.5
-        lambda_dir: 0.5
+        lambda_diag: 0.5
         lambda_gap: 0.5
-        lambda_sup: 0.1
+        lambda_support: 0.1
 
   # [ALIAS_ONLY] accepted for legacy staged configs
   # stage: stage1

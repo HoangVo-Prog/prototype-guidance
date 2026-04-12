@@ -34,10 +34,10 @@ METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key !
 _CONSOLE_LOSS_SKIP_KEYS = {
     # Keep canonical naming in console logs.
     'loss_proto_total',  # alias of loss_proto in current prototype path
-    'loss_diag',         # legacy alias of loss_dir
-    'loss_support',      # legacy alias of loss_sup
-    'loss_diag_weighted',    # legacy alias of loss_dir_weighted
-    'loss_support_weighted', # legacy alias of loss_sup_weighted
+    'loss_dir',          # alias of loss_diag
+    'loss_sup',          # alias of loss_support
+    'loss_dir_weighted',     # alias of loss_diag_weighted
+    'loss_sup_weighted',     # alias of loss_support_weighted
 }
 CONSOLE_LOSS_LOG_KEYS = tuple(
     key for key in TRAIN_LOSS_KEYS if key in METER_KEYS and key not in _CONSOLE_LOSS_SKIP_KEYS
