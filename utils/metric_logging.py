@@ -308,11 +308,10 @@ _LOSS_BASE_SUFFIX_MAP = {
     'loss_support': 'support',
     'loss_diversity': 'diversity',
     'loss_balance': 'balance',
-    # Kept under train/loss/* for minimal, non-invasive compatibility.
-    'loss_host_weighted': 'host_weighted',
 }
 
 _LOSS_WEIGHTED_SUFFIX_MAP = {
+    'loss_host_weighted': 'host',
     'loss_proxy_image_weighted': 'proxy_image',
     'loss_proxy_text_weighted': 'proxy_text',
     'loss_proxy_text_exact_weighted': 'proxy_text_exact',
@@ -326,19 +325,6 @@ _LOSS_WEIGHTED_SUFFIX_MAP = {
     'loss_support_weighted': 'support',
     'loss_diversity_weighted': 'diversity',
     'loss_balance_weighted': 'balance',
-}
-
-_TRAIN_ALIAS_KEY_MAP = {
-    'loss_proto': 'train/loss_proto',
-    'loss_ret': 'train/loss_ret',
-    'loss_diag': 'train/loss_diag',
-    'loss_gap': 'train/loss_gap',
-    'loss_support': 'train/loss_support',
-    'diag_pos_cosine_mean': 'train/diag_pos_cosine_mean',
-    'diag_hardneg_cosine_mean': 'train/diag_hardneg_cosine_mean',
-    'diag_gap_margin_mean': 'train/diag_gap_margin_mean',
-    'routing_effective_support_mean': 'train/routing_effective_support_mean',
-    'routing_effective_support_std': 'train/routing_effective_support_std',
 }
 
 _TRAIN_MODEL_KEYS = {
@@ -732,9 +718,6 @@ def build_train_metrics_from_scalars(
         except (TypeError, ValueError):
             continue
         metrics[map_train_scalar_to_wandb_key(key)] = scalar_value
-        alias_key = _TRAIN_ALIAS_KEY_MAP.get(key)
-        if alias_key is not None:
-            metrics[alias_key] = scalar_value
     return metrics
 
 

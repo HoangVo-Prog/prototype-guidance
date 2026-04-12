@@ -95,7 +95,7 @@ objectives:
     use_loss_proxy_text_exact: false
     use_loss_align: false
     use_loss_diag: true
-    use_loss_gap: true
+    use_loss_gap: false
     use_loss_support: true
     prototype_gap_margin: 0.05
     prototype_support_target: 12.0
@@ -104,15 +104,16 @@ objectives:
     use_balancing_loss: false
     use_diversity_loss: false
   lambda:
-    host: 0.15
+    host: 0.1
     proxy: 0.0
     proxy_image: 0.0
     proxy_text: 0.0
     proxy_text_exact: 0.0
     align: 0.0
-    diag: 0.5
-    ret: 0.25
-    support: 0.05
+    diag: 1.0
+    gap: 0.0
+    support: 0.1
+    ret: 0.5
     balance: 0.0
     diversity: 0.0
 

@@ -79,6 +79,12 @@ fusion:
     - { name: "proto_010", lambda_host: 0.90, lambda_prototype: 0.10 }
     - { name: "proto_020", lambda_host: 0.80, lambda_prototype: 0.20 }
     - { name: "proto_030", lambda_host: 0.70, lambda_prototype: 0.30 }
+    - { name: "proto_040", lambda_host: 0.60, lambda_prototype: 0.40 }
+    - { name: "proto_050", lambda_host: 0.50, lambda_prototype: 0.50 }
+    - { name: "proto_060", lambda_host: 0.40, lambda_prototype: 0.60 }
+    - { name: "proto_070", lambda_host: 0.30, lambda_prototype: 0.70 }
+    - { name: "proto_080", lambda_host: 0.20, lambda_prototype: 0.80 }
+    - { name: "proto_090", lambda_host: 0.10, lambda_prototype: 0.90 }
     - { name: "proto_100", lambda_host: 0.00, lambda_prototype: 1.00 }
 
 objectives:
@@ -88,24 +94,27 @@ objectives:
     use_loss_proxy_text: false
     use_loss_proxy_text_exact: false
     use_loss_align: false
-    use_loss_diag: false
-    use_loss_ret: false
+    use_loss_diag: true
+    use_loss_gap: false
+    use_loss_support: true
+    prototype_gap_margin: 0.05
+    prototype_support_target: 12.0
+    use_loss_ret: true
     retrieval_mode: surrogate_i2t
-    use_loss_support: false
-    support_min: 2.0
     use_balancing_loss: false
     use_diversity_loss: false
   lambda:
-    host: 1.0
+    host: 0.1
     proxy: 0.0
     proxy_image: 0.0
     proxy_text: 0.0
     proxy_text_exact: 0.0
     align: 0.0
-    diag: 0.0
+    diag: 1.0
+    gap: 0.0
     ret: 0.0
-    support: 0.0
-    balance: 0.0
+    support: 0.1
+    balance: 0.5
     diversity: 0.0
 
 text_pooling:
@@ -177,33 +186,28 @@ training:
         prototype_projector: 5.0e-6
         routing: 2.0e-6
         fusion: 5.0e-6
-      loss_weights:
-        lambda_host: 1.0
-        lambda_ret: 0.25
-        lambda_diag: 0.25
-        lambda_bal: 0.002
-        lambda_div: 0.002
+
 
 optimizer:
-  type: AdamW
+  type: Adam
   lr: 1.0e-5
-  lr_prototype_bank: 0.0
-  lr_projectors: 0.0
-  lr_prototype_routing: 0.0
-  lr_prototype_pooling: 0.0
-  lr_prototype_contextualization: 0.0
-  lr_host_projectors: 1.0e-5
-  lr_image_backbone: 5.0e-6
-  lr_text_backbone: 5.0e-6
+  lr_prototype_bank: 5.0e-5
+  lr_projectors: 5.0e-5
+  lr_prototype_routing: 5.0e-5
+  lr_prototype_pooling: 5.0e-5
+  lr_prototype_contextualization: 5.0e-5
+  lr_host_projectors: 2.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
   weight_decay: 4.0e-5
-  weight_decay_prototype_bank: 0.0
-  weight_decay_projectors: 0.0
-  weight_decay_prototype_routing: 0.0
-  weight_decay_prototype_pooling: 0.0
-  weight_decay_prototype_contextualization: 0.0
+  weight_decay_prototype_bank: 1.0e-4
+  weight_decay_projectors: 1.0e-4
+  weight_decay_prototype_routing: 1.0e-4
+  weight_decay_prototype_pooling: 1.0e-4
+  weight_decay_prototype_contextualization: 1.0e-4
   weight_decay_host_projectors: 4.0e-5
-  lr_class_proxies: 0.0
-  weight_decay_class_proxies: 0.0
+  lr_class_proxies: 5.0e-5
+  weight_decay_class_proxies: 1.0e-4
   weight_decay_image_backbone: 4.0e-5
   weight_decay_text_backbone: 4.0e-5
   momentum: 0.9

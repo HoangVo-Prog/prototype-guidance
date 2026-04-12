@@ -28,6 +28,7 @@ class MetricLoggingTests(unittest.TestCase):
         outputs = {
             'loss_total': 3.0,
             'loss_proxy': 2.0,
+            'loss_host_weighted': 0.8,
             'loss_proxy_image': 1.25,
             'loss_proxy_text': 0.75,
             'loss_proxy_text_exact': 0.1,
@@ -51,6 +52,8 @@ class MetricLoggingTests(unittest.TestCase):
         }
         metrics = build_train_metrics(epoch=2, step=17, outputs=outputs, lr=1e-3, include_debug_metrics=True)
         self.assertEqual(metrics['train/loss/ret'], 0.5)
+        self.assertEqual(metrics['train/loss_weighted/host'], 0.8)
+        self.assertNotIn('train/loss/host_weighted', metrics)
         self.assertEqual(metrics['train/loss_weighted/ret'], 0.5)
         self.assertEqual(metrics['train/geometry/surrogate_pairwise_logit_mean'], 0.2)
         self.assertEqual(metrics['train/grad/surrogate_retrieval_grad_norm'], 1.5)
@@ -72,6 +75,7 @@ class MetricLoggingTests(unittest.TestCase):
         self.assertEqual(metrics['train/lr'], 5e-4)
         self.assertEqual(metrics['train/loss/total'], 1.25)
         self.assertEqual(metrics['train/loss/ret'], 0.4)
+        self.assertNotIn('train/loss_ret', metrics)
         self.assertEqual(metrics['train/routing/routing_entropy'], 2.0)
         self.assertEqual(metrics['train/grad/surrogate_retrieval_grad_norm'], 1.3)
 

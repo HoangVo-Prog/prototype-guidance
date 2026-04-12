@@ -289,12 +289,12 @@ checkpointing:
         filename_latest: checkpoint_fusion_latest.pth
         filename_best: checkpoint_fusion_best.pth
   load:
-    enabled: false
+    enabled: true
     strict: true
     sources:
       host:
-        enabled: false
-        path:
+        enabled: true
+        path: /home/vhoang/itself_ckpt/itself-rstp/best.pth
       prototype_bank:
         enabled: false
         path:
