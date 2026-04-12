@@ -107,10 +107,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('objectives', 'lambda', 'ret'): 'lambda_ret',
     ('objectives', 'lambda', 'balance'): 'prototype_balance_loss_weight',
     ('objectives', 'lambda', 'diversity'): 'diversity_loss_weight',
-    ('objectives', 'prototype_losses', 'ret'): 'lambda_ret',
-    ('objectives', 'prototype_losses', 'dir'): 'lambda_dir',
-    ('objectives', 'prototype_losses', 'gap'): 'lambda_gap',
-    ('objectives', 'prototype_losses', 'sup'): 'lambda_sup',
 
     ('text_pooling', 'token_policy'): 'token_policy',
     ('text_pooling', 'scoring_type'): 'token_scoring_type',
@@ -248,8 +244,6 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('objectives', 'lambda_balance'): 'prototype_balance_loss_weight',
     ('objectives', 'prototype_gap_margin'): 'prototype_gap_margin',
     ('objectives', 'prototype_support_target'): 'prototype_support_target',
-    ('objectives', 'prototype_losses', 'diag'): 'lambda_dir',
-    ('objectives', 'prototype_losses', 'support'): 'lambda_sup',
 
     ('loss', 'lambda_proxy'): 'lambda_proxy',
     ('loss', 'lambda_proxy_image'): 'lambda_proxy_image',
@@ -349,7 +343,7 @@ SECTION_TEMPLATE = {
 # `loss` is retained as an alias-only section for backward compatibility.
 AUXILIARY_SECTION_KEYS = {'loss'}
 SECTION_KEYS = set(SECTION_TEMPLATE.keys()) | AUXILIARY_SECTION_KEYS
-OBJECTIVES_NESTED_SECTION_KEYS = {'objectives', 'lambda', 'prototype_losses'}
+OBJECTIVES_NESTED_SECTION_KEYS = {'objectives', 'lambda'}
 TRAINING_NESTED_SECTION_KEYS = {'freeze_schedule'}
 CHECKPOINTING_GROUP_KEYS = set(CHECKPOINT_GROUPS)
 CHECKPOINTING_METRIC_KEYS = {'name', 'mode'}

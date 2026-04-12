@@ -99,11 +99,6 @@ objectives:
     retrieval_mode: surrogate_i2t
     use_balancing_loss: false
     use_diversity_loss: false
-  prototype_losses:
-    ret: 0.5
-    dir: 1.0
-    gap: 0.5
-    sup: 0.1
   lambda:
     host: 0.0
     proxy: 0.0
