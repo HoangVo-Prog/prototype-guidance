@@ -73,8 +73,6 @@ prototype:
 
 fusion:
   enabled: true
-  lambda_host: 0.50
-  lambda_prototype: 0.50
   coefficient_source: fixed
   eval_subsets:
     - { name: "host_only", lambda_host: 1.00, lambda_prototype: 0.00 }
@@ -106,7 +104,7 @@ objectives:
     use_balancing_loss: false
     use_diversity_loss: false
   lambda:
-    host: 1.0
+    host: 0.0
     proxy: 0.0
     proxy_image: 0.0
     proxy_text: 0.0
@@ -179,15 +177,12 @@ training:
       epoch_end: 40
       trainable_groups: [host_backbone, host_retrieval, prototype_projector, fusion]
       frozen_groups: [prototype_bank, routing]
-      lr_overrides:
-        host_backbone: 5.0e-6
-        host_retrieval: 1.0e-5
-        prototype_projector: 2.0e-5
-        fusion: 2.0e-5
       loss_weights:
-        lambda_host: 1.0
+        lambda_host: 0.1
         lambda_ret: 0.25
-        lambda_diag: 0.25
+        lambda_diag: 0.5
+        lambda_gap: 0.25
+        lambda_support: 0.05
         lambda_bal: 0.002
         lambda_div: 0.002
 

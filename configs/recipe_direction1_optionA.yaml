@@ -1,4 +1,4 @@
-﻿# Canonical single config file.
+# Canonical single config file.
 # Decision policy:
 # - Keep: ITSELF hyperparameters from adapter/WACV2026-Oral-ITSELF/utils/options.py
 # - Keep: shared training-process/runtime controls from this repo (optimizer scheduler logging eval process)
@@ -73,8 +73,6 @@ prototype:
 
 fusion:
   enabled: true
-  lambda_host: 0.50
-  lambda_prototype: 0.50
   coefficient_source: fixed
   eval_subsets:
     - { name: "host_only", lambda_host: 1.00, lambda_prototype: 0.00 }
