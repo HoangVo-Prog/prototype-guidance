@@ -91,16 +91,18 @@ fusion:
 
 objectives:
   objectives:
-    use_host_loss: true
+    use_host_loss: false
     use_loss_proxy_image: false
     use_loss_proxy_text: false
     use_loss_proxy_text_exact: false
     use_loss_align: false
-    use_loss_diag: false
-    use_loss_ret: false
+    use_loss_diag: true
+    use_loss_gap: true
+    use_loss_support: true
+    prototype_gap_margin: 0.05
+    prototype_support_target: 4.0
+    use_loss_ret: true
     retrieval_mode: surrogate_i2t
-    use_loss_support: false
-    support_min: 2.0
     use_balancing_loss: false
     use_diversity_loss: false
   lambda:
