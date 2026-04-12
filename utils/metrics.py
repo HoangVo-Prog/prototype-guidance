@@ -513,7 +513,9 @@ class Evaluator:
         ]
         if not metrics_rows:
             raise RuntimeError('Evaluation produced no similarity rows.')
-        metrics = metrics_rows[0]
+        # Select the best retrieval row by R1 so checkpointing/logged current R1 tracks
+        # the strongest scorer in the evaluated fusion sweep.
+        metrics = max(metrics_rows, key=lambda row: float(row['R1']))
 
         table = PrettyTable(['task'] + list(self.requested_metrics))
         for row_metrics in metrics_rows:
@@ -527,6 +529,7 @@ class Evaluator:
         }
         self.latest_metrics = build_validation_retrieval_metrics(retrieval_metrics)
         self.latest_metrics['val/top1'] = metrics['R1']
+        self.latest_metrics['val/top1_row'] = metrics['task']
         for row_metrics in metrics_rows:
             row_slug = self._metric_slug(row_metrics['task'])
             for metric_name in self.requested_metrics:
@@ -550,7 +553,7 @@ class Evaluator:
                     hardest_negative,
                     margin,
                 )
-        self.logger.info('\ncurrent R1 = ' + str(metrics['R1']))
+        self.logger.info('\ncurrent R1 = %s (%s)', str(metrics['R1']), metrics['task'])
         return metrics['R1']
 
 

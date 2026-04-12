@@ -89,7 +89,7 @@ fusion:
 
 objectives:
   objectives:
-    use_host_loss: false
+    use_host_loss: true
     use_loss_proxy_image: false
     use_loss_proxy_text: false
     use_loss_proxy_text_exact: false
@@ -104,15 +104,15 @@ objectives:
     use_balancing_loss: false
     use_diversity_loss: false
   lambda:
-    host: 0.0
+    host: 0.15
     proxy: 0.0
     proxy_image: 0.0
     proxy_text: 0.0
     proxy_text_exact: 0.0
     align: 0.0
-    diag: 0.0
-    ret: 0.0
-    support: 0.0
+    diag: 0.5
+    ret: 0.25
+    support: 0.05
     balance: 0.0
     diversity: 0.0
 
@@ -177,14 +177,6 @@ training:
       epoch_end: 40
       trainable_groups: [host_backbone, host_retrieval, prototype_projector, fusion]
       frozen_groups: [prototype_bank, routing]
-      loss_weights:
-        lambda_host: 0.1
-        lambda_ret: 0.25
-        lambda_diag: 0.5
-        lambda_gap: 0.25
-        lambda_support: 0.05
-        lambda_bal: 0.002
-        lambda_div: 0.002
 
 optimizer:
   type: Adam
