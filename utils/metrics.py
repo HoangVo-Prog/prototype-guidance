@@ -513,9 +513,12 @@ class Evaluator:
         ]
         if not metrics_rows:
             raise RuntimeError('Evaluation produced no similarity rows.')
-        # Select the best retrieval row by R1 so checkpointing/logged current R1 tracks
-        # the strongest scorer in the evaluated fusion sweep.
-        metrics = max(metrics_rows, key=lambda row: float(row['R1']))
+        # Select the best retrieval row by R1 for checkpointing/logged current R1,
+        # excluding the pure host-only row.
+        eligible_rows = [row for row in metrics_rows if str(row.get('task', '')).strip() != 'host-t2i']
+        if not eligible_rows:
+            eligible_rows = metrics_rows
+        metrics = max(eligible_rows, key=lambda row: float(row['R1']))
 
         table = PrettyTable(['task'] + list(self.requested_metrics))
         for row_metrics in metrics_rows:
