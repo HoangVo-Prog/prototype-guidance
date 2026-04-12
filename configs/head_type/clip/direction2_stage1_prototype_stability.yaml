@@ -91,13 +91,20 @@ objectives:
     use_loss_proxy_text: false
     use_loss_proxy_text_exact: false
     use_loss_align: false
-    use_loss_diag: false
-    use_loss_ret: false
+    use_loss_dir: true
+    use_loss_gap: true
+    use_loss_sup: true
+    prototype_gap_margin: 0.05
+    prototype_support_target: 4.0
+    use_loss_ret: true
     retrieval_mode: surrogate_i2t
-    use_loss_support: false
-    support_min: 2.0
     use_balancing_loss: false
     use_diversity_loss: false
+  prototype_losses:
+    ret: 0.5
+    dir: 1.0
+    gap: 0.5
+    sup: 0.1
   lambda:
     host: 1.0
     proxy: 0.0
@@ -105,9 +112,10 @@ objectives:
     proxy_text: 0.0
     proxy_text_exact: 0.0
     align: 0.0
-    diag: 0.0
-    ret: 0.0
-    support: 0.0
+    dir: 1.0
+    gap: 0.5
+    sup: 0.1
+    ret: 0.5
     balance: 0.0
     diversity: 0.0
 
@@ -161,12 +169,12 @@ training:
   #     loss_weights:
   #       lambda_host: 0.0
   #       lambda_ret: 1.0
-  #       lambda_diag: 1.0
-  #       lambda_bal: 0.01
-  #       lambda_div: 0.01
+  #       lambda_dir: 1.0
+  #       lambda_gap: 0.5
+  #       lambda_sup: 0.1
 
   freeze_schedule:
-    # Stage 1 emphasis: structural fidelity (diag), weak semantic anchor (ret), anti-collapse regularizers.
+    # Stage 1 emphasis: ret/dir/gap/sup prototype objective.
     - name: stage1_prototype_stability
       epoch_start: 1
       epoch_end: 20
@@ -180,9 +188,9 @@ training:
       loss_weights:
         lambda_host: 0.0
         lambda_ret: 0.5
-        lambda_diag: 1.0
-        lambda_bal: 0.01
-        lambda_div: 0.01
+        lambda_dir: 1.0
+        lambda_gap: 0.5
+        lambda_sup: 0.1
 
 optimizer:
   type: AdamW

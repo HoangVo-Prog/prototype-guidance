@@ -60,6 +60,14 @@ class PrototypeConditionedTextHead(nn.Module):
         use_loss_proxy_text_exact: bool = True,
         use_loss_align: bool = True,
         lambda_align: float = 1.0,
+        use_loss_dir: Optional[bool] = None,
+        lambda_dir: Optional[float] = None,
+        use_loss_gap: bool = True,
+        lambda_gap: float = 0.5,
+        fidelity_gap_margin: float = 0.05,
+        use_loss_sup: Optional[bool] = None,
+        lambda_sup: Optional[float] = None,
+        prototype_support_target: Optional[float] = None,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
         use_loss_ret: bool = True,
@@ -139,6 +147,11 @@ class PrototypeConditionedTextHead(nn.Module):
             normalize_output=normalize_projector_outputs,
             projector_type=projector_type,
         )
+        resolved_use_loss_dir = bool(use_loss_diag) if use_loss_dir is None else bool(use_loss_dir)
+        resolved_lambda_dir = float(lambda_diag) if lambda_dir is None else float(lambda_dir)
+        resolved_use_loss_sup = bool(use_loss_support) if use_loss_sup is None else bool(use_loss_sup)
+        resolved_lambda_sup = float(support_loss_weight) if lambda_sup is None else float(lambda_sup)
+        resolved_support_target = support_min if prototype_support_target is None else prototype_support_target
         self.losses = PrototypeLosses(
             temperature_init=contrastive_temperature_init,
             learnable_temperature=learnable_contrastive_temperature,
@@ -155,6 +168,14 @@ class PrototypeConditionedTextHead(nn.Module):
             use_loss_proxy_text_exact=use_loss_proxy_text_exact,
             use_loss_align=use_loss_align,
             lambda_align=lambda_align,
+            use_loss_dir=resolved_use_loss_dir,
+            lambda_dir=resolved_lambda_dir,
+            use_loss_gap=use_loss_gap,
+            lambda_gap=lambda_gap,
+            fidelity_gap_margin=fidelity_gap_margin,
+            use_loss_sup=resolved_use_loss_sup,
+            lambda_sup=resolved_lambda_sup,
+            prototype_support_target=resolved_support_target,
             use_loss_diag=use_loss_diag,
             lambda_diag=lambda_diag,
             use_loss_ret=use_loss_ret,
@@ -899,7 +920,6 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
-
 
 
 

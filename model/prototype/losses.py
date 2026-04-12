@@ -23,6 +23,14 @@ class PrototypeLosses(nn.Module):
         use_loss_proxy_text_exact: bool = True,
         use_loss_align: bool = True,
         lambda_align: float = 1.0,
+        use_loss_dir: Optional[bool] = None,
+        lambda_dir: Optional[float] = None,
+        use_loss_gap: bool = True,
+        lambda_gap: float = 0.5,
+        fidelity_gap_margin: float = 0.05,
+        use_loss_sup: Optional[bool] = None,
+        lambda_sup: Optional[float] = None,
+        prototype_support_target: Optional[float] = None,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
         use_loss_ret: bool = True,
@@ -64,19 +72,35 @@ class PrototypeLosses(nn.Module):
         self.use_loss_proxy_text_exact = bool(use_loss_proxy_text_exact)
         self.use_loss_align = bool(use_loss_align)
         self.lambda_align = float(lambda_align)
-        self.use_loss_diag = bool(use_loss_diag)
-        self.lambda_diag = float(lambda_diag)
+        resolved_use_loss_dir = bool(use_loss_diag) if use_loss_dir is None else bool(use_loss_dir)
+        resolved_lambda_dir = float(lambda_diag) if lambda_dir is None else float(lambda_dir)
+        resolved_use_loss_sup = bool(use_loss_support) if use_loss_sup is None else bool(use_loss_sup)
+        resolved_lambda_sup = float(support_loss_weight) if lambda_sup is None else float(lambda_sup)
+        resolved_support_target = float(support_min) if prototype_support_target is None else float(prototype_support_target)
+        self.use_loss_dir = resolved_use_loss_dir
+        self.lambda_dir = resolved_lambda_dir
+        self.use_loss_gap = bool(use_loss_gap)
+        self.lambda_gap = float(lambda_gap)
+        self.fidelity_gap_margin = float(fidelity_gap_margin)
         self.use_loss_ret = bool(use_loss_ret)
         self.lambda_ret = float(lambda_ret)
-        self.use_loss_support = bool(use_loss_support)
-        self.lambda_support = float(support_loss_weight)
-        self.support_min = float(support_min)
+        self.use_loss_sup = resolved_use_loss_sup
+        self.lambda_sup = resolved_lambda_sup
+        self.support_target = resolved_support_target
+        # Backward-compatible aliases for legacy config/checkpoint plumbing.
+        self.use_loss_diag = self.use_loss_dir
+        self.lambda_diag = self.lambda_dir
+        self.use_loss_support = self.use_loss_sup
+        self.lambda_support = self.lambda_sup
+        self.support_min = self.support_target
         self.proxy_temperature = float(proxy_temperature)
         self.num_classes = int(num_classes)
         self.embedding_dim = int(embedding_dim)
 
-        if self.support_min <= 0.0:
-            raise ValueError('support_min must be positive.')
+        if self.support_target <= 0.0:
+            raise ValueError('prototype_support_target must be positive.')
+        if self.fidelity_gap_margin < 0.0:
+            raise ValueError('fidelity_gap_margin must be non-negative.')
 
 
         initial_logit_scale = torch.log(torch.tensor(1.0 / temperature_init, dtype=torch.float32))
@@ -271,17 +295,42 @@ class PrototypeLosses(nn.Module):
         target_embeddings = F.normalize(target_embeddings, dim=-1)
         return (1.0 - (source_embeddings * target_embeddings).sum(dim=-1)).clamp_min(0.0).mean()
 
-    def diagonal_fidelity_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> torch.Tensor:
+    def directional_fidelity_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> torch.Tensor:
         return self.cosine_alignment_loss(surrogate_embeddings, exact_embeddings.detach())
+
+    def diagonal_fidelity_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> torch.Tensor:
+        return self.directional_fidelity_loss(surrogate_embeddings, exact_embeddings)
+
+    def fidelity_gap_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> Dict[str, torch.Tensor]:
+        surrogate_normalized = F.normalize(surrogate_embeddings, dim=-1)
+        exact_normalized = F.normalize(exact_embeddings.detach(), dim=-1)
+        cosine_matrix = surrogate_normalized @ exact_normalized.t()
+        batch_size = cosine_matrix.size(0)
+        positive = cosine_matrix.diagonal()
+        if batch_size <= 1 or positive.numel() == 0:
+            hardest_negative = torch.zeros_like(positive)
+            loss = positive.new_zeros(())
+        else:
+            negative_mask = ~torch.eye(batch_size, device=cosine_matrix.device, dtype=torch.bool)
+            hardest_negative = cosine_matrix.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+            loss = (self.fidelity_gap_margin - positive + hardest_negative).clamp_min(0.0).mean()
+        return {
+            'loss': loss,
+            'pos': positive,
+            'hardneg': hardest_negative,
+            'gap_margin': positive - hardest_negative,
+        }
 
     def effective_support(self, routing_weights: torch.Tensor) -> torch.Tensor:
         return torch.reciprocal(routing_weights.pow(2).sum(dim=-1).clamp_min(1e-12))
 
     def support_loss(self, routing_weights: Optional[torch.Tensor]) -> torch.Tensor:
-        if routing_weights is None or not self.use_loss_support:
+        if routing_weights is None or not self.use_loss_sup:
             device = self.logit_scale.device if routing_weights is None else routing_weights.device
             return torch.zeros((), device=device)
-        return (self.support_min - self.effective_support(routing_weights)).clamp_min(0.0).pow(2).mean()
+        support = self.effective_support(routing_weights)
+        target = support.new_tensor(self.support_target).clamp_min(1e-12)
+        return ((support - target) / target).clamp_min(0.0).pow(2).mean()
 
     def diversity_loss(self, prototypes: Optional[torch.Tensor]) -> torch.Tensor:
         if prototypes is None or not self.use_diversity_loss:
@@ -339,7 +388,8 @@ class PrototypeLosses(nn.Module):
                     f'got {tuple(surrogate_pairwise_logits.shape)} for batch size {batch_size}.'
                 )
 
-        proxy_losses_active = bool((self.use_loss_proxy_image or self.use_loss_proxy_text or self.use_loss_proxy_text_exact) and not disable_proxy_losses)
+        # Stage-1 prototype objective is intentionally focused on ret/dir/gap/sup only.
+        proxy_losses_active = False
         pids_for_metrics = pids
         if pids_for_metrics is None:
             pids_for_metrics = torch.arange(batch_size, device=image_embeddings.device, dtype=torch.long)
@@ -369,33 +419,52 @@ class PrototypeLosses(nn.Module):
         loss_proxy_text_weighted = self.lambda_proxy_text * loss_proxy_text
         loss_proxy_text_exact_weighted = self.lambda_proxy_text_exact * loss_proxy_text_exact
         loss_proxy_weighted = loss_proxy_image_weighted + loss_proxy_text_weighted + loss_proxy_text_exact_weighted
-        loss_align = self.cosine_alignment_loss(image_embeddings, surrogate_text_embeddings) if self.use_loss_align else zero
-        loss_diag = self.diagonal_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings) if self.use_loss_diag else zero
+        loss_align = zero
+        loss_dir = self.directional_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings) if self.use_loss_dir else zero
+        gap_info = self.fidelity_gap_loss(surrogate_text_embeddings, exact_text_embeddings)
+        loss_gap = gap_info['loss'] if self.use_loss_gap else zero
         loss_ret = loss_ret_info['loss'] if self.use_loss_ret else zero
         loss_ret_weighted = self.lambda_ret * loss_ret
-        loss_support = self.support_loss(routing_weights)
-        loss_diversity = self.diversity_loss(prototypes)
-        loss_balance = self.balance_loss(routing_weights)
+        loss_sup = self.support_loss(routing_weights)
+        loss_diversity = zero
+        loss_balance = zero
+        loss_dir_weighted = self.lambda_dir * loss_dir
+        loss_gap_weighted = self.lambda_gap * loss_gap
+        loss_sup_weighted = self.lambda_sup * loss_sup
         loss_total = (
-            loss_proxy_weighted
-            + (self.lambda_align * loss_align)
-            + (self.lambda_diag * loss_diag)
-            + loss_ret_weighted
-            + (self.lambda_support * loss_support)
-            + (self.lambda_div * loss_diversity)
-            + (self.lambda_bal * loss_balance)
+            loss_ret_weighted
+            + loss_dir_weighted
+            + loss_gap_weighted
+            + loss_sup_weighted
         )
+
+        support_values = None if routing_weights is None else self.effective_support(routing_weights)
+        if gap_info['pos'].numel() > 0:
+            diag_pos_cosine_mean = gap_info['pos'].mean().detach()
+            diag_hardneg_cosine_mean = gap_info['hardneg'].mean().detach()
+            diag_gap_margin_mean = gap_info['gap_margin'].mean().detach()
+        else:
+            diag_pos_cosine_mean = zero.detach()
+            diag_hardneg_cosine_mean = zero.detach()
+            diag_gap_margin_mean = zero.detach()
+        routing_support_mean = support_values.mean().detach() if support_values is not None else zero.detach()
+        routing_support_std = support_values.std(unbiased=False).detach() if support_values is not None else zero.detach()
 
         outputs = {
             'loss_total': loss_total,
+            'loss_proto': loss_total,
             'loss_proxy': loss_proxy,
             'loss_proxy_image': loss_proxy_image,
             'loss_proxy_text': loss_proxy_text,
             'loss_proxy_text_exact': loss_proxy_text_exact,
             'loss_ret': loss_ret,
             'loss_align': loss_align,
-            'loss_diag': loss_diag,
-            'loss_support': loss_support,
+            'loss_dir': loss_dir,
+            'loss_gap': loss_gap,
+            'loss_sup': loss_sup,
+            # Backward-compatible aliases.
+            'loss_diag': loss_dir,
+            'loss_support': loss_sup,
             'loss_diversity': loss_diversity,
             'loss_balance': loss_balance,
             'loss_proxy_image_weighted': loss_proxy_image_weighted,
@@ -403,11 +472,14 @@ class PrototypeLosses(nn.Module):
             'loss_proxy_text_exact_weighted': loss_proxy_text_exact_weighted,
             'loss_proxy_weighted': loss_proxy_weighted,
             'loss_ret_weighted': loss_ret_weighted,
-            'loss_align_weighted': self.lambda_align * loss_align,
-            'loss_diag_weighted': self.lambda_diag * loss_diag,
-            'loss_support_weighted': self.lambda_support * loss_support,
-            'loss_diversity_weighted': self.lambda_div * loss_diversity,
-            'loss_balance_weighted': self.lambda_bal * loss_balance,
+            'loss_align_weighted': zero,
+            'loss_dir_weighted': loss_dir_weighted,
+            'loss_gap_weighted': loss_gap_weighted,
+            'loss_sup_weighted': loss_sup_weighted,
+            'loss_diag_weighted': loss_dir_weighted,
+            'loss_support_weighted': loss_sup_weighted,
+            'loss_diversity_weighted': zero,
+            'loss_balance_weighted': zero,
             'lambda_proxy': torch.tensor(self.lambda_proxy, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_proxy_image': torch.tensor(self.lambda_proxy_image, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_proxy_text': torch.tensor(self.lambda_proxy_text, device=loss_total.device, dtype=loss_total.dtype),
@@ -419,16 +491,30 @@ class PrototypeLosses(nn.Module):
             'lambda_ret': torch.tensor(self.lambda_ret, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_align': torch.tensor(float(self.use_loss_align), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_align': torch.tensor(self.lambda_align, device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_diag': torch.tensor(float(self.use_loss_diag), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_diag': torch.tensor(self.lambda_diag, device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_support': torch.tensor(float(self.use_loss_support), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_support': torch.tensor(self.lambda_support, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_dir': torch.tensor(float(self.use_loss_dir), device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_dir': torch.tensor(self.lambda_dir, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_gap': torch.tensor(float(self.use_loss_gap), device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_gap': torch.tensor(self.lambda_gap, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_sup': torch.tensor(float(self.use_loss_sup), device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_sup': torch.tensor(self.lambda_sup, device=loss_total.device, dtype=loss_total.dtype),
+            'prototype_gap_margin': torch.tensor(self.fidelity_gap_margin, device=loss_total.device, dtype=loss_total.dtype),
+            'prototype_support_target': torch.tensor(self.support_target, device=loss_total.device, dtype=loss_total.dtype),
+            # Backward-compatible aliases.
+            'use_loss_diag': torch.tensor(float(self.use_loss_dir), device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_diag': torch.tensor(self.lambda_dir, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_support': torch.tensor(float(self.use_loss_sup), device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_support': torch.tensor(self.lambda_sup, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_div': torch.tensor(self.lambda_div, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_bal': torch.tensor(self.lambda_bal, device=loss_total.device, dtype=loss_total.dtype),
             'proxy_temperature': torch.tensor(self.proxy_temperature, device=loss_total.device, dtype=loss_total.dtype),
             'retrieval_temperature': self.get_retrieval_temperature().to(device=loss_total.device, dtype=loss_total.dtype),
             'logit_scale': self.get_logit_scale().to(device=loss_total.device, dtype=loss_total.dtype),
             'debug_metrics': {
+                'diag_pos_cosine_mean': diag_pos_cosine_mean,
+                'diag_hardneg_cosine_mean': diag_hardneg_cosine_mean,
+                'diag_gap_margin_mean': diag_gap_margin_mean,
+                'routing_effective_support_mean': routing_support_mean,
+                'routing_effective_support_std': routing_support_std,
                 **self._proxy_debug_metrics('image', loss_proxy_image_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
                 **self._proxy_debug_metrics('text', loss_proxy_text_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
                 **self._proxy_debug_metrics('text_exact', loss_proxy_text_exact_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),

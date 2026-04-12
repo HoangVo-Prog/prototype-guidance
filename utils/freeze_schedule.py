@@ -15,7 +15,12 @@ LOGICAL_MODULE_GROUPS: Tuple[str, ...] = tuple(REGISTRY_LOGICAL_MODULE_GROUPS)
 LOSS_WEIGHT_KEYS: Tuple[str, ...] = (
     'lambda_host',
     'lambda_ret',
+    'lambda_dir',
+    'lambda_gap',
+    'lambda_sup',
+    # Legacy aliases retained for backward-compatible schedules.
     'lambda_diag',
+    'lambda_support',
     'lambda_bal',
     'lambda_div',
 )
@@ -334,21 +339,43 @@ def apply_loss_weight_overrides(model, args, loss_weights: Dict[str, float]) -> 
             continue
         target_attr = {
             'lambda_ret': 'lambda_ret',
-            'lambda_diag': 'lambda_diag',
+            'lambda_dir': 'lambda_dir',
+            'lambda_diag': 'lambda_dir',
+            'lambda_gap': 'lambda_gap',
+            'lambda_sup': 'lambda_sup',
+            'lambda_support': 'lambda_sup',
             'lambda_bal': 'lambda_bal',
             'lambda_div': 'lambda_div',
         }.get(weight_name)
         if target_attr is None or not hasattr(prototype_losses, target_attr):
             continue
         setattr(prototype_losses, target_attr, scalar)
+        if target_attr == 'lambda_dir' and hasattr(prototype_losses, 'lambda_diag'):
+            prototype_losses.lambda_diag = scalar
+            setattr(args, 'lambda_dir', scalar)
+            setattr(args, 'lambda_diag', scalar)
+        elif target_attr == 'lambda_sup' and hasattr(prototype_losses, 'lambda_support'):
+            prototype_losses.lambda_support = scalar
+            setattr(args, 'lambda_sup', scalar)
+            setattr(args, 'lambda_support', scalar)
         # Keep loss switches aligned with phase-level lambda overrides.
         # This prevents zero-grad phases when configs inherit disabled defaults.
         if weight_name == 'lambda_ret' and hasattr(prototype_losses, 'use_loss_ret'):
             prototype_losses.use_loss_ret = bool(scalar > 0.0)
             setattr(args, 'use_loss_ret', prototype_losses.use_loss_ret)
-        elif weight_name == 'lambda_diag' and hasattr(prototype_losses, 'use_loss_diag'):
-            prototype_losses.use_loss_diag = bool(scalar > 0.0)
-            setattr(args, 'use_loss_diag', prototype_losses.use_loss_diag)
+        elif weight_name in {'lambda_dir', 'lambda_diag'} and hasattr(prototype_losses, 'use_loss_dir'):
+            prototype_losses.use_loss_dir = bool(scalar > 0.0)
+            prototype_losses.use_loss_diag = prototype_losses.use_loss_dir
+            setattr(args, 'use_loss_dir', prototype_losses.use_loss_dir)
+            setattr(args, 'use_loss_diag', prototype_losses.use_loss_dir)
+        elif weight_name == 'lambda_gap' and hasattr(prototype_losses, 'use_loss_gap'):
+            prototype_losses.use_loss_gap = bool(scalar > 0.0)
+            setattr(args, 'use_loss_gap', prototype_losses.use_loss_gap)
+        elif weight_name in {'lambda_sup', 'lambda_support'} and hasattr(prototype_losses, 'use_loss_sup'):
+            prototype_losses.use_loss_sup = bool(scalar > 0.0)
+            prototype_losses.use_loss_support = prototype_losses.use_loss_sup
+            setattr(args, 'use_loss_sup', prototype_losses.use_loss_sup)
+            setattr(args, 'use_loss_support', prototype_losses.use_loss_sup)
         elif weight_name == 'lambda_bal' and hasattr(prototype_losses, 'use_balance_loss'):
             prototype_losses.use_balance_loss = bool(scalar > 0.0)
             setattr(args, 'use_balancing_loss', prototype_losses.use_balance_loss)

@@ -15,6 +15,12 @@ def build_prototype_head(
     text_adapter: Optional[nn.Module] = None,
     prototype_init_features: Optional[torch.Tensor] = None,
 ):
+    use_loss_dir = getattr(args, 'use_loss_dir', getattr(args, 'use_loss_diag', True))
+    lambda_dir = getattr(args, 'lambda_dir', getattr(args, 'lambda_diag', 1.0))
+    use_loss_sup = getattr(args, 'use_loss_sup', getattr(args, 'use_loss_support', False))
+    lambda_sup = getattr(args, 'lambda_sup', getattr(args, 'lambda_support', 0.0))
+    prototype_gap_margin = getattr(args, 'prototype_gap_margin', 0.05)
+    prototype_support_target = getattr(args, 'prototype_support_target', getattr(args, 'support_min', 2.0))
     contextualization_enabled = bool(getattr(args, 'prototype_contextualization_enabled', True))
     contextualization_type = getattr(args, 'prototype_contextualization_type', 'none') if contextualization_enabled else 'none'
     contextualization_residual = getattr(args, 'prototype_contextualization_residual', True) if contextualization_enabled else False
@@ -51,6 +57,14 @@ def build_prototype_head(
         use_loss_proxy_text_exact=getattr(args, 'use_loss_proxy_text_exact', True),
         use_loss_align=getattr(args, 'use_loss_align', True),
         lambda_align=getattr(args, 'lambda_align', 1.0),
+        use_loss_dir=use_loss_dir,
+        lambda_dir=lambda_dir,
+        use_loss_gap=getattr(args, 'use_loss_gap', True),
+        lambda_gap=getattr(args, 'lambda_gap', 0.5),
+        fidelity_gap_margin=prototype_gap_margin,
+        use_loss_sup=use_loss_sup,
+        lambda_sup=lambda_sup,
+        prototype_support_target=prototype_support_target,
         use_loss_diag=getattr(args, 'use_loss_diag', True),
         lambda_diag=getattr(args, 'lambda_diag', 1.0),
         use_loss_ret=getattr(args, 'use_loss_ret', True),
@@ -63,7 +77,7 @@ def build_prototype_head(
 
     routing_type = getattr(args, 'routing_similarity', getattr(args, 'prototype_routing_type', 'cosine'))
     routing_temperature = getattr(args, 'tau_p', getattr(args, 'prototype_temperature', 0.07))
-    support_loss_weight = getattr(args, 'lambda_support', 0.0)
+    support_loss_weight = lambda_sup
     diversity_loss_weight = getattr(args, 'lambda_div', getattr(args, 'diversity_loss_weight', 0.01))
     balance_loss_weight = getattr(args, 'lambda_bal', getattr(args, 'prototype_balance_loss_weight', 0.0))
     prototype_init_seed = getattr(args, 'prototype_init_seed', None)
@@ -117,13 +131,21 @@ def build_prototype_head(
         use_loss_proxy_text_exact=getattr(args, 'use_loss_proxy_text_exact', True),
         use_loss_align=getattr(args, 'use_loss_align', True),
         lambda_align=getattr(args, 'lambda_align', 1.0),
+        use_loss_dir=use_loss_dir,
+        lambda_dir=lambda_dir,
+        use_loss_gap=getattr(args, 'use_loss_gap', True),
+        lambda_gap=getattr(args, 'lambda_gap', 0.5),
+        fidelity_gap_margin=prototype_gap_margin,
+        use_loss_sup=use_loss_sup,
+        lambda_sup=lambda_sup,
+        prototype_support_target=prototype_support_target,
         use_loss_diag=getattr(args, 'use_loss_diag', True),
         lambda_diag=getattr(args, 'lambda_diag', 1.0),
         use_loss_ret=getattr(args, 'use_loss_ret', True),
         lambda_ret=getattr(args, 'lambda_ret', 1.0),
-        use_loss_support=getattr(args, 'use_loss_support', False),
+        use_loss_support=use_loss_sup,
         support_loss_weight=support_loss_weight,
-        support_min=getattr(args, 'support_min', 2.0),
+        support_min=prototype_support_target,
         use_diversity_loss=getattr(args, 'use_diversity_loss', True),
         diversity_loss_weight=diversity_loss_weight,
         use_balance_loss=use_balancing_loss,

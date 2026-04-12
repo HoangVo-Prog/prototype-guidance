@@ -13,6 +13,7 @@ TRAIN_LOSS_KEYS = (
     'loss_host_ret_t2i',
     'loss_host_cid',
     'loss_proto_total',
+    'loss_proto',
     'loss_host_weighted',
     'lambda_host',
     'loss_proxy',
@@ -21,6 +22,9 @@ TRAIN_LOSS_KEYS = (
     'loss_proxy_text_exact',
     'loss_ret',
     'loss_align',
+    'loss_dir',
+    'loss_gap',
+    'loss_sup',
     'loss_diag',
     'loss_support',
     'loss_diversity',
@@ -31,6 +35,9 @@ TRAIN_LOSS_KEYS = (
     'loss_proxy_weighted',
     'loss_ret_weighted',
     'loss_align_weighted',
+    'loss_dir_weighted',
+    'loss_gap_weighted',
+    'loss_sup_weighted',
     'loss_diag_weighted',
     'loss_support_weighted',
     'loss_diversity_weighted',
@@ -73,6 +80,8 @@ DEBUG_METRIC_MAP = {
     'routing_top1_usage_max_window_500': 'debug/routing_top1_usage_max_window_500',
     'prototype_assignment_entropy': 'debug/prototype_assignment_entropy',
     'routing_effective_support': 'debug/routing_effective_support',
+    'routing_effective_support_mean': 'debug/routing_effective_support_mean',
+    'routing_effective_support_std': 'debug/routing_effective_support_std',
     'routing_effective_support_ipr': 'debug/routing_effective_support_ipr',
     'routing_effective_support_ipr_p10': 'debug/routing_effective_support_ipr_p10',
     'routing_effective_support_ipr_p50': 'debug/routing_effective_support_ipr_p50',
@@ -87,6 +96,9 @@ DEBUG_METRIC_MAP = {
     'diag_cos_top1': 'debug/diag_cos_top1',
     'diag_cos_top2': 'debug/diag_cos_top2',
     'diag_cos_top4': 'debug/diag_cos_top4',
+    'diag_pos_cosine_mean': 'debug/diag_pos_cosine_mean',
+    'diag_hardneg_cosine_mean': 'debug/diag_hardneg_cosine_mean',
+    'diag_gap_margin_mean': 'debug/diag_gap_margin_mean',
     'loss_diag_full': 'debug/loss_diag_full',
     'loss_diag_top1': 'debug/loss_diag_top1',
     'loss_diag_top2': 'debug/loss_diag_top2',
@@ -280,12 +292,16 @@ _LOSS_BASE_SUFFIX_MAP = {
     'loss_host_ret_t2i': 'host_ret_t2i',
     'loss_host_cid': 'host_cid',
     'loss_proto_total': 'proto_total',
+    'loss_proto': 'proto',
     'loss_proxy': 'proxy',
     'loss_proxy_image': 'proxy_image',
     'loss_proxy_text': 'proxy_text',
     'loss_proxy_text_exact': 'proxy_text_exact',
     'loss_ret': 'ret',
     'loss_align': 'align',
+    'loss_dir': 'dir',
+    'loss_gap': 'gap',
+    'loss_sup': 'sup',
     'loss_diag': 'diag',
     'loss_support': 'support',
     'loss_diversity': 'diversity',
@@ -301,10 +317,26 @@ _LOSS_WEIGHTED_SUFFIX_MAP = {
     'loss_proxy_weighted': 'proxy',
     'loss_ret_weighted': 'ret',
     'loss_align_weighted': 'align',
+    'loss_dir_weighted': 'dir',
+    'loss_gap_weighted': 'gap',
+    'loss_sup_weighted': 'sup',
     'loss_diag_weighted': 'diag',
     'loss_support_weighted': 'support',
     'loss_diversity_weighted': 'diversity',
     'loss_balance_weighted': 'balance',
+}
+
+_TRAIN_ALIAS_KEY_MAP = {
+    'loss_proto': 'train/loss_proto',
+    'loss_ret': 'train/loss_ret',
+    'loss_dir': 'train/loss_dir',
+    'loss_gap': 'train/loss_gap',
+    'loss_sup': 'train/loss_sup',
+    'diag_pos_cosine_mean': 'train/diag_pos_cosine_mean',
+    'diag_hardneg_cosine_mean': 'train/diag_hardneg_cosine_mean',
+    'diag_gap_margin_mean': 'train/diag_gap_margin_mean',
+    'routing_effective_support_mean': 'train/routing_effective_support_mean',
+    'routing_effective_support_std': 'train/routing_effective_support_std',
 }
 
 _TRAIN_MODEL_KEYS = {
@@ -697,6 +729,9 @@ def build_train_metrics_from_scalars(
         except (TypeError, ValueError):
             continue
         metrics[map_train_scalar_to_wandb_key(key)] = scalar_value
+        alias_key = _TRAIN_ALIAS_KEY_MAP.get(key)
+        if alias_key is not None:
+            metrics[alias_key] = scalar_value
     return metrics
 
 
@@ -728,5 +763,3 @@ def build_validation_metrics(
         for metric_key, metric_value in evaluator.latest_metrics.items():
             metrics[map_validation_metric_key(metric_key)] = metric_value
     return metrics
-
-
