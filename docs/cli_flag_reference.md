@@ -163,6 +163,13 @@ Notes:
 - Primary Config Keys: `training.proxy_temperature`
 - Alias Config Keys: -
 
+## `diag_temperature`
+- Flags: `--diag_temperature`
+- Type/Action: type=float
+- Default: `0.07`
+- Primary Config Keys: `training.diag_temperature`
+- Alias Config Keys: `loss.diag_temperature`, `objectives.diag_temperature`, `objectives.objectives.diag_temperature`
+
 ## `host_type`
 - Flags: `--host_type`
 - Type/Action: type=str

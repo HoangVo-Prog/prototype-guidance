@@ -35,7 +35,6 @@ model:
   use_image_conditioned_pooling: true
   return_debug_outputs: false
 
-  training_mode: pas
 host:
   type: clip
   freeze_projectors: false
@@ -144,7 +143,7 @@ training:
   grad_clip: 0.0
   amp: false
   amp_dtype: fp16
-  proxy_temperature: 0.07
+
   # Optional: epoch-based freeze/lr/loss schedule.
   # If omitted, runtime keeps the legacy static freeze flags and optimizer setup.
   # freeze_schedule:

@@ -70,6 +70,7 @@ class PrototypeConditionedTextHead(nn.Module):
         prototype_support_target: Optional[float] = None,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
+        diag_temperature: float = 0.07,
         use_loss_ret: bool = True,
         lambda_ret: float = 1.0,
         use_loss_support: bool = False,
@@ -178,6 +179,7 @@ class PrototypeConditionedTextHead(nn.Module):
             prototype_support_target=resolved_support_target,
             use_loss_diag=use_loss_diag,
             lambda_diag=lambda_diag,
+            diag_temperature=diag_temperature,
             use_loss_ret=use_loss_ret,
             lambda_ret=lambda_ret,
             use_loss_support=use_loss_support,
@@ -920,7 +922,6 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
-
 
 
 

@@ -713,6 +713,7 @@ class PASModel(nn.Module):
             'prototype_gap_margin': zero,
             'prototype_support_target': zero,
             'proxy_temperature': zero,
+            'diag_temperature': zero,
             'retrieval_temperature': zero,
             'logit_scale': zero,
             'debug_metrics': {},
@@ -1182,6 +1183,7 @@ class PASModel(nn.Module):
             'prototype_gap_margin': prototype_losses['prototype_gap_margin'],
             'prototype_support_target': prototype_losses['prototype_support_target'],
             'proxy_temperature': metric_losses['proxy_temperature'].detach(),
+            'diag_temperature': prototype_losses['diag_temperature'].detach(),
             'retrieval_temperature': metric_losses['retrieval_temperature'].detach(),
             'logit_scale': metric_losses['logit_scale'].detach(),
             'host_retrieval_temperature': host_losses['retrieval_temperature'].detach(),
@@ -1233,7 +1235,6 @@ def build_model(args, num_classes, train_loader=None):
         if model.prototype_head is not None:
             model.prototype_head.float()
     return model
-
 
 
 

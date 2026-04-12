@@ -55,6 +55,7 @@ DEBUG_METRIC_MAP = {
     'host_loss_total': 'debug/host_loss_total',
     'host_loss_ret': 'debug/host_loss_ret',
     'proxy_temperature': 'debug/proxy_temperature',
+    'diag_temperature': 'debug/diag_temperature',
     'retrieval_temperature': 'debug/retrieval_temperature',
     'image_embed_norm_std': 'debug/image_embed_norm_std',
     'image_embed_norm_min': 'debug/image_embed_norm_min',
@@ -99,6 +100,11 @@ DEBUG_METRIC_MAP = {
     'diag_pos_cosine_mean': 'debug/diag_pos_cosine_mean',
     'diag_hardneg_cosine_mean': 'debug/diag_hardneg_cosine_mean',
     'diag_gap_margin_mean': 'debug/diag_gap_margin_mean',
+    'diag_student_teacher_pos_mean': 'debug/diag_student_teacher_pos_mean',
+    'diag_student_teacher_offdiag_mean': 'debug/diag_student_teacher_offdiag_mean',
+    'diag_student_teacher_margin': 'debug/diag_student_teacher_margin',
+    'loss_diag_row': 'debug/loss_diag_row',
+    'loss_diag_col': 'debug/loss_diag_col',
     'loss_diag_full': 'debug/loss_diag_full',
     'loss_diag_top1': 'debug/loss_diag_top1',
     'loss_diag_top2': 'debug/loss_diag_top2',
@@ -347,6 +353,7 @@ _TRAIN_MODEL_KEYS = {
     'fusion_lambda_host',
     'fusion_lambda_prototype',
     'proxy_temperature',
+    'diag_temperature',
     'retrieval_temperature',
     'host_loss_total',
     'host_loss_ret',
@@ -432,7 +439,7 @@ def map_train_diagnostic_key(raw_key: str) -> str:
         return f'train/prototype_usage/{raw_key}'
     if raw_key.startswith('routing_'):
         return f'train/routing/{raw_key}'
-    if raw_key.startswith('diag_cos_') or raw_key.startswith('loss_diag_'):
+    if raw_key.startswith('diag_cos_') or raw_key.startswith('loss_diag_') or raw_key.startswith('diag_student_teacher_'):
         return f'train/fidelity/{raw_key}'
     if raw_key.startswith('image_surrogate_') or raw_key.startswith('image_exact_') or raw_key.startswith('surrogate_pairwise_'):
         return f'train/geometry/{raw_key}'

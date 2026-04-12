@@ -251,6 +251,97 @@ class PrototypeModuleTests(unittest.TestCase):
         )
         self.assertAlmostEqual(outputs['loss_ret_weighted'].item(), 2.0 * outputs['loss_ret'].item(), places=6)
 
+    def test_diagonal_fidelity_uses_symmetric_relative_objective(self):
+        losses = PrototypeLosses(
+            temperature_init=0.07,
+            normalize_embeddings=True,
+            num_classes=self.num_classes,
+            embedding_dim=2,
+            proxy_temperature=0.2,
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=True,
+            lambda_diag=1.0,
+            diag_temperature=0.1,
+            use_loss_ret=False,
+            use_diversity_loss=False,
+            use_balance_loss=False,
+            balance_loss_weight=0.0,
+        )
+        teacher = torch.tensor(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+            ],
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        student_good = torch.tensor(
+            [
+                [1.0, 0.0],
+                [0.0, 1.0],
+            ],
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+        student_bad = torch.tensor(
+            [
+                [1.0, 0.0],
+                [1.0, 0.0],
+            ],
+            dtype=torch.float32,
+            requires_grad=True,
+        )
+
+        good_info = losses.symmetric_relative_diagonal_loss(student_good, teacher)
+        bad_info = losses.symmetric_relative_diagonal_loss(student_bad, teacher)
+
+        self.assertTrue(torch.isfinite(good_info['loss']))
+        self.assertTrue(torch.isfinite(good_info['loss_row']))
+        self.assertTrue(torch.isfinite(good_info['loss_col']))
+        self.assertLess(good_info['loss'].item(), bad_info['loss'].item())
+        self.assertAlmostEqual(
+            good_info['loss'].item(),
+            0.5 * (good_info['loss_row'].item() + good_info['loss_col'].item()),
+            places=6,
+        )
+
+        good_info['loss'].backward()
+        self.assertIsNotNone(student_good.grad)
+        self.assertGreater(float(student_good.grad.abs().sum().item()), 0.0)
+        self.assertIsNone(teacher.grad)
+
+    def test_diagonal_fidelity_batch_size_one_returns_safe_zero(self):
+        losses = PrototypeLosses(
+            temperature_init=0.07,
+            normalize_embeddings=True,
+            num_classes=self.num_classes,
+            embedding_dim=2,
+            proxy_temperature=0.2,
+            use_loss_proxy_image=False,
+            use_loss_proxy_text=False,
+            use_loss_proxy_text_exact=False,
+            use_loss_align=False,
+            use_loss_diag=True,
+            lambda_diag=1.0,
+            diag_temperature=0.1,
+            use_loss_ret=False,
+            use_diversity_loss=False,
+            use_balance_loss=False,
+            balance_loss_weight=0.0,
+        )
+        student = torch.tensor([[1.0, 0.0]], dtype=torch.float32, requires_grad=True)
+        teacher = torch.tensor([[1.0, 0.0]], dtype=torch.float32, requires_grad=True)
+        info = losses.symmetric_relative_diagonal_loss(student, teacher)
+        self.assertEqual(info['loss'].item(), 0.0)
+        self.assertEqual(info['loss_row'].item(), 0.0)
+        self.assertEqual(info['loss_col'].item(), 0.0)
+        info['loss'].backward()
+        self.assertIsNotNone(student.grad)
+        self.assertIsNone(teacher.grad)
+
     def test_head_forward_exposes_surrogate_pairwise_logits(self):
         head = self._build_head()
         outputs = head(

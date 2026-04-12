@@ -92,6 +92,11 @@ class ConfigSurfaceTests(unittest.TestCase):
         args = get_args(['--config_file', path])
         self.assertTrue(args.log_debug_metrics)
 
+    def test_diag_temperature_alias_is_accepted(self):
+        path = self._write_config({'objectives': {'objectives': {'diag_temperature': 0.15}}})
+        args = get_args(['--config_file', path])
+        self.assertAlmostEqual(args.diag_temperature, 0.15)
+
     def test_stage2_allows_missing_finetune_checkpoint(self):
         path = self._write_config(
             {
@@ -484,6 +489,5 @@ class ConfigSurfaceTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
-
 
 

@@ -35,7 +35,6 @@ model:
   use_image_conditioned_pooling: true
   return_debug_outputs: false
 
-  training_mode: pas
 host:
   type: itself
   freeze_projectors: true
@@ -140,7 +139,7 @@ training:
   amp: false
   amp_dtype: fp16
   proxy_temperature: 0.07
-  # Optional: epoch-based freeze/lr/loss schedule.
+  diag_temperature: 0.07  # Optional: epoch-based freeze/lr/loss schedule.
   # If omitted, runtime keeps the legacy static freeze flags and optimizer setup.
   # freeze_schedule:
   #   - name: warmup

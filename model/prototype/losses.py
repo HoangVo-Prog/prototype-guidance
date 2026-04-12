@@ -33,6 +33,7 @@ class PrototypeLosses(nn.Module):
         prototype_support_target: Optional[float] = None,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
+        diag_temperature: float = 0.07,
         use_loss_ret: bool = True,
         lambda_ret: float = 1.0,
         use_loss_support: bool = False,
@@ -48,6 +49,8 @@ class PrototypeLosses(nn.Module):
             raise ValueError('temperature_init must be positive.')
         if proxy_temperature <= 0:
             raise ValueError('proxy_temperature must be positive.')
+        if diag_temperature <= 0:
+            raise ValueError('diag_temperature must be positive.')
         if num_classes <= 0:
             raise ValueError('num_classes must be positive for the amortized proxy objective.')
         if embedding_dim <= 0:
@@ -94,6 +97,7 @@ class PrototypeLosses(nn.Module):
         self.lambda_support = self.lambda_sup
         self.support_min = self.support_target
         self.proxy_temperature = float(proxy_temperature)
+        self.diag_temperature = float(diag_temperature)
         self.num_classes = int(num_classes)
         self.embedding_dim = int(embedding_dim)
 
@@ -296,10 +300,59 @@ class PrototypeLosses(nn.Module):
         return (1.0 - (source_embeddings * target_embeddings).sum(dim=-1)).clamp_min(0.0).mean()
 
     def directional_fidelity_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> torch.Tensor:
-        return self.cosine_alignment_loss(surrogate_embeddings, exact_embeddings.detach())
+        return self.symmetric_relative_diagonal_loss(surrogate_embeddings, exact_embeddings)['loss']
 
     def diagonal_fidelity_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> torch.Tensor:
-        return self.directional_fidelity_loss(surrogate_embeddings, exact_embeddings)
+        return self.symmetric_relative_diagonal_loss(surrogate_embeddings, exact_embeddings)['loss']
+
+    def symmetric_relative_diagonal_loss(
+        self,
+        surrogate_embeddings: torch.Tensor,
+        exact_embeddings: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        if surrogate_embeddings.ndim != 2 or exact_embeddings.ndim != 2:
+            raise ValueError('symmetric_relative_diagonal_loss expects [B, D] tensors.')
+        if surrogate_embeddings.shape != exact_embeddings.shape:
+            raise ValueError(
+                'symmetric_relative_diagonal_loss requires matching [B, D] tensor shapes; '
+                f'got {tuple(surrogate_embeddings.shape)} and {tuple(exact_embeddings.shape)}.'
+            )
+
+        # Relative diagonal fidelity: each surrogate diagonal text embedding must match
+        # its own exact teacher embedding more than other in-batch candidates.
+        student = F.normalize(surrogate_embeddings.float(), dim=-1)
+        teacher = F.normalize(exact_embeddings.detach().float(), dim=-1)
+        similarity = student @ teacher.t()
+        batch_size = similarity.size(0)
+        zero = similarity.new_zeros(())
+        zero_loss = similarity.sum() * 0.0
+        positive = similarity.diagonal()
+        positive_mean = positive.mean() if positive.numel() > 0 else zero
+        if batch_size <= 1:
+            return {
+                'loss': zero_loss,
+                'loss_row': zero_loss,
+                'loss_col': zero_loss,
+                'positive_mean': positive_mean,
+                'offdiag_mean': zero,
+                'margin': positive_mean,
+            }
+
+        targets = torch.arange(batch_size, device=similarity.device, dtype=torch.long)
+        logits = similarity / self.diag_temperature
+        loss_row = F.cross_entropy(logits, targets)
+        loss_col = F.cross_entropy(logits.t(), targets)
+        loss = 0.5 * (loss_row + loss_col)
+        offdiag_mask = ~torch.eye(batch_size, device=similarity.device, dtype=torch.bool)
+        offdiag_mean = similarity[offdiag_mask].mean()
+        return {
+            'loss': loss,
+            'loss_row': loss_row,
+            'loss_col': loss_col,
+            'positive_mean': positive_mean,
+            'offdiag_mean': offdiag_mean,
+            'margin': positive_mean - offdiag_mean,
+        }
 
     def fidelity_gap_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> Dict[str, torch.Tensor]:
         surrogate_normalized = F.normalize(surrogate_embeddings, dim=-1)
@@ -420,7 +473,18 @@ class PrototypeLosses(nn.Module):
         loss_proxy_text_exact_weighted = self.lambda_proxy_text_exact * loss_proxy_text_exact
         loss_proxy_weighted = loss_proxy_image_weighted + loss_proxy_text_weighted + loss_proxy_text_exact_weighted
         loss_align = zero
-        loss_dir = self.directional_fidelity_loss(surrogate_text_embeddings, exact_text_embeddings) if self.use_loss_dir else zero
+        if self.use_loss_dir:
+            dir_info = self.symmetric_relative_diagonal_loss(surrogate_text_embeddings, exact_text_embeddings)
+            loss_dir = dir_info['loss']
+        else:
+            loss_dir = zero
+            dir_info = {
+                'loss_row': zero,
+                'loss_col': zero,
+                'positive_mean': zero,
+                'offdiag_mean': zero,
+                'margin': zero,
+            }
         gap_info = self.fidelity_gap_loss(surrogate_text_embeddings, exact_text_embeddings)
         loss_gap = gap_info['loss'] if self.use_loss_gap else zero
         loss_ret = loss_ret_info['loss'] if self.use_loss_ret else zero
@@ -507,12 +571,18 @@ class PrototypeLosses(nn.Module):
             'lambda_div': torch.tensor(self.lambda_div, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_bal': torch.tensor(self.lambda_bal, device=loss_total.device, dtype=loss_total.dtype),
             'proxy_temperature': torch.tensor(self.proxy_temperature, device=loss_total.device, dtype=loss_total.dtype),
+            'diag_temperature': torch.tensor(self.diag_temperature, device=loss_total.device, dtype=loss_total.dtype),
             'retrieval_temperature': self.get_retrieval_temperature().to(device=loss_total.device, dtype=loss_total.dtype),
             'logit_scale': self.get_logit_scale().to(device=loss_total.device, dtype=loss_total.dtype),
             'debug_metrics': {
                 'diag_pos_cosine_mean': diag_pos_cosine_mean,
                 'diag_hardneg_cosine_mean': diag_hardneg_cosine_mean,
                 'diag_gap_margin_mean': diag_gap_margin_mean,
+                'diag_student_teacher_pos_mean': dir_info['positive_mean'].detach(),
+                'diag_student_teacher_offdiag_mean': dir_info['offdiag_mean'].detach(),
+                'diag_student_teacher_margin': dir_info['margin'].detach(),
+                'loss_diag_row': dir_info['loss_row'].detach(),
+                'loss_diag_col': dir_info['loss_col'].detach(),
                 'routing_effective_support_mean': routing_support_mean,
                 'routing_effective_support_std': routing_support_std,
                 **self._proxy_debug_metrics('image', loss_proxy_image_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
