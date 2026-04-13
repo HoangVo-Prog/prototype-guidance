@@ -36,6 +36,12 @@ class PrototypeConditionedTextHead(nn.Module):
         text_adapter: Optional[nn.Module] = None,
         routing_type: str = 'cosine',
         routing_temperature: float = 0.07,
+        routing_source: str = 'global',
+        local_routing_temperature: Optional[float] = None,
+        local_routing_pooling: str = 'logsumexp',
+        local_routing_use_adapter: bool = True,
+        local_routing_adapter_dim: Optional[int] = None,
+        local_routing_normalize_inputs: bool = True,
         token_scoring_type: str = 'cosine',
         token_temperature: float = 0.07,
         token_policy: str = 'content_only',
@@ -99,6 +105,27 @@ class PrototypeConditionedTextHead(nn.Module):
         self.dead_prototype_threshold = float(dead_prototype_threshold)
         self.use_image_conditioned_pooling = bool(use_image_conditioned_pooling)
         self.collect_debug_metrics = bool(collect_debug_metrics)
+        self.routing_source = str(routing_source).lower()
+        if self.routing_source not in {'global', 'local_evidence'}:
+            raise ValueError(
+                f'Unsupported routing_source={routing_source!r}. Allowed values: [\"global\", \"local_evidence\"].'
+            )
+        resolved_local_temperature = routing_temperature if local_routing_temperature is None else local_routing_temperature
+        self.local_routing_temperature = float(resolved_local_temperature)
+        if self.local_routing_temperature <= 0:
+            raise ValueError('local_routing_temperature must be positive.')
+        self.local_routing_pooling = str(local_routing_pooling).lower()
+        if self.local_routing_pooling not in {'logsumexp', 'lse', 'max', 'mean', 'avg'}:
+            raise ValueError(
+                f'Unsupported local_routing_pooling={local_routing_pooling!r}. Allowed values: [\"logsumexp\", \"max\", \"mean\"].'
+            )
+        self.local_routing_use_adapter = bool(local_routing_use_adapter)
+        self.local_routing_normalize_inputs = bool(local_routing_normalize_inputs)
+        self.local_routing_adapter_dim = (
+            None if local_routing_adapter_dim in (None, 0) else int(local_routing_adapter_dim)
+        )
+        if self.local_routing_adapter_dim is not None and self.local_routing_adapter_dim <= 0:
+            raise ValueError('local_routing_adapter_dim must be positive when provided.')
 
         self.image_adapter = image_adapter if image_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
         self.text_adapter = text_adapter if text_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
@@ -125,6 +152,17 @@ class PrototypeConditionedTextHead(nn.Module):
             temperature=routing_temperature,
             normalize=normalize_for_routing,
         )
+        if self.local_routing_use_adapter:
+            if self.local_routing_adapter_dim is None:
+                self.local_routing_adapter = nn.Linear(self.prototype_dim, self.prototype_dim)
+            else:
+                self.local_routing_adapter = nn.Sequential(
+                    nn.Linear(self.prototype_dim, self.local_routing_adapter_dim),
+                    nn.GELU(),
+                    nn.Linear(self.local_routing_adapter_dim, self.prototype_dim),
+                )
+        else:
+            self.local_routing_adapter = nn.Identity()
         self.aggregator = PrototypeAggregator()
         self.token_scorer = TokenScorer(
             scoring_type=token_scoring_type,
@@ -378,6 +416,14 @@ class PrototypeConditionedTextHead(nn.Module):
             metrics['prototype_assignment_entropy'] = router_debug['prototype_assignment_entropy']
             if 'routing_effective_support' in router_debug:
                 metrics['routing_effective_support'] = router_debug['routing_effective_support']
+            if 'routing_source_mode' in router_debug:
+                metrics['routing_source_mode'] = router_debug['routing_source_mode']
+            if 'local_routing_entropy' in router_debug:
+                metrics['local_routing_entropy'] = router_debug['local_routing_entropy']
+            if 'local_routing_max_mean' in router_debug:
+                metrics['local_routing_max_mean'] = router_debug['local_routing_max_mean']
+            if 'local_routing_effective_support' in router_debug:
+                metrics['local_routing_effective_support'] = router_debug['local_routing_effective_support']
         if pooler_debug:
             metrics['token_pool_entropy'] = pooler_debug['token_pool_entropy']
             metrics['beta_max_prob'] = pooler_debug['beta_max_prob']
@@ -399,9 +445,73 @@ class PrototypeConditionedTextHead(nn.Module):
             }
         return outputs
 
+    def _prepare_local_routing_tokens(
+        self,
+        image_embeddings: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        if image_local_tokens is None:
+            fallback_tokens = image_embeddings.unsqueeze(1)
+            return self.local_routing_adapter(self.image_adapter(fallback_tokens))
+
+        if image_local_tokens.ndim != 3:
+            raise ValueError('image_local_tokens must have shape [B, M, D] when routing_source=local_evidence.')
+        if image_local_tokens.size(0) != image_embeddings.size(0):
+            raise ValueError('image_local_tokens and image_embeddings must share the same batch size.')
+
+        # Prefer patch/local evidence over CLS when available.
+        local_tokens = image_local_tokens[:, 1:, :] if image_local_tokens.size(1) > 1 else image_local_tokens
+        if local_tokens.size(1) <= 0:
+            local_tokens = image_local_tokens
+        local_tokens = self.image_adapter(local_tokens)
+        local_tokens = self.local_routing_adapter(local_tokens)
+        if local_tokens.size(-1) != self.prototype_dim:
+            raise ValueError(
+                'Local routing tokens must end in prototype_dim after adapters; '
+                f'expected {self.prototype_dim}, got {local_tokens.size(-1)}.'
+            )
+        return local_tokens
+
+    def _compute_routing_weights(
+        self,
+        image_embeddings: torch.Tensor,
+        image_features: torch.Tensor,
+        contextualized_prototypes: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        if self.routing_source == 'local_evidence':
+            local_tokens = self._prepare_local_routing_tokens(
+                image_embeddings=image_embeddings,
+                image_local_tokens=image_local_tokens,
+            )
+            routing_weights, routing_debug = self.router.route_from_local_evidence(
+                local_embeddings=local_tokens,
+                prototypes=contextualized_prototypes,
+                pooling=self.local_routing_pooling,
+                temperature=self.local_routing_temperature,
+                normalize_inputs=self.local_routing_normalize_inputs,
+                return_debug=True,
+            )
+            routing_debug['routing_source_mode'] = routing_weights.new_tensor(1.0).detach()
+            return {
+                'routing_weights': routing_weights,
+                'routing_debug': routing_debug,
+            }
+
+        routing_weights, routing_debug = self.router(image_features, contextualized_prototypes, return_debug=True)
+        routing_debug['routing_source_mode'] = routing_weights.new_tensor(0.0).detach()
+        routing_debug.setdefault('local_routing_entropy', routing_debug.get('prototype_assignment_entropy', routing_weights.new_zeros(())))
+        routing_debug.setdefault('local_routing_max_mean', routing_debug.get('routing_max_prob', routing_weights.new_zeros(())))
+        routing_debug.setdefault('local_routing_effective_support', routing_debug.get('routing_effective_support', routing_weights.new_zeros(())))
+        return {
+            'routing_weights': routing_weights,
+            'routing_debug': routing_debug,
+        }
+
     def encode_image_branch(
         self,
         image_embeddings: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor] = None,
         prototypes: Optional[torch.Tensor] = None,
         contextualized_prototypes: Optional[torch.Tensor] = None,
         return_debug: bool = False,
@@ -418,7 +528,14 @@ class PrototypeConditionedTextHead(nn.Module):
                 **context['contextualizer_debug'],
             }
 
-        routing_weights, routing_debug = self.router(image_features, contextualized_prototypes, return_debug=True)
+        routing_outputs = self._compute_routing_weights(
+            image_embeddings=image_embeddings,
+            image_features=image_features,
+            contextualized_prototypes=contextualized_prototypes,
+            image_local_tokens=image_local_tokens,
+        )
+        routing_weights = routing_outputs['routing_weights']
+        routing_debug = routing_outputs['routing_debug']
         summary, aggregator_debug = self.aggregator(routing_weights, contextualized_prototypes, return_debug=True)
         # Prototype score anchor uses visual global features plus a compact projection of query summary q_i.
         image_proxy_features = image_features + self.proto_query_proj(summary)
@@ -764,6 +881,7 @@ class PrototypeConditionedTextHead(nn.Module):
         image_embeddings: torch.Tensor,
         text_token_states: torch.Tensor,
         token_ids: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor] = None,
         pids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
@@ -774,6 +892,7 @@ class PrototypeConditionedTextHead(nn.Module):
         context = self.get_prototype_context(return_debug=return_debug)
         image_outputs = self.encode_image_branch(
             image_embeddings,
+            image_local_tokens=image_local_tokens,
             prototypes=context['prototypes'],
             contextualized_prototypes=context['contextualized_prototypes'],
             return_debug=return_debug,
@@ -941,8 +1060,3 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
-
-
-
-
-

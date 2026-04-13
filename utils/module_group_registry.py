@@ -30,6 +30,7 @@ LOGICAL_MODULE_GROUP_PREFIXES: Dict[str, Tuple[str, ...]] = {
     ),
     'routing': (
         'prototype_head.router',
+        'prototype_head.local_routing_adapter',
         'prototype_head.contextualizer',
     ),
     'fusion': (

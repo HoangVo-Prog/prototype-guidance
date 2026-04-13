@@ -221,11 +221,12 @@ class DirectImageConditionedTextHead(nn.Module):
     def encode_image_branch(
         self,
         image_embeddings: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor] = None,
         prototypes: Optional[torch.Tensor] = None,
         contextualized_prototypes: Optional[torch.Tensor] = None,
         return_debug: bool = False,
     ) -> Dict[str, object]:
-        del prototypes, contextualized_prototypes
+        del image_local_tokens, prototypes, contextualized_prototypes
         image_features = self.image_adapter(image_embeddings)
         summary = image_features
         image_projected, image_projector_debug = self.image_projector(image_features, return_debug=True)
@@ -462,6 +463,7 @@ class DirectImageConditionedTextHead(nn.Module):
         image_embeddings: torch.Tensor,
         text_token_states: torch.Tensor,
         token_ids: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor] = None,
         pids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
@@ -469,7 +471,11 @@ class DirectImageConditionedTextHead(nn.Module):
         return_debug: bool = False,
         disable_proxy_losses: bool = False,
     ) -> Dict[str, object]:
-        image_outputs = self.encode_image_branch(image_embeddings, return_debug=return_debug)
+        image_outputs = self.encode_image_branch(
+            image_embeddings,
+            image_local_tokens=image_local_tokens,
+            return_debug=return_debug,
+        )
         prepared_text = self._prepare_text_inputs(
             text_token_states,
             token_ids,

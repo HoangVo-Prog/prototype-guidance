@@ -79,6 +79,10 @@ DEBUG_METRIC_MAP = {
     'routing_top1_usage_max_window_500': 'debug/routing_top1_usage_max_window_500',
     'prototype_assignment_entropy': 'debug/prototype_assignment_entropy',
     'routing_effective_support': 'debug/routing_effective_support',
+    'routing_source_mode': 'debug/routing_source_mode',
+    'local_routing_entropy': 'debug/local_routing_entropy',
+    'local_routing_max_mean': 'debug/local_routing_max_mean',
+    'local_routing_effective_support': 'debug/local_routing_effective_support',
     'routing_effective_support_mean': 'debug/routing_effective_support_mean',
     'routing_effective_support_std': 'debug/routing_effective_support_std',
     'routing_effective_support_ipr': 'debug/routing_effective_support_ipr',
@@ -426,6 +430,13 @@ def _map_val_loss_key(raw_key: str) -> str:
 
 
 def map_train_diagnostic_key(raw_key: str) -> str:
+    if raw_key in {
+        'routing_source_mode',
+        'local_routing_entropy',
+        'local_routing_max_mean',
+        'local_routing_effective_support',
+    }:
+        return f'train/{raw_key}'
     if raw_key in {
         'host_margin_mean',
         'host_margin_min',

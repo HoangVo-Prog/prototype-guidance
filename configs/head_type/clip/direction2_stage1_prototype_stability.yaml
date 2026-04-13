@@ -64,6 +64,12 @@ prototype:
   prototype_init_seed:
   routing_type: cosine
   routing_temperature: 0.07
+  routing_source: global
+  local_routing_temperature: 0.07
+  local_routing_pooling: logsumexp
+  local_routing_use_adapter: true
+  local_routing_adapter_dim:
+  local_routing_normalize_inputs: true
   contextualization_enabled: true
   contextualization_type: self_attention
   contextualization_residual: true

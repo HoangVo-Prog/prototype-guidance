@@ -28,6 +28,22 @@ def build_prototype_head(
     token_scoring_type = getattr(args, 'token_similarity', getattr(args, 'token_scoring_type', 'cosine'))
     token_temperature = getattr(args, 'tau_t', getattr(args, 'token_pooling_temperature', 0.07))
     use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', True))
+    routing_source = str(getattr(args, 'prototype_routing_source', getattr(args, 'routing_source', 'global'))).lower()
+    local_routing_temperature = getattr(args, 'prototype_local_routing_temperature', getattr(args, 'local_routing_temperature', None))
+    if local_routing_temperature in ('', None):
+        local_routing_temperature = None
+    else:
+        local_routing_temperature = float(local_routing_temperature)
+    local_routing_pooling = str(getattr(args, 'prototype_local_routing_pooling', getattr(args, 'local_routing_pooling', 'logsumexp'))).lower()
+    local_routing_use_adapter = bool(getattr(args, 'prototype_local_routing_use_adapter', getattr(args, 'local_routing_use_adapter', True)))
+    local_routing_adapter_dim = getattr(args, 'prototype_local_routing_adapter_dim', getattr(args, 'local_routing_adapter_dim', None))
+    if local_routing_adapter_dim in ('', None, 0):
+        local_routing_adapter_dim = None
+    else:
+        local_routing_adapter_dim = int(local_routing_adapter_dim)
+    local_routing_normalize_inputs = bool(
+        getattr(args, 'prototype_local_routing_normalize_inputs', getattr(args, 'local_routing_normalize_inputs', True))
+    )
     use_loss_weight_ret = bool(getattr(args, 'use_loss_weight_ret', False))
     lambda_weight_ret = float(getattr(args, 'lambda_weight_ret', 0.0))
     weight_ret_margin_delta = float(getattr(args, 'weight_ret_margin_delta', 0.0))
@@ -120,6 +136,12 @@ def build_prototype_head(
         text_adapter=text_adapter,
         routing_type=routing_type,
         routing_temperature=routing_temperature,
+        routing_source=routing_source,
+        local_routing_temperature=local_routing_temperature,
+        local_routing_pooling=local_routing_pooling,
+        local_routing_use_adapter=local_routing_use_adapter,
+        local_routing_adapter_dim=local_routing_adapter_dim,
+        local_routing_normalize_inputs=local_routing_normalize_inputs,
         token_scoring_type=token_scoring_type,
         token_temperature=token_temperature,
         token_policy=getattr(args, 'token_policy', 'content_only'),
