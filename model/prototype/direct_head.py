@@ -53,6 +53,12 @@ class DirectImageConditionedTextHead(nn.Module):
         diag_temperature: float = 0.07,
         use_loss_ret: bool = True,
         lambda_ret: float = 1.0,
+        use_loss_weight_ret: bool = False,
+        lambda_weight_ret: float = 0.0,
+        weight_ret_margin_delta: float = 0.0,
+        weight_ret_tau: float = 0.5,
+        weight_ret_detach_host: bool = True,
+        weight_ret_normalize_mean_one: bool = True,
         contrastive_temperature_init: float = 0.07,
     ):
         super().__init__()
@@ -127,6 +133,12 @@ class DirectImageConditionedTextHead(nn.Module):
             diag_temperature=diag_temperature,
             use_loss_ret=use_loss_ret,
             lambda_ret=lambda_ret,
+            use_loss_weight_ret=use_loss_weight_ret,
+            lambda_weight_ret=lambda_weight_ret,
+            weight_ret_margin_delta=weight_ret_margin_delta,
+            weight_ret_tau=weight_ret_tau,
+            weight_ret_detach_host=weight_ret_detach_host,
+            weight_ret_normalize_mean_one=weight_ret_normalize_mean_one,
             use_loss_support=resolved_use_loss_sup,
             support_loss_weight=resolved_lambda_sup,
             support_min=resolved_support_target,
@@ -453,6 +465,7 @@ class DirectImageConditionedTextHead(nn.Module):
         pids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
+        host_pairwise_logits: Optional[torch.Tensor] = None,
         return_debug: bool = False,
         disable_proxy_losses: bool = False,
     ) -> Dict[str, object]:
@@ -490,6 +503,7 @@ class DirectImageConditionedTextHead(nn.Module):
             prototypes=None,
             routing_weights=None,
             surrogate_pairwise_logits=surrogate_pairwise_logits,
+            host_pairwise_logits=host_pairwise_logits,
             return_debug=return_debug,
             disable_proxy_losses=disable_proxy_losses,
         )

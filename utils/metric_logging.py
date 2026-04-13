@@ -21,6 +21,7 @@ TRAIN_LOSS_KEYS = (
     'loss_proxy_text',
     'loss_proxy_text_exact',
     'loss_ret',
+    'loss_weight_ret',
     'loss_align',
     'loss_diag',
     'loss_gap',
@@ -32,6 +33,7 @@ TRAIN_LOSS_KEYS = (
     'loss_proxy_text_exact_weighted',
     'loss_proxy_weighted',
     'loss_ret_weighted',
+    'loss_weight_ret_weighted',
     'loss_align_weighted',
     'loss_gap_weighted',
     'loss_diag_weighted',
@@ -167,6 +169,13 @@ DEBUG_METRIC_MAP = {
     'surrogate_pairwise_hardest_negative_logit_mean': 'debug/surrogate_pairwise_hardest_negative_logit_mean',
     'surrogate_pairwise_logit_mean': 'debug/surrogate_pairwise_logit_mean',
     'surrogate_pairwise_logit_std': 'debug/surrogate_pairwise_logit_std',
+    'host_margin_mean': 'debug/host_margin_mean',
+    'host_margin_min': 'debug/host_margin_min',
+    'host_weight_mean': 'debug/host_weight_mean',
+    'host_weight_std': 'debug/host_weight_std',
+    'proto_score_mean': 'debug/proto_score_mean',
+    'proto_diag_mean': 'debug/proto_diag_mean',
+    'proto_host_score_corr': 'debug/proto_host_score_corr',
     'class_proxy_norm_mean': 'debug/class_proxy_norm_mean',
     'class_proxy_norm_std': 'debug/class_proxy_norm_std',
     'class_proxy_norm_min': 'debug/class_proxy_norm_min',
@@ -300,6 +309,7 @@ _LOSS_BASE_SUFFIX_MAP = {
     'loss_proxy_text': 'proxy_text',
     'loss_proxy_text_exact': 'proxy_text_exact',
     'loss_ret': 'ret',
+    'loss_weight_ret': 'weight_ret',
     'loss_align': 'align',
     'loss_dir': 'dir',
     'loss_gap': 'gap',
@@ -317,6 +327,7 @@ _LOSS_WEIGHTED_SUFFIX_MAP = {
     'loss_proxy_text_exact_weighted': 'proxy_text_exact',
     'loss_proxy_weighted': 'proxy',
     'loss_ret_weighted': 'ret',
+    'loss_weight_ret_weighted': 'weight_ret',
     'loss_align_weighted': 'align',
     'loss_dir_weighted': 'dir',
     'loss_gap_weighted': 'gap',
@@ -387,6 +398,10 @@ _VAL_DEBUG_NAMESPACE_MAP = {
 
 
 def _map_train_loss_key(raw_key: str) -> str:
+    if raw_key == 'loss_weight_ret':
+        return 'train/loss_weight_ret'
+    if raw_key == 'loss_weight_ret_weighted':
+        return 'train/loss_weight_ret_weighted'
     if raw_key in _LOSS_BASE_SUFFIX_MAP:
         return f'train/loss/{_LOSS_BASE_SUFFIX_MAP[raw_key]}'
     if raw_key in _LOSS_WEIGHTED_SUFFIX_MAP:
@@ -397,6 +412,10 @@ def _map_train_loss_key(raw_key: str) -> str:
 
 
 def _map_val_loss_key(raw_key: str) -> str:
+    if raw_key == 'loss_weight_ret':
+        return 'val/loss_weight_ret'
+    if raw_key == 'loss_weight_ret_weighted':
+        return 'val/loss_weight_ret_weighted'
     if raw_key in _LOSS_BASE_SUFFIX_MAP:
         return f'val/loss/{_LOSS_BASE_SUFFIX_MAP[raw_key]}'
     if raw_key in _LOSS_WEIGHTED_SUFFIX_MAP:
@@ -407,6 +426,16 @@ def _map_val_loss_key(raw_key: str) -> str:
 
 
 def map_train_diagnostic_key(raw_key: str) -> str:
+    if raw_key in {
+        'host_margin_mean',
+        'host_margin_min',
+        'host_weight_mean',
+        'host_weight_std',
+        'proto_score_mean',
+        'proto_diag_mean',
+        'proto_host_score_corr',
+    }:
+        return f'train/{raw_key}'
     if raw_key in _TRAIN_MODEL_KEYS:
         return f'train/model/{raw_key}'
     if raw_key in _TRAIN_TOKEN_POOL_KEYS:

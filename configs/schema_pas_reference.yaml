@@ -94,6 +94,10 @@ objectives:
     prototype_gap_margin: 0.05
     prototype_support_target: 4.0
     use_loss_ret: false
+    use_loss_weight_ret: false
+    weight_ret_margin_delta: 0.0
+    weight_ret_detach_host: true
+    weight_ret_normalize_mean_one: true
     retrieval_mode: surrogate_i2t
     use_balancing_loss: false
     use_diversity_loss: false
@@ -108,6 +112,7 @@ objectives:
     gap: 0.0
     support: 0.0
     ret: 0.0
+    weight_ret: 0.0
     balance: 0.0
     diversity: 0.0
 

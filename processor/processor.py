@@ -134,7 +134,7 @@ def _collect_gradient_metrics(model):
     named_parameters = list(_named_parameters_for_logging(model))
     metrics = {
         'grad_norm_class_proxies': _parameter_group_grad_norm(named_parameters, ('prototype_head.losses.class_proxies',)),
-        'grad_norm_image_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.image_projector', 'prototype_head.image_adapter', 'host_head')),
+        'grad_norm_image_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.image_projector', 'prototype_head.proto_query_proj', 'prototype_head.image_adapter', 'host_head')),
         'grad_norm_text_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.text_projector', 'prototype_head.text_adapter', 'host_head')),
         'grad_norm_prototype_bank': _parameter_group_grad_norm(named_parameters, ('prototype_head.prototype_bank',)),
         'grad_norm_image_backbone': _parameter_group_grad_norm(named_parameters, ('base_model.visual',)),

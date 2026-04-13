@@ -28,6 +28,12 @@ def build_prototype_head(
     token_scoring_type = getattr(args, 'token_similarity', getattr(args, 'token_scoring_type', 'cosine'))
     token_temperature = getattr(args, 'tau_t', getattr(args, 'token_pooling_temperature', 0.07))
     use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', True))
+    use_loss_weight_ret = bool(getattr(args, 'use_loss_weight_ret', False))
+    lambda_weight_ret = float(getattr(args, 'lambda_weight_ret', 0.0))
+    weight_ret_margin_delta = float(getattr(args, 'weight_ret_margin_delta', 0.0))
+    weight_ret_tau = float(getattr(args, 'weight_ret_tau', 0.5))
+    weight_ret_detach_host = bool(getattr(args, 'weight_ret_detach_host', True))
+    weight_ret_normalize_mean_one = bool(getattr(args, 'weight_ret_normalize_mean_one', True))
 
     common_kwargs = dict(
         input_dim=input_dim,
@@ -70,6 +76,12 @@ def build_prototype_head(
         diag_temperature=getattr(args, 'diag_temperature', 0.07),
         use_loss_ret=getattr(args, 'use_loss_ret', True),
         lambda_ret=getattr(args, 'lambda_ret', 1.0),
+        use_loss_weight_ret=use_loss_weight_ret,
+        lambda_weight_ret=lambda_weight_ret,
+        weight_ret_margin_delta=weight_ret_margin_delta,
+        weight_ret_tau=weight_ret_tau,
+        weight_ret_detach_host=weight_ret_detach_host,
+        weight_ret_normalize_mean_one=weight_ret_normalize_mean_one,
         contrastive_temperature_init=getattr(args, 'temperature', 0.07),
     )
 
@@ -145,6 +157,12 @@ def build_prototype_head(
         diag_temperature=getattr(args, 'diag_temperature', 0.07),
         use_loss_ret=getattr(args, 'use_loss_ret', True),
         lambda_ret=getattr(args, 'lambda_ret', 1.0),
+        use_loss_weight_ret=use_loss_weight_ret,
+        lambda_weight_ret=lambda_weight_ret,
+        weight_ret_margin_delta=weight_ret_margin_delta,
+        weight_ret_tau=weight_ret_tau,
+        weight_ret_detach_host=weight_ret_detach_host,
+        weight_ret_normalize_mean_one=weight_ret_normalize_mean_one,
         use_loss_support=use_loss_sup,
         support_loss_weight=support_loss_weight,
         support_min=prototype_support_target,

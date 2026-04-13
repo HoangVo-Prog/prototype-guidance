@@ -85,6 +85,10 @@ objectives:
     use_loss_align: false
     use_loss_diag: true
     use_loss_ret: true
+    use_loss_weight_ret: false
+    weight_ret_margin_delta: 0.0
+    weight_ret_detach_host: true
+    weight_ret_normalize_mean_one: true
     retrieval_mode: surrogate_i2t
     use_loss_support: false
     support_min: 2.0
@@ -99,6 +103,7 @@ objectives:
     align: 0.0
     diag: 1.0
     ret: 1.0
+    weight_ret: 0.0
     support: 0.0
     balance: 0.01
     diversity: 0.01

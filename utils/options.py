@@ -122,6 +122,12 @@ def build_parser():
     parser.add_argument('--use_loss_ret', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--retrieval_mode', type=str, default='surrogate_i2t')
     parser.add_argument('--lambda_ret', type=float, default=0.5)
+    parser.add_argument('--use_loss_weight_ret', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--lambda_weight_ret', type=float, default=0.0)
+    parser.add_argument('--weight_ret_margin_delta', type=float, default=0.0)
+    parser.add_argument('--weight_ret_tau', type=float, default=0.5)
+    parser.add_argument('--weight_ret_detach_host', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--weight_ret_normalize_mean_one', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_loss_support', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_support', type=float, default=0.1)
     parser.add_argument('--support_min', type=float, default=2.0)
@@ -373,6 +379,12 @@ def _finalize_args(args):
     args.support_min = float(args.prototype_support_target)
     args.use_loss_ret = bool(args.use_loss_ret)
     args.lambda_ret = float(args.lambda_ret)
+    args.use_loss_weight_ret = bool(getattr(args, 'use_loss_weight_ret', False))
+    args.lambda_weight_ret = float(getattr(args, 'lambda_weight_ret', 0.0))
+    args.weight_ret_margin_delta = float(getattr(args, 'weight_ret_margin_delta', 0.0))
+    args.weight_ret_tau = float(getattr(args, 'weight_ret_tau', 0.5))
+    args.weight_ret_detach_host = bool(getattr(args, 'weight_ret_detach_host', True))
+    args.weight_ret_normalize_mean_one = bool(getattr(args, 'weight_ret_normalize_mean_one', True))
     args.image_backbone = args.image_backbone or args.pretrain_choice
     args.text_backbone = args.text_backbone or 'clip_text_transformer'
     return args

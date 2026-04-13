@@ -73,6 +73,12 @@ class PrototypeConditionedTextHead(nn.Module):
         diag_temperature: float = 0.07,
         use_loss_ret: bool = True,
         lambda_ret: float = 1.0,
+        use_loss_weight_ret: bool = False,
+        lambda_weight_ret: float = 0.0,
+        weight_ret_margin_delta: float = 0.0,
+        weight_ret_tau: float = 0.5,
+        weight_ret_detach_host: bool = True,
+        weight_ret_normalize_mean_one: bool = True,
         use_loss_support: bool = False,
         support_loss_weight: float = 0.0,
         support_min: float = 2.0,
@@ -132,6 +138,10 @@ class PrototypeConditionedTextHead(nn.Module):
         )
         self.token_pooler = MaskedTokenPooler()
         self.text_pool_query = nn.Parameter(torch.randn(self.prototype_dim, dtype=torch.float32))
+        self.proto_query_proj = nn.Linear(self.prototype_dim, self.prototype_dim)
+        with torch.no_grad():
+            self.proto_query_proj.weight.zero_()
+            self.proto_query_proj.bias.zero_()
         self.image_projector = MLPProjector(
             input_dim=prototype_dim,
             hidden_dim=self.projector_hidden_dim,
@@ -182,6 +192,12 @@ class PrototypeConditionedTextHead(nn.Module):
             diag_temperature=diag_temperature,
             use_loss_ret=use_loss_ret,
             lambda_ret=lambda_ret,
+            use_loss_weight_ret=use_loss_weight_ret,
+            lambda_weight_ret=lambda_weight_ret,
+            weight_ret_margin_delta=weight_ret_margin_delta,
+            weight_ret_tau=weight_ret_tau,
+            weight_ret_detach_host=weight_ret_detach_host,
+            weight_ret_normalize_mean_one=weight_ret_normalize_mean_one,
             use_loss_support=use_loss_support,
             support_loss_weight=support_loss_weight,
             support_min=support_min,
@@ -404,7 +420,8 @@ class PrototypeConditionedTextHead(nn.Module):
 
         routing_weights, routing_debug = self.router(image_features, contextualized_prototypes, return_debug=True)
         summary, aggregator_debug = self.aggregator(routing_weights, contextualized_prototypes, return_debug=True)
-        image_proxy_features = image_features
+        # Prototype score anchor uses visual global features plus a compact projection of query summary q_i.
+        image_proxy_features = image_features + self.proto_query_proj(summary)
         image_projected, image_projector_debug = self.image_projector(image_proxy_features, return_debug=True)
 
         outputs = {
@@ -750,6 +767,7 @@ class PrototypeConditionedTextHead(nn.Module):
         pids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
+        host_pairwise_logits: Optional[torch.Tensor] = None,
         return_debug: bool = False,
         disable_proxy_losses: bool = False,
     ) -> Dict[str, object]:
@@ -833,6 +851,7 @@ class PrototypeConditionedTextHead(nn.Module):
             prototypes=context['prototypes'],
             routing_weights=image_outputs['routing_weights'],
             surrogate_pairwise_logits=surrogate_pairwise_logits,
+            host_pairwise_logits=host_pairwise_logits,
             return_debug=return_debug,
             disable_proxy_losses=disable_proxy_losses,
         )
@@ -922,7 +941,6 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
-
 
 
 

@@ -23,6 +23,7 @@ LOGICAL_MODULE_GROUP_PREFIXES: Dict[str, Tuple[str, ...]] = {
     'prototype_projector': (
         'prototype_head.image_projector',
         'prototype_head.text_projector',
+        'prototype_head.proto_query_proj',
         'prototype_head.image_adapter',
         'prototype_head.text_adapter',
         'prototype_head.losses.class_proxies',

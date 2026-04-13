@@ -679,6 +679,8 @@ class PASModel(nn.Module):
             'loss_proxy_text_exact_weighted': zero,
             'loss_proxy_weighted': zero,
             'loss_ret_weighted': zero,
+            'loss_weight_ret': zero,
+            'loss_weight_ret_weighted': zero,
             'loss_align_weighted': zero,
             'loss_dir_weighted': zero,
             'loss_gap_weighted': zero,
@@ -696,6 +698,12 @@ class PASModel(nn.Module):
             'use_loss_proxy_text_exact': zero,
             'use_loss_ret': zero,
             'lambda_ret': zero,
+            'use_loss_weight_ret': zero,
+            'lambda_weight_ret': zero,
+            'weight_ret_margin_delta': zero,
+            'weight_ret_tau': zero,
+            'weight_ret_detach_host': zero,
+            'weight_ret_normalize_mean_one': zero,
             'use_loss_align': zero,
             'lambda_align': zero,
             'use_loss_dir': zero,
@@ -963,8 +971,8 @@ class PASModel(nn.Module):
                 'Theta_v': prototype_outputs['prototypes'].detach(),
                 'Theta_tilde': prototype_outputs['contextualized_prototypes'].detach(),
                 'basis_bank': prototype_outputs['basis_bank'].detach(),
-                'Z_v': host_outputs['image_projected'].detach(),
-                'Z_v_raw': host_outputs['image_projected_raw'].detach(),
+                'Z_v': prototype_outputs.get('image_projected', host_outputs['image_projected']).detach(),
+                'Z_v_raw': prototype_outputs.get('image_projected_raw', host_outputs['image_projected_raw']).detach(),
                 'Z_t': prototype_outputs['surrogate_text_projected'].detach(),
                 'Z_t_raw': prototype_outputs['surrogate_text_projected_raw'].detach(),
                 'Z_t_exact': prototype_outputs['exact_text_projected'].detach(),
@@ -1024,6 +1032,7 @@ class PASModel(nn.Module):
             elif (
                 name.startswith('prototype_head.image_projector')
                 or name.startswith('prototype_head.text_projector')
+                or name.startswith('prototype_head.proto_query_proj')
                 or name.startswith('prototype_head.image_adapter')
                 or name.startswith('prototype_head.text_adapter')
             ):
@@ -1114,6 +1123,7 @@ class PASModel(nn.Module):
                 pids=pids,
                 attention_mask=text_output.token_mask,
                 special_token_positions=text_output.special_token_positions,
+                host_pairwise_logits=host_outputs.get('surrogate_pairwise_logits'),
                 return_debug=should_return_debug,
                 disable_proxy_losses=disable_proxy_losses,
             )
@@ -1151,6 +1161,8 @@ class PASModel(nn.Module):
             'loss_proxy_text_exact_weighted': prototype_losses['loss_proxy_text_exact_weighted'],
             'loss_proxy_weighted': prototype_losses['loss_proxy_weighted'],
             'loss_ret_weighted': prototype_losses['loss_ret_weighted'],
+            'loss_weight_ret': prototype_losses['loss_weight_ret'],
+            'loss_weight_ret_weighted': prototype_losses['loss_weight_ret_weighted'],
             'loss_align_weighted': prototype_losses['loss_align_weighted'],
             'loss_dir_weighted': prototype_losses['loss_dir_weighted'],
             'loss_gap_weighted': prototype_losses['loss_gap_weighted'],
@@ -1168,6 +1180,12 @@ class PASModel(nn.Module):
             'use_loss_proxy_text_exact': prototype_losses['use_loss_proxy_text_exact'],
             'use_loss_ret': metric_losses['use_loss_ret'],
             'lambda_ret': metric_losses['lambda_ret'],
+            'use_loss_weight_ret': prototype_losses['use_loss_weight_ret'],
+            'lambda_weight_ret': prototype_losses['lambda_weight_ret'],
+            'weight_ret_margin_delta': prototype_losses['weight_ret_margin_delta'],
+            'weight_ret_tau': prototype_losses['weight_ret_tau'],
+            'weight_ret_detach_host': prototype_losses['weight_ret_detach_host'],
+            'weight_ret_normalize_mean_one': prototype_losses['weight_ret_normalize_mean_one'],
             'lambda_align': prototype_losses['lambda_align'],
             'use_loss_dir': prototype_losses['use_loss_dir'],
             'lambda_dir': prototype_losses['lambda_dir'],
@@ -1192,7 +1210,7 @@ class PASModel(nn.Module):
             'fusion_lambda_host': host_losses['loss_total'].new_tensor(self.fusion_lambda_host),
             'fusion_lambda_prototype': host_losses['loss_total'].new_tensor(self.fusion_lambda_prototype),
             'alpha': prototype_outputs['routing_weights'].detach(),
-            'z_v': host_outputs['image_projected'],
+            'z_v': prototype_outputs.get('image_projected', host_outputs['image_projected']),
             'z_t_hat_diag': prototype_outputs['surrogate_text_projected'],
             'z_t_exact_diag': prototype_outputs['exact_text_projected'],
             'surrogate_pairwise_logits': prototype_outputs.get('surrogate_pairwise_logits'),
@@ -1235,7 +1253,3 @@ def build_model(args, num_classes, train_loader=None):
         if model.prototype_head is not None:
             model.prototype_head.float()
     return model
-
-
-
-

@@ -15,6 +15,7 @@ LOGICAL_MODULE_GROUPS: Tuple[str, ...] = tuple(REGISTRY_LOGICAL_MODULE_GROUPS)
 LOSS_WEIGHT_KEYS: Tuple[str, ...] = (
     'lambda_host',
     'lambda_ret',
+    'lambda_weight_ret',
     'lambda_dir',
     'lambda_gap',
     'lambda_sup',
@@ -339,6 +340,7 @@ def apply_loss_weight_overrides(model, args, loss_weights: Dict[str, float]) -> 
             continue
         target_attr = {
             'lambda_ret': 'lambda_ret',
+            'lambda_weight_ret': 'lambda_weight_ret',
             'lambda_dir': 'lambda_dir',
             'lambda_diag': 'lambda_dir',
             'lambda_gap': 'lambda_gap',
@@ -363,6 +365,9 @@ def apply_loss_weight_overrides(model, args, loss_weights: Dict[str, float]) -> 
         if weight_name == 'lambda_ret' and hasattr(prototype_losses, 'use_loss_ret'):
             prototype_losses.use_loss_ret = bool(scalar > 0.0)
             setattr(args, 'use_loss_ret', prototype_losses.use_loss_ret)
+        elif weight_name == 'lambda_weight_ret' and hasattr(prototype_losses, 'use_loss_weight_ret'):
+            prototype_losses.use_loss_weight_ret = bool(scalar > 0.0)
+            setattr(args, 'use_loss_weight_ret', prototype_losses.use_loss_weight_ret)
         elif weight_name in {'lambda_dir', 'lambda_diag'} and hasattr(prototype_losses, 'use_loss_dir'):
             prototype_losses.use_loss_dir = bool(scalar > 0.0)
             prototype_losses.use_loss_diag = prototype_losses.use_loss_dir
