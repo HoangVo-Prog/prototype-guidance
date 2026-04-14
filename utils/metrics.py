@@ -166,6 +166,23 @@ class Evaluator:
         return normalized or 'row'
 
     @classmethod
+    def _is_host_only_selection_row(cls, task_name: object) -> bool:
+        label = str(task_name or '').strip().lower()
+        if not label:
+            return False
+        # Exclude canonical host-only labels (e.g., "host-t2i", "host-t2i out").
+        if re.match(r'^host[-_\s]*t2i(?:\b|[-_\s].*)$', label):
+            return True
+        # Exclude explicit fusion labels that reduce to host-only behavior.
+        compact = re.sub(r'\s+', '', label)
+        if re.match(
+            r'^host\([0-9]*\.?[0-9]+\)\+prototype\((?:0|0\.0+)\)-t2i(?:[-_a-z0-9]*)$',
+            compact,
+        ):
+            return True
+        return False
+
+    @classmethod
     def _format_fusion_row_name(cls, lambda_host: float, lambda_prototype: float) -> str:
         if cls._pair_close(lambda_host, 1.0) and cls._pair_close(lambda_prototype, 0.0):
             return 'host-t2i'
@@ -515,7 +532,7 @@ class Evaluator:
             raise RuntimeError('Evaluation produced no similarity rows.')
         # Select the best retrieval row by R1 for checkpointing/logged current R1,
         # excluding the pure host-only row.
-        eligible_rows = [row for row in metrics_rows if str(row.get('task', '')).strip() != 'host-t2i']
+        eligible_rows = [row for row in metrics_rows if not self._is_host_only_selection_row(row.get('task', ''))]
         if not eligible_rows:
             eligible_rows = metrics_rows
         metrics = max(eligible_rows, key=lambda row: float(row['R1']))
