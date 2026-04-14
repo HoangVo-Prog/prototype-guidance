@@ -62,7 +62,7 @@ prototype:
   prototype_init_max_iters: 50
   prototype_init_tol: 1.0e-4
   prototype_init_seed:
-  routing_type: cosine
+  routing_type: local_evidence
   routing_temperature: 0.07
   routing_source: global
   local_routing_temperature: 0.07
@@ -120,13 +120,12 @@ objectives:
     proxy_text: 0.0
     proxy_text_exact: 0.0
     align: 0.0
-    diag: 1.0
+    diag: 10.0
     gap: 0.0
-    ret: 0.0
-
+    support: 1.0
+    ret: 5.0
     weight_ret: 0.0
-    support: 0.1
-    balance: 0.5
+    balance: 0.0
     diversity: 0.0
 
 text_pooling:
@@ -192,8 +191,6 @@ training:
         routing, fusion]
       frozen_groups: []
       lr_overrides:
-        host_backbone: 5.0e-6
-        host_retrieval: 1.0e-5
         prototype_bank: 2.0e-6
         prototype_projector: 5.0e-6
         routing: 2.0e-6
