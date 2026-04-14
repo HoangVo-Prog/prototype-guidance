@@ -472,17 +472,20 @@ def do_train(
                 experiment_tracker.log(validation_metrics)
             if modular_checkpoint_manager is not None:
                 model_for_group_ckpt = model.module if hasattr(model, 'module') else model
+                selected_metric_row = str(evaluator.latest_metrics.get('val/top1_row', '') or '') or None
                 modular_checkpoint_manager.save_latest(
                     model=model_for_group_ckpt,
                     epoch=epoch,
                     global_step=current_steps,
                     metric_value=float(top1),
+                    metric_row=selected_metric_row,
                 )
                 modular_checkpoint_manager.save_best_if_improved(
                     model=model_for_group_ckpt,
                     epoch=epoch,
                     global_step=current_steps,
                     metric_value=float(top1),
+                    metric_row=selected_metric_row,
                 )
             if best_top1 < top1:
                 best_top1 = top1

@@ -183,6 +183,13 @@ class Evaluator:
         return False
 
     @classmethod
+    def _is_pas_selection_row(cls, task_name: object) -> bool:
+        label = str(task_name or '').strip().lower()
+        if not label:
+            return False
+        return bool(re.match(r'^pas[-_\s]*t2i(?:\b|[-_\s].*)?$', label))
+
+    @classmethod
     def _format_fusion_row_name(cls, lambda_host: float, lambda_prototype: float) -> str:
         if cls._pair_close(lambda_host, 1.0) and cls._pair_close(lambda_prototype, 0.0):
             return 'host-t2i'
@@ -530,12 +537,18 @@ class Evaluator:
         ]
         if not metrics_rows:
             raise RuntimeError('Evaluation produced no similarity rows.')
-        # Select the best retrieval row by R1 for checkpointing/logged current R1,
-        # excluding the pure host-only row.
+        # Select checkpoint/current-R1 metric row by:
+        # 1) excluding host-only rows,
+        # 2) preferring pas-t2i when available,
+        # 3) otherwise taking the best remaining row by R1.
         eligible_rows = [row for row in metrics_rows if not self._is_host_only_selection_row(row.get('task', ''))]
         if not eligible_rows:
             eligible_rows = metrics_rows
-        metrics = max(eligible_rows, key=lambda row: float(row['R1']))
+        preferred_pas_rows = [row for row in eligible_rows if self._is_pas_selection_row(row.get('task', ''))]
+        if preferred_pas_rows:
+            metrics = max(preferred_pas_rows, key=lambda row: float(row['R1']))
+        else:
+            metrics = max(eligible_rows, key=lambda row: float(row['R1']))
 
         table = PrettyTable(['task'] + list(self.requested_metrics))
         for row_metrics in metrics_rows:

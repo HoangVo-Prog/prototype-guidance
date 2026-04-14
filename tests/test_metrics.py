@@ -28,6 +28,12 @@ class MetricsTests(unittest.TestCase):
         self.assertFalse(Evaluator._is_host_only_selection_row('prototype-t2i'))
         self.assertFalse(Evaluator._is_host_only_selection_row('host+prototype(0.25)-t2i'))
 
+    def test_pas_selection_row_detection(self):
+        self.assertTrue(Evaluator._is_pas_selection_row('pas-t2i'))
+        self.assertTrue(Evaluator._is_pas_selection_row('pas_t2i'))
+        self.assertFalse(Evaluator._is_pas_selection_row('host-t2i'))
+        self.assertFalse(Evaluator._is_pas_selection_row('prototype-t2i'))
+
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()

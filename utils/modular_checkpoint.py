@@ -203,7 +203,15 @@ class ModularCheckpointManager:
             base_message += f' path={source_path}'
         self.logger.info(base_message)
 
-    def _build_payload(self, model, group_name: str, epoch: int, global_step: int, metric_value: Optional[float]):
+    def _build_payload(
+        self,
+        model,
+        group_name: str,
+        epoch: int,
+        global_step: int,
+        metric_value: Optional[float],
+        metric_row: Optional[str] = None,
+    ):
         group_state_dict = get_group_state_dict(model, group_name)
         if not group_state_dict:
             return None
@@ -216,6 +224,7 @@ class ModularCheckpointManager:
                 'name': self.metric_name,
                 'value': None if metric_value is None else float(metric_value),
                 'mode': self.metric_mode,
+                'row': None if metric_row is None else str(metric_row),
             },
             'metadata': {
                 'host_type': str(getattr(self.args, 'host_type', 'clip')),
@@ -224,7 +233,16 @@ class ModularCheckpointManager:
             },
         }
 
-    def _save_group_payload(self, model, group_name: str, file_name: str, epoch: int, global_step: int, metric_value: Optional[float]):
+    def _save_group_payload(
+        self,
+        model,
+        group_name: str,
+        file_name: str,
+        epoch: int,
+        global_step: int,
+        metric_value: Optional[float],
+        metric_row: Optional[str] = None,
+    ):
         output_path = os.path.join(self._checkpoint_output_dir(), file_name)
         payload = self._build_payload(
             model=model,
@@ -232,17 +250,19 @@ class ModularCheckpointManager:
             epoch=epoch,
             global_step=global_step,
             metric_value=metric_value,
+            metric_row=metric_row,
         )
         if payload is None:
             self._log_parameterless_group_skip(group_name=group_name, action='save')
             return
         torch.save(payload, output_path)
         self.logger.info(
-            'Saved modular checkpoint group=%s path=%s metric=%s value=%s epoch=%d step=%d',
+            'Saved modular checkpoint group=%s path=%s metric=%s value=%s row=%s epoch=%d step=%d',
             group_name,
             output_path,
             self.metric_name,
             metric_value,
+            metric_row,
             epoch,
             global_step,
         )
@@ -271,7 +291,14 @@ class ModularCheckpointManager:
             except OSError:
                 pass
 
-    def save_latest(self, model, epoch: int, global_step: int, metric_value: Optional[float]):
+    def save_latest(
+        self,
+        model,
+        epoch: int,
+        global_step: int,
+        metric_value: Optional[float],
+        metric_row: Optional[str] = None,
+    ):
         if not bool(self.config.get('save', {}).get('save_latest', True)):
             return
         for group_name in self._selected_groups():
@@ -286,6 +313,7 @@ class ModularCheckpointManager:
                 epoch=epoch,
                 global_step=global_step,
                 metric_value=metric_value,
+                metric_row=metric_row,
             )
             self._rotate_history_if_needed(str(file_name), epoch)
 
@@ -296,7 +324,14 @@ class ModularCheckpointManager:
             return float(metric_value) > float(self.best_metric_value)
         return float(metric_value) < float(self.best_metric_value)
 
-    def save_best_if_improved(self, model, epoch: int, global_step: int, metric_value: Optional[float]):
+    def save_best_if_improved(
+        self,
+        model,
+        epoch: int,
+        global_step: int,
+        metric_value: Optional[float],
+        metric_row: Optional[str] = None,
+    ):
         if not bool(self.config.get('save', {}).get('save_best', True)):
             return
         if metric_value is None:
@@ -316,6 +351,7 @@ class ModularCheckpointManager:
                 epoch=epoch,
                 global_step=global_step,
                 metric_value=metric_value,
+                metric_row=metric_row,
             )
 
     def has_enabled_group_loading(self):
