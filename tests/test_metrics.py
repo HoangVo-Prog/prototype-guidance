@@ -19,6 +19,7 @@ if torch is not None:
 class MetricsTests(unittest.TestCase):
     def test_host_only_selection_row_detection_excludes_host_t2i_variants(self):
         self.assertTrue(Evaluator._is_host_only_selection_row('host-t2i'))
+        self.assertTrue(Evaluator._is_host_only_selection_row('host_only-t2i'))
         self.assertTrue(Evaluator._is_host_only_selection_row('host-t2i out'))
         self.assertTrue(Evaluator._is_host_only_selection_row('host_t2i_out'))
         self.assertTrue(Evaluator._is_host_only_selection_row('host(1.00)+prototype(0.00)-t2i'))
