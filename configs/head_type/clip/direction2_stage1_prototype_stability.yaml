@@ -100,7 +100,6 @@ objectives:
     prototype_gap_margin: 0.05
     prototype_support_target: 4.0
     use_loss_ret: true
-
     use_loss_weight_ret: false
     weight_ret_margin_delta: 0.0
     weight_ret_detach_host: true
@@ -119,7 +118,6 @@ objectives:
     gap: 0.5
     support: 0.1
     ret: 0.5
-
     weight_ret: 0.0
     balance: 0.0
     diversity: 0.0

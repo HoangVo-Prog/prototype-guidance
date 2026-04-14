@@ -106,7 +106,6 @@ objectives:
     prototype_gap_margin: 0.05
     prototype_support_target: 12.0
     use_loss_ret: true
-
     use_loss_weight_ret: false
     weight_ret_margin_delta: 0.0
     weight_ret_detach_host: true
@@ -143,7 +142,7 @@ text_pooling:
 
 training:
   batch_size: 128
-  epochs: 40
+  epochs: 15
   log_period: 50
   eval_frequency: 1
   save_interval: 1

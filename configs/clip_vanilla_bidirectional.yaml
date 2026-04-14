@@ -96,7 +96,6 @@ objectives:
     use_loss_align: false
     use_loss_diag: false
     use_loss_ret: true
-
     use_loss_weight_ret: false
     weight_ret_margin_delta: 0.0
     weight_ret_detach_host: true
