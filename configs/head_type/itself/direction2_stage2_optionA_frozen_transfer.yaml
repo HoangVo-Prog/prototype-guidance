@@ -186,7 +186,7 @@ training:
     # Stage 2: host active, full host loss, prototype bank/routing fixed.
     - name: stage2_frozen_transfer
       epoch_start: 1
-      epoch_end: 40
+      epoch_end: 15
       trainable_groups: [host_backbone, host_retrieval, prototype_projector, fusion]
       frozen_groups: [prototype_bank, routing]
 

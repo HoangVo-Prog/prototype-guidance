@@ -62,9 +62,9 @@ prototype:
   prototype_init_max_iters: 50
   prototype_init_tol: 1.0e-4
   prototype_init_seed:
-  routing_type: local_evidence
+  routing_type: cosine
   routing_temperature: 0.07
-  routing_source: global
+  routing_source: local_evidence
   local_routing_temperature: 0.07
   local_routing_pooling: logsumexp
   local_routing_use_adapter: true
@@ -186,7 +186,7 @@ training:
     # Stage 2: host active; prototype branch remains trainable with significantly smaller lr.
     - name: stage2_lowlr_adaptation
       epoch_start: 1
-      epoch_end: 40
+      epoch_end: 15
       trainable_groups: [host_backbone, host_retrieval, prototype_bank, prototype_projector,
         routing, fusion]
       frozen_groups: []
