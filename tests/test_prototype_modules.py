@@ -60,6 +60,8 @@ class PrototypeModuleTests(unittest.TestCase):
             prototype_init_seed=17,
             routing_type='cosine',
             routing_temperature=0.07,
+            routing_source='global',
+            local_routing_use_adapter=True,
             token_scoring_type='cosine',
             token_temperature=0.07,
             normalize_for_token_scoring=True,
@@ -91,9 +93,44 @@ class PrototypeModuleTests(unittest.TestCase):
             contrastive_temperature_init=0.07,
             learnable_contrastive_temperature=False,
             dead_prototype_threshold=0.01,
+            use_host_deflated_input=False,
         )
         base.update(overrides)
         return PrototypeConditionedTextHead(**base)
+
+    def test_host_deflated_patch_tokens_reduce_host_alignment(self):
+        head = self._build_head(use_host_deflated_input=True)
+        batch_size = 2
+        num_tokens = 4
+        img_global = F.normalize(torch.randn(batch_size, self.feature_dim), dim=-1)
+        patch_tokens = (3.0 * img_global.unsqueeze(1)) + (0.05 * torch.randn(batch_size, num_tokens, self.feature_dim))
+
+        residual_tokens, _ = head.compute_host_deflated_patch_tokens(patch_tokens, img_global)
+
+        self.assertEqual(tuple(residual_tokens.shape), tuple(patch_tokens.shape))
+        self.assertTrue(torch.isfinite(residual_tokens).all())
+        host_unit = F.normalize(img_global, dim=-1)
+        raw_cosine = (F.normalize(patch_tokens, dim=-1) * host_unit.unsqueeze(1)).sum(dim=-1).mean()
+        residual_cosine = (residual_tokens * host_unit.unsqueeze(1)).sum(dim=-1).mean()
+        self.assertLess(abs(float(residual_cosine.item())), abs(float(raw_cosine.item())))
+
+    def test_local_routing_tokens_unchanged_when_host_deflation_disabled(self):
+        head = self._build_head(
+            routing_source='local_evidence',
+            local_routing_use_adapter=False,
+            use_host_deflated_input=False,
+        )
+        image_embeddings = torch.randn(self.batch_size, self.feature_dim)
+        image_local_tokens = torch.randn(self.batch_size, self.seq_len, self.feature_dim)
+
+        local_tokens, debug_metrics = head._prepare_local_routing_tokens(
+            image_embeddings=image_embeddings,
+            image_local_tokens=image_local_tokens,
+        )
+
+        expected_tokens = image_local_tokens[:, 1:, :]
+        self.assertTrue(torch.allclose(local_tokens, expected_tokens, atol=1e-6, rtol=1e-6))
+        self.assertEqual(float(debug_metrics['host_deflated_input_applied'].item()), 0.0)
 
     def test_legacy_self_attention_keeps_raw_value_branch(self):
         prototypes = torch.tensor(
