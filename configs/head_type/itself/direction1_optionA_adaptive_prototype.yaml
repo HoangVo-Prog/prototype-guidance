@@ -197,10 +197,9 @@ training:
         fusion: 5.0e-5
       loss_weights:
         lambda_host: 0.0
-        lambda_ret: 1.0
-        lambda_diag: 1.0
-        lambda_bal: 0.01
-        lambda_div: 0.01
+        lambda_ret: 0.5
+        lambda_diag: 4.0
+        lambda_support: 0.1
     # Joint: unfreeze host and keep prototype adaptive with lower lr.
     - name: joint_adaptive
       epoch_start: 11

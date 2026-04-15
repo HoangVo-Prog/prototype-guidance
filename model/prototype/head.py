@@ -349,6 +349,77 @@ class PrototypeConditionedTextHead(nn.Module):
             f'{prefix}_pairwise_cosine_max': off_diagonal.max().detach(),
         }
 
+    def _compute_proto_image_path_diagnostics(
+        self,
+        image_base_features: torch.Tensor,
+        image_proxy_features: torch.Tensor,
+        image_projected: torch.Tensor,
+        eps: float = 1e-8,
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, object]]:
+        metrics: Dict[str, torch.Tensor] = {}
+        debug_extras: Dict[str, object] = {}
+
+        def _stats(prefix: str, values: torch.Tensor) -> Dict[str, torch.Tensor]:
+            return {
+                f'{prefix}_mean': values.mean().detach(),
+                f'{prefix}_std': values.std(unbiased=False).detach(),
+                f'{prefix}_min': values.min().detach(),
+                f'{prefix}_max': values.max().detach(),
+            }
+
+        with torch.no_grad():
+            base = image_base_features.detach()
+            proxy = image_proxy_features.detach()
+            projected = image_projected.detach()
+
+            if base.ndim < 2 or proxy.ndim < 2 or projected.ndim < 2:
+                debug_extras['proto_image_projected_vs_base_cos_reason'] = 'invalid_rank'
+                metrics['proto_image_projected_vs_base_cos_available'] = projected.new_zeros(()).detach()
+                return metrics, debug_extras
+
+            q_proj = proxy - base
+            base_vec = base.float().reshape(base.size(0), -1)
+            q_proj_vec = q_proj.float().reshape(q_proj.size(0), -1)
+            projected_vec = projected.float().reshape(projected.size(0), -1)
+
+            metrics['proto_image_base_feature_dim'] = base.new_tensor(float(base.size(-1))).detach()
+            metrics['proto_q_proj_feature_dim'] = q_proj.new_tensor(float(q_proj.size(-1))).detach()
+            metrics['proto_image_projected_feature_dim'] = projected.new_tensor(float(projected.size(-1))).detach()
+
+            norm_a = base_vec.norm(dim=-1)
+            norm_q = q_proj_vec.norm(dim=-1)
+            ratio = norm_q / (norm_a + float(eps))
+            metrics.update(_stats('proto_q_injection_ratio', ratio))
+            metrics['proto_q_injection_ratio_finite'] = torch.isfinite(ratio).float().mean().detach()
+
+            exact_r2_available = (base_vec.shape == projected_vec.shape)
+            metrics['proto_image_projected_vs_base_cos_available'] = base.new_tensor(1.0 if exact_r2_available else 0.0).detach()
+
+            if exact_r2_available:
+                exact_cos = (F.normalize(projected_vec, dim=-1, eps=eps) * F.normalize(base_vec, dim=-1, eps=eps)).sum(dim=-1)
+                metrics.update(_stats('proto_image_projected_vs_base_cos', exact_cos))
+                metrics['proto_image_projected_vs_base_cos_finite'] = torch.isfinite(exact_cos).float().mean().detach()
+                return metrics, debug_extras
+
+            debug_extras['proto_image_projected_vs_base_cos_reason'] = 'dim_mismatch'
+            fork_devices = []
+            if base.is_cuda:
+                device_index = base.device.index if base.device.index is not None else torch.cuda.current_device()
+                fork_devices = [int(device_index)]
+            with torch.random.fork_rng(devices=fork_devices, enabled=True):
+                projected_base = self.image_projector(base)
+            projected_base_vec = projected_base.detach().float().reshape(projected_base.size(0), -1)
+            if projected_base_vec.shape == projected_vec.shape:
+                aligned_cos = (
+                    F.normalize(projected_base_vec, dim=-1, eps=eps)
+                    * F.normalize(projected_vec, dim=-1, eps=eps)
+                ).sum(dim=-1)
+                metrics.update(_stats('proto_image_projected_vs_base_aligned_cos', aligned_cos))
+                metrics['proto_image_projected_vs_base_aligned_cos_finite'] = torch.isfinite(aligned_cos).float().mean().detach()
+            else:
+                debug_extras['proto_image_projected_vs_base_aligned_cos_reason'] = 'dim_mismatch_after_projection'
+        return metrics, debug_extras
+
     def _collect_scalar_metrics(
         self,
         prototypes: torch.Tensor,
@@ -982,6 +1053,7 @@ class PrototypeConditionedTextHead(nn.Module):
         )
         collect_debug_diagnostics = self.collect_debug_metrics or bool(return_debug)
         scalar_metrics = {}
+        image_path_debug_extras: Dict[str, object] = {}
         if collect_debug_diagnostics:
             scalar_metrics = self._collect_scalar_metrics(
                 prototypes=context['prototypes'],
@@ -1002,6 +1074,12 @@ class PrototypeConditionedTextHead(nn.Module):
                 router_debug=image_outputs['router_debug'],
                 pooler_debug=exact_outputs['pooler_debug'],
             )
+            image_path_metrics, image_path_debug_extras = self._compute_proto_image_path_diagnostics(
+                image_base_features=image_outputs['image_embedding'],
+                image_proxy_features=image_outputs['image_proxy_features'],
+                image_projected=image_outputs['image_projected'],
+            )
+            scalar_metrics.update(image_path_metrics)
             scalar_metrics.update(
                 self._compute_routing_certification_metrics(
                     routing_weights=image_outputs['routing_weights'],
@@ -1076,6 +1154,7 @@ class PrototypeConditionedTextHead(nn.Module):
             'metrics': scalar_metrics,
         }
         outputs['debug'] = dict(scalar_metrics)
+        outputs['debug'].update(image_path_debug_extras)
         if return_debug:
             outputs['debug'].update(
                 {

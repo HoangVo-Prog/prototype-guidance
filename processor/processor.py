@@ -22,7 +22,6 @@ from utils.metric_logging import (
     RoutingCoverageTracker,
     build_train_metrics_from_scalars,
     build_validation_metrics,
-    collect_loss_metrics,
     collect_scalar_metrics,
 )
 from utils.meter import AverageMeter
@@ -88,7 +87,11 @@ def _compute_eval_loss_metrics(model, val_loss_loader, args):
                 with build_autocast_context(args, device):
                     outputs = model(batch, return_debug=False, disable_proxy_losses=True)
                 batch_size = int(batch['images'].shape[0])
-                for key, value in collect_loss_metrics(outputs).items():
+                scalar_metrics = collect_scalar_metrics(
+                    outputs,
+                    include_debug_metrics=bool(getattr(args, 'log_debug_metrics', True)),
+                )
+                for key, value in scalar_metrics.items():
                     metrics[key] = metrics.get(key, 0.0) + (float(value) * batch_size)
                     counts[key] = counts.get(key, 0) + batch_size
     finally:
