@@ -64,7 +64,7 @@ prototype:
   prototype_init_seed:
   routing_type: cosine
   routing_temperature: 0.07
-  routing_source: local_evidence
+  routing_source: global
   local_routing_temperature: 0.07
   local_routing_pooling: logsumexp
   local_routing_use_adapter: true
@@ -102,7 +102,7 @@ objectives:
     use_loss_proxy_text_exact: false
     use_loss_align: false
     use_loss_diag: true
-    use_loss_gap: true
+    use_loss_gap: false
     use_loss_support: true
     prototype_gap_margin: 0.05
     prototype_support_target: 12.0
@@ -121,8 +121,8 @@ objectives:
     proxy_text: 0.0
     proxy_text_exact: 0.0
     align: 0.0
-    diag: 1.0
-    gap: 0.5
+    diag: 4.0
+    gap: 0.0
     support: 0.1
     ret: 0.5
     weight_ret: 0.0

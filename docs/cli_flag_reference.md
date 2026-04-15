@@ -464,6 +464,20 @@ Notes:
 - Primary Config Keys: `fusion.enabled`
 - Alias Config Keys: -
 
+## `fusion_lambda_host`
+- Flags: `--fusion_lambda_host`
+- Type/Action: type=float
+- Default: `None`
+- Primary Config Keys: `fusion.lambda_host`
+- Alias Config Keys: -
+
+## `fusion_lambda_prototype`
+- Flags: `--fusion_lambda_prototype`
+- Type/Action: type=float
+- Default: `None`
+- Primary Config Keys: `fusion.lambda_prototype`
+- Alias Config Keys: -
+
 ## `fusion_coefficient`
 - Flags: `--fusion_coefficient`
 - Type/Action: type=float
@@ -561,6 +575,55 @@ Notes:
 - Default: `0.07`
 - Primary Config Keys: `prototype.routing_temperature`
 - Alias Config Keys: `prototype.tau_p`
+
+## `prototype_routing_source`
+- Flags: `--prototype_routing_source`
+- Type/Action: type=str
+- Default: `'global'`
+- Primary Config Keys: `prototype.routing_source`
+- Alias Config Keys: -
+
+## `prototype_local_routing_temperature`
+- Flags: `--prototype_local_routing_temperature`
+- Type/Action: type=float
+- Default: `None`
+- Primary Config Keys: `prototype.local_routing_temperature`
+- Alias Config Keys: -
+
+## `prototype_local_routing_pooling`
+- Flags: `--prototype_local_routing_pooling`
+- Type/Action: type=str
+- Default: `'logsumexp'`
+- Primary Config Keys: `prototype.local_routing_pooling`
+- Alias Config Keys: -
+
+## `prototype_local_routing_use_adapter`
+- Flags: `--prototype_local_routing_use_adapter`
+- Type/Action: type=_str2bool, nargs='?'
+- Default: `True`
+- Primary Config Keys: `prototype.local_routing_use_adapter`
+- Alias Config Keys: -
+
+## `prototype_local_routing_adapter_dim`
+- Flags: `--prototype_local_routing_adapter_dim`
+- Type/Action: type=int
+- Default: `None`
+- Primary Config Keys: `prototype.local_routing_adapter_dim`
+- Alias Config Keys: -
+
+## `prototype_local_routing_normalize_inputs`
+- Flags: `--prototype_local_routing_normalize_inputs`
+- Type/Action: type=_str2bool, nargs='?'
+- Default: `True`
+- Primary Config Keys: `prototype.local_routing_normalize_inputs`
+- Alias Config Keys: -
+
+## `prototype_use_host_deflated_input`
+- Flags: `--prototype_use_host_deflated_input`, `--use_host_deflated_input`
+- Type/Action: type=_str2bool, nargs='?'
+- Default: `False`
+- Primary Config Keys: `prototype.use_host_deflated_input`
+- Alias Config Keys: -
 
 ## `prototype_contextualization_enabled`
 - Flags: `--prototype_contextualization_enabled`
