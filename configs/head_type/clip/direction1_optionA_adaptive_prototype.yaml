@@ -73,7 +73,7 @@ prototype:
   use_host_deflated_input: false
   contextualization_enabled: true
   contextualization_type: self_attention
-  contextualization_residual: false
+  contextualization_residual: true
   normalize_for_self_interaction: true
   normalize_for_routing: true
   dead_prototype_threshold: 0.005
@@ -86,6 +86,12 @@ fusion:
     - { name: "proto_010", lambda_host: 0.90, lambda_prototype: 0.10 }
     - { name: "proto_020", lambda_host: 0.80, lambda_prototype: 0.20 }
     - { name: "proto_030", lambda_host: 0.70, lambda_prototype: 0.30 }
+    - { name: "proto_040", lambda_host: 0.60, lambda_prototype: 0.40 }
+    - { name: "proto_050", lambda_host: 0.50, lambda_prototype: 0.50 }
+    - { name: "proto_060", lambda_host: 0.40, lambda_prototype: 0.60 }
+    - { name: "proto_070", lambda_host: 0.30, lambda_prototype: 0.70 }
+    - { name: "proto_080", lambda_host: 0.20, lambda_prototype: 0.80 }
+    - { name: "proto_090", lambda_host: 0.10, lambda_prototype: 0.90 }
     - { name: "proto_100", lambda_host: 0.00, lambda_prototype: 1.00 }
 
 objectives:
@@ -135,7 +141,7 @@ text_pooling:
 
 training:
   batch_size: 128
-  epochs: 60
+  epochs: 25
   log_period: 50
   eval_frequency: 1
   save_interval: 1
@@ -180,7 +186,7 @@ training:
     # Warm-up: freeze host backbone/retrieval, train prototype side only, lambda_host=0.
     - name: warmup
       epoch_start: 1
-      epoch_end: 5
+      epoch_end: 10
       trainable_groups: [prototype_bank, prototype_projector, routing, fusion]
       frozen_groups: [host_backbone, host_retrieval]
       lr_overrides:
@@ -190,14 +196,13 @@ training:
         fusion: 5.0e-5
       loss_weights:
         lambda_host: 0.0
-        lambda_ret: 1.0
-        lambda_diag: 1.0
-        lambda_bal: 0.01
-        lambda_div: 0.01
+        lambda_ret: 0.5
+        lambda_diag: 4.0
+        lambda_support: 0.1
     # Joint: unfreeze host and keep prototype adaptive with lower lr.
     - name: joint_adaptive
-      epoch_start: 6
-      epoch_end: 60
+      epoch_start: 11
+      epoch_end: 25
       trainable_groups: [host_backbone, host_retrieval, prototype_bank, prototype_projector,
         routing, fusion]
       frozen_groups: []
@@ -209,11 +214,10 @@ training:
         routing: 1.0e-5
         fusion: 2.0e-5
       loss_weights:
-        lambda_host: 1.0
-        lambda_ret: 0.5
-        lambda_diag: 0.5
-        lambda_bal: 0.005
-        lambda_div: 0.005
+        lambda_host: 0.1
+        lambda_ret: 5.0
+        lambda_diag: 10.0
+        lambda_support: 1.0
 
 optimizer:
   type: AdamW
