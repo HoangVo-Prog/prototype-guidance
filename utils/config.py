@@ -891,8 +891,7 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
             raise ValueError('host.type=clip with model.use_prototype_branch=false requires text_pooling.token_policy=eos_only.')
         if retrieval_mode != 'clip_bidirectional':
             raise ValueError('host.type=clip with model.use_prototype_branch=false requires objectives.objectives.retrieval_mode=clip_bidirectional.')
-        if not bool(flat.get('use_loss_ret', True)):
-            raise ValueError('host.type=clip with model.use_prototype_branch=false requires objectives.objectives.use_loss_ret=true.')
+
         if str(flat.get('retrieval_scorer', 'exact')).lower() != 'exact':
             raise ValueError('host.type=clip with model.use_prototype_branch=false requires evaluation.retrieval_scorer=exact.')
         incompatible_flags = {
