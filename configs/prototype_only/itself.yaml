@@ -1,0 +1,254 @@
+experiment:
+  name: runtime_itself_prototype_only_realistic
+  output_dir: runs
+  seed: 1
+
+model:
+  runtime_mode: prototype_only
+  variant: runtime_prototype_only_realistic
+  temperature: 0.02
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+  return_debug_outputs: false
+
+host:
+  type: itself
+  freeze_projectors: true
+  itself_loss_names: tal+cid
+  itself_only_global: false
+  itself_select_ratio: 0.4
+  itself_grab_embed_dim: 4096
+  itself_score_weight_global: 0.32
+  itself_tau: 0.015
+  itself_margin: 0.1
+  itself_return_all: true
+  itself_topk_type: custom
+  itself_layer_index: -1
+  itself_average_attn_weights: true
+  itself_modify_k: true
+  itself_lambda1_weight: 0.5
+  itself_lambda2_weight: 3.5
+
+prototype:
+  num_prototypes: 32
+  prototype_dim: 512
+  prototype_init: kmeans_centroids
+  prototype_init_hybrid_ratio: 0.5
+  prototype_init_max_iters: 50
+  prototype_init_tol: 1.0e-4
+  routing_type: cosine
+  routing_temperature: 0.07
+  local_routing_temperature: 0.07
+  local_routing_pooling: logsumexp
+  local_routing_use_adapter: true
+  local_routing_adapter_dim:
+  local_routing_normalize_inputs: true
+  contextualization_enabled: true
+  contextualization_type: self_attention
+  contextualization_residual: true
+  normalize_for_self_interaction: true
+  normalize_for_routing: true
+  dead_prototype_threshold: 0.005
+
+  routing_source: global
+  use_host_deflated_input: false
+
+fusion:
+  enabled: true
+  lambda_host: 0.5
+  lambda_prototype: 0.5
+  coefficient_source: fixed
+  composer_calibration_enabled: false
+  eval_subsets:
+    - { name: "host_only", lambda_host: 1.00, lambda_prototype: 0.00 }
+    - { name: "proto_010", lambda_host: 0.90, lambda_prototype: 0.10 }
+    - { name: "proto_020", lambda_host: 0.80, lambda_prototype: 0.20 }
+    - { name: "proto_030", lambda_host: 0.70, lambda_prototype: 0.30 }
+    - { name: "proto_040", lambda_host: 0.60, lambda_prototype: 0.40 }
+    - { name: "proto_050", lambda_host: 0.50, lambda_prototype: 0.50 }
+    - { name: "proto_060", lambda_host: 0.40, lambda_prototype: 0.60 }
+    - { name: "proto_070", lambda_host: 0.30, lambda_prototype: 0.70 }
+    - { name: "proto_080", lambda_host: 0.20, lambda_prototype: 0.80 }
+    - { name: "proto_090", lambda_host: 0.10, lambda_prototype: 0.90 }
+    - { name: "proto_100", lambda_host: 0.00, lambda_prototype: 1.00 }
+
+
+objectives:
+  objectives:
+    use_host_loss: false
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: false
+    use_loss_diag: true
+    use_loss_gap: false
+    use_loss_support: true
+    prototype_gap_margin: 0.05
+    prototype_support_target: 12.0
+    use_loss_ret: true
+    use_loss_weight_ret: false
+    weight_ret_margin_delta: 0.0
+    weight_ret_detach_host: true
+    weight_ret_normalize_mean_one: true
+    retrieval_mode: surrogate_i2t
+    use_balancing_loss: false
+    use_diversity_loss: false
+  lambda:
+    host: 0.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.0
+    diag: 4.0
+    gap: 0.0
+    support: 0.1
+    ret: 0.5
+    weight_ret: 0.0
+    balance: 0.0
+    diversity: 0.0
+
+text_pooling:
+  token_policy: content_only
+  scoring_type: cosine
+  normalize_for_token_scoring: true
+  token_temperature: 0.07
+  special_token_ids:
+    bos_token_id: 49406
+    eos_token_id: 49407
+    pad_token_id: 0
+  error_on_empty_kept_tokens: true
+
+training:
+  batch_size: 128
+  epochs: 20
+  log_period: 50
+  eval_frequency: 1
+  save_interval: 1
+  resume: false
+  resume_ckpt_file: ''
+  pretrain: ''
+  img_aug: true
+  txt_aug: true
+  sampler: identity
+  num_instance: 2
+  num_workers: 4
+  training: true
+  freeze_image_backbone: false
+  freeze_text_backbone: false
+  freeze_prototype_side: false
+  freeze_host_projectors: false
+  grad_clip: 0.0
+  amp: false
+  amp_dtype: fp16
+  proxy_temperature: 0.07
+  diag_temperature: 0.07
+
+optimizer:
+  type: Adam
+  lr: 1.0e-5
+  lr_prototype_bank: 5.0e-5
+  lr_projectors: 5.0e-5
+  lr_prototype_routing: 5.0e-5
+  lr_prototype_pooling: 5.0e-5
+  lr_prototype_contextualization: 5.0e-5
+  lr_host_projectors: 2.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
+  weight_decay: 4.0e-5
+  weight_decay_prototype_bank: 1.0e-4
+  weight_decay_projectors: 1.0e-4
+  weight_decay_prototype_routing: 1.0e-4
+  weight_decay_prototype_pooling: 1.0e-4
+  weight_decay_prototype_contextualization: 1.0e-4
+  weight_decay_host_projectors: 4.0e-5
+  lr_class_proxies: 5.0e-5
+  weight_decay_class_proxies: 1.0e-4
+  weight_decay_image_backbone: 4.0e-5
+  weight_decay_text_backbone: 4.0e-5
+  momentum: 0.9
+  alpha: 0.9
+  beta: 0.999
+  lr_factor: 5.0
+  bias_lr_factor: 2.0
+  weight_decay_bias: 0.0
+  optimizer_eps: 1.0e-3
+  milestones: [45, 50]
+  gamma: 0.1
+  warmup_factor: 0.1
+  warmup_epochs: 5
+  warmup_method: linear
+  scheduler: cosine
+  target_lr: 0.0
+  power: 0.9
+
+dataset:
+  dataset_name: RSTPReid
+  root_dir: data
+  val_dataset: test
+
+logging:
+  use_wandb: true
+  project: itself_prototype_only
+  entity:
+  run_name:
+  group: itself_base
+  mode: online
+  tags: [itself, prototype_only]
+  notes: 
+  log_interval: 50
+  log_code: false
+  log_debug_metrics: true
+
+evaluation:
+  checkpoint_path: ''
+  device: cuda
+  cross_domain_generalization: false
+  target_domain: CUHK-PEDES
+  retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
+  batch_size: 512
+  prototype_image_chunk_size: 32
+  prototype_text_chunk_size: 128
+  retrieval_scorer: exact
+
+
+checkpointing:
+  metric:
+    name: R1
+    mode: max
+  groups:
+    host:
+      enabled: false
+    prototype_bank:
+      enabled: true
+    prototype_projector:
+      enabled: true
+    fusion:
+      enabled: false
+  save:
+    save_latest: true
+    save_best: true
+    keep_last_n: 1
+  load:
+    enabled: false
+    strict: true
+    sources:
+      host:
+        enabled: false # true
+        # path: /home/vhoang/itself_ckpt/itself-rstp/best.pth
+      prototype_bank:
+        enabled: false
+        path:
+      prototype_projector:
+        enabled: false
+        path:
+      fusion:
+        enabled: false
+        path:
+    
+  authority_validation:
+    enabled: true
+    strict: true
+    warn_only: false
+    allow_fallback_row_name_classification: true
