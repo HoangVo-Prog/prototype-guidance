@@ -89,6 +89,7 @@ python test.py --config_file configs/runtime_modes/host_only_realistic.yaml --ou
 Required flags/keys:
 - `model.runtime_mode=host_only`
 - `model.use_prototype_branch=false`
+- `text_pooling.special_token_ids` must be explicitly set (required by model config validation).
 - For `host.type=clip`: `text_pooling.token_policy=eos_only`, `objectives.objectives.retrieval_mode=clip_bidirectional`, `evaluation.retrieval_scorer=exact` (`utils/config.py:896-897`, `:987`).
 
 Optional:
@@ -123,6 +124,7 @@ python test.py --config_file configs/runtime_modes/prototype_only_realistic.yaml
 Required:
 - `model.runtime_mode=prototype_only`
 - `model.use_prototype_branch=true`, `model.use_prototype_bank=true`, `model.use_image_conditioned_pooling=true` (`utils/config.py:925-930`).
+- `text_pooling.special_token_ids` must be explicitly set.
 - `objectives.objectives.retrieval_mode=surrogate_i2t` for prototype path.
 
 Optional:
@@ -157,6 +159,7 @@ python test.py --config_file configs/runtime_modes/fused_external_realistic.yaml
 Required:
 - `model.runtime_mode=fused_external`
 - prototype branch enabled
+- `text_pooling.special_token_ids` must be explicitly set.
 - meaningful `fusion.lambda_host` / `fusion.lambda_prototype`.
 
 Optional:
@@ -192,6 +195,7 @@ python test.py --config_file configs/runtime_modes/joint_training_realistic.yaml
 Required:
 - `model.runtime_mode=joint_training`
 - prototype branch enabled.
+- `text_pooling.special_token_ids` must be explicitly set.
 
 Optional:
 - `training.freeze_schedule` (only mode where it is active).
@@ -227,6 +231,7 @@ python test.py --config_file configs/runtime_modes/calibration_only_realistic.ya
 
 Required:
 - `model.runtime_mode=calibration_only`
+- `text_pooling.special_token_ids` must be explicitly set.
 - `fusion.composer_calibration_enabled=true` (`model/plug_and_play.py:408`, `:451`).
 - `checkpointing.groups.fusion.enabled=true` (recommended authority target for this mode).
 
@@ -274,4 +279,3 @@ Reason: validates composed scoring/eval path without introducing joint training 
 - Still active compatibility alias: `training.runtime_mode` -> `runtime_mode` (`utils/config.py:229`).
 - Secondary legacy surface: `training.stage` still parses but is not the mode router.
 - Freeze booleans (`freeze_*`) still parse, but explicit runtime mode trainability is enforced at trainer start in non-joint modes (`processor/processor.py:288-329`, `:366-372`).
-

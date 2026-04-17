@@ -50,6 +50,10 @@ objectives:
 
 text_pooling:
   token_policy: eos_only
+  special_token_ids:
+    bos_token_id: 49406
+    eos_token_id: 49407
+    pad_token_id: 0
 
 training:
   batch_size: 8
@@ -101,4 +105,3 @@ checkpointing:
     strict: true
     warn_only: false
     allow_fallback_row_name_classification: true
-
