@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -36,6 +36,12 @@ class PrototypeConditionedTextHead(nn.Module):
         text_adapter: Optional[nn.Module] = None,
         routing_type: str = 'cosine',
         routing_temperature: float = 0.07,
+        routing_source: str = 'global',
+        local_routing_temperature: Optional[float] = None,
+        local_routing_pooling: str = 'logsumexp',
+        local_routing_use_adapter: bool = True,
+        local_routing_adapter_dim: Optional[int] = None,
+        local_routing_normalize_inputs: bool = True,
         token_scoring_type: str = 'cosine',
         token_temperature: float = 0.07,
         token_policy: str = 'content_only',
@@ -89,6 +95,8 @@ class PrototypeConditionedTextHead(nn.Module):
         contrastive_temperature_init: float = 0.07,
         learnable_contrastive_temperature: bool = False,
         dead_prototype_threshold: float = 0.005,
+        use_host_deflated_input: bool = False,
+        host_deflated_input_eps: float = 1e-8,
         collect_debug_metrics: bool = True,
     ):
         super().__init__()
@@ -99,6 +107,31 @@ class PrototypeConditionedTextHead(nn.Module):
         self.dead_prototype_threshold = float(dead_prototype_threshold)
         self.use_image_conditioned_pooling = bool(use_image_conditioned_pooling)
         self.collect_debug_metrics = bool(collect_debug_metrics)
+        self.use_host_deflated_input = bool(use_host_deflated_input)
+        self.host_deflated_input_eps = float(host_deflated_input_eps)
+        if self.host_deflated_input_eps <= 0:
+            raise ValueError('host_deflated_input_eps must be positive.')
+        self.routing_source = str(routing_source).lower()
+        if self.routing_source not in {'global', 'local_evidence'}:
+            raise ValueError(
+                f'Unsupported routing_source={routing_source!r}. Allowed values: [\"global\", \"local_evidence\"].'
+            )
+        resolved_local_temperature = routing_temperature if local_routing_temperature is None else local_routing_temperature
+        self.local_routing_temperature = float(resolved_local_temperature)
+        if self.local_routing_temperature <= 0:
+            raise ValueError('local_routing_temperature must be positive.')
+        self.local_routing_pooling = str(local_routing_pooling).lower()
+        if self.local_routing_pooling not in {'logsumexp', 'lse', 'max', 'mean', 'avg'}:
+            raise ValueError(
+                f'Unsupported local_routing_pooling={local_routing_pooling!r}. Allowed values: [\"logsumexp\", \"max\", \"mean\"].'
+            )
+        self.local_routing_use_adapter = bool(local_routing_use_adapter)
+        self.local_routing_normalize_inputs = bool(local_routing_normalize_inputs)
+        self.local_routing_adapter_dim = (
+            None if local_routing_adapter_dim in (None, 0) else int(local_routing_adapter_dim)
+        )
+        if self.local_routing_adapter_dim is not None and self.local_routing_adapter_dim <= 0:
+            raise ValueError('local_routing_adapter_dim must be positive when provided.')
 
         self.image_adapter = image_adapter if image_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
         self.text_adapter = text_adapter if text_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
@@ -125,6 +158,17 @@ class PrototypeConditionedTextHead(nn.Module):
             temperature=routing_temperature,
             normalize=normalize_for_routing,
         )
+        if self.local_routing_use_adapter:
+            if self.local_routing_adapter_dim is None:
+                self.local_routing_adapter = nn.Linear(self.prototype_dim, self.prototype_dim)
+            else:
+                self.local_routing_adapter = nn.Sequential(
+                    nn.Linear(self.prototype_dim, self.local_routing_adapter_dim),
+                    nn.GELU(),
+                    nn.Linear(self.local_routing_adapter_dim, self.prototype_dim),
+                )
+        else:
+            self.local_routing_adapter = nn.Identity()
         self.aggregator = PrototypeAggregator()
         self.token_scorer = TokenScorer(
             scoring_type=token_scoring_type,
@@ -305,6 +349,77 @@ class PrototypeConditionedTextHead(nn.Module):
             f'{prefix}_pairwise_cosine_max': off_diagonal.max().detach(),
         }
 
+    def _compute_proto_image_path_diagnostics(
+        self,
+        image_base_features: torch.Tensor,
+        image_proxy_features: torch.Tensor,
+        image_projected: torch.Tensor,
+        eps: float = 1e-8,
+    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, object]]:
+        metrics: Dict[str, torch.Tensor] = {}
+        debug_extras: Dict[str, object] = {}
+
+        def _stats(prefix: str, values: torch.Tensor) -> Dict[str, torch.Tensor]:
+            return {
+                f'{prefix}_mean': values.mean().detach(),
+                f'{prefix}_std': values.std(unbiased=False).detach(),
+                f'{prefix}_min': values.min().detach(),
+                f'{prefix}_max': values.max().detach(),
+            }
+
+        with torch.no_grad():
+            base = image_base_features.detach()
+            proxy = image_proxy_features.detach()
+            projected = image_projected.detach()
+
+            if base.ndim < 2 or proxy.ndim < 2 or projected.ndim < 2:
+                debug_extras['proto_image_projected_vs_base_cos_reason'] = 'invalid_rank'
+                metrics['proto_image_projected_vs_base_cos_available'] = projected.new_zeros(()).detach()
+                return metrics, debug_extras
+
+            q_proj = proxy - base
+            base_vec = base.float().reshape(base.size(0), -1)
+            q_proj_vec = q_proj.float().reshape(q_proj.size(0), -1)
+            projected_vec = projected.float().reshape(projected.size(0), -1)
+
+            metrics['proto_image_base_feature_dim'] = base.new_tensor(float(base.size(-1))).detach()
+            metrics['proto_q_proj_feature_dim'] = q_proj.new_tensor(float(q_proj.size(-1))).detach()
+            metrics['proto_image_projected_feature_dim'] = projected.new_tensor(float(projected.size(-1))).detach()
+
+            norm_a = base_vec.norm(dim=-1)
+            norm_q = q_proj_vec.norm(dim=-1)
+            ratio = norm_q / (norm_a + float(eps))
+            metrics.update(_stats('proto_q_injection_ratio', ratio))
+            metrics['proto_q_injection_ratio_finite'] = torch.isfinite(ratio).float().mean().detach()
+
+            exact_r2_available = (base_vec.shape == projected_vec.shape)
+            metrics['proto_image_projected_vs_base_cos_available'] = base.new_tensor(1.0 if exact_r2_available else 0.0).detach()
+
+            if exact_r2_available:
+                exact_cos = (F.normalize(projected_vec, dim=-1, eps=eps) * F.normalize(base_vec, dim=-1, eps=eps)).sum(dim=-1)
+                metrics.update(_stats('proto_image_projected_vs_base_cos', exact_cos))
+                metrics['proto_image_projected_vs_base_cos_finite'] = torch.isfinite(exact_cos).float().mean().detach()
+                return metrics, debug_extras
+
+            debug_extras['proto_image_projected_vs_base_cos_reason'] = 'dim_mismatch'
+            fork_devices = []
+            if base.is_cuda:
+                device_index = base.device.index if base.device.index is not None else torch.cuda.current_device()
+                fork_devices = [int(device_index)]
+            with torch.random.fork_rng(devices=fork_devices, enabled=True):
+                projected_base = self.image_projector(base)
+            projected_base_vec = projected_base.detach().float().reshape(projected_base.size(0), -1)
+            if projected_base_vec.shape == projected_vec.shape:
+                aligned_cos = (
+                    F.normalize(projected_base_vec, dim=-1, eps=eps)
+                    * F.normalize(projected_vec, dim=-1, eps=eps)
+                ).sum(dim=-1)
+                metrics.update(_stats('proto_image_projected_vs_base_aligned_cos', aligned_cos))
+                metrics['proto_image_projected_vs_base_aligned_cos_finite'] = torch.isfinite(aligned_cos).float().mean().detach()
+            else:
+                debug_extras['proto_image_projected_vs_base_aligned_cos_reason'] = 'dim_mismatch_after_projection'
+        return metrics, debug_extras
+
     def _collect_scalar_metrics(
         self,
         prototypes: torch.Tensor,
@@ -378,10 +493,57 @@ class PrototypeConditionedTextHead(nn.Module):
             metrics['prototype_assignment_entropy'] = router_debug['prototype_assignment_entropy']
             if 'routing_effective_support' in router_debug:
                 metrics['routing_effective_support'] = router_debug['routing_effective_support']
+            if 'routing_source_mode' in router_debug:
+                metrics['routing_source_mode'] = router_debug['routing_source_mode']
+            if 'local_routing_entropy' in router_debug:
+                metrics['local_routing_entropy'] = router_debug['local_routing_entropy']
+            if 'local_routing_max_mean' in router_debug:
+                metrics['local_routing_max_mean'] = router_debug['local_routing_max_mean']
+            if 'local_routing_effective_support' in router_debug:
+                metrics['local_routing_effective_support'] = router_debug['local_routing_effective_support']
+            for metric_name in (
+                'host_deflated_input_enabled',
+                'host_deflated_input_applied',
+                'local_token_raw_norm_mean',
+                'local_token_residual_norm_mean',
+                'local_token_raw_host_cos_mean',
+                'local_token_residual_host_cos_mean',
+            ):
+                if metric_name in router_debug:
+                    metrics[metric_name] = router_debug[metric_name]
         if pooler_debug:
             metrics['token_pool_entropy'] = pooler_debug['token_pool_entropy']
             metrics['beta_max_prob'] = pooler_debug['beta_max_prob']
         return metrics
+
+    def compute_host_deflated_patch_tokens(
+        self,
+        patch_tokens: torch.Tensor,
+        img_global: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        if patch_tokens.ndim != 3:
+            raise ValueError('patch_tokens must have shape [B, M, D].')
+        if img_global.ndim != 2:
+            raise ValueError('img_global must have shape [B, D].')
+        if patch_tokens.size(0) != img_global.size(0):
+            raise ValueError('patch_tokens and img_global must share the same batch size.')
+        if patch_tokens.size(-1) != img_global.size(-1):
+            raise ValueError('patch_tokens and img_global must share the same feature dimension.')
+
+        eps = self.host_deflated_input_eps
+        host_unit = F.normalize(img_global.detach(), dim=-1, eps=eps)
+        projection = (patch_tokens * host_unit.unsqueeze(1)).sum(dim=-1, keepdim=True) * host_unit.unsqueeze(1)
+        residual = patch_tokens - projection
+        residual_normalized = F.normalize(residual, dim=-1, eps=eps)
+
+        raw_unit = F.normalize(patch_tokens, dim=-1, eps=eps)
+        metrics = {
+            'local_token_raw_norm_mean': patch_tokens.norm(dim=-1).mean().detach(),
+            'local_token_residual_norm_mean': residual.norm(dim=-1).mean().detach(),
+            'local_token_raw_host_cos_mean': (raw_unit * host_unit.unsqueeze(1)).sum(dim=-1).mean().detach(),
+            'local_token_residual_host_cos_mean': (residual_normalized * host_unit.unsqueeze(1)).sum(dim=-1).mean().detach(),
+        }
+        return residual_normalized, metrics
 
     def get_prototype_context(self, return_debug: bool = False) -> Dict[str, object]:
         prototypes, bank_debug = self.prototype_bank(return_debug=True)
@@ -399,9 +561,85 @@ class PrototypeConditionedTextHead(nn.Module):
             }
         return outputs
 
+    def _prepare_local_routing_tokens(
+        self,
+        image_embeddings: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        debug_metrics: Dict[str, torch.Tensor] = {
+            'host_deflated_input_enabled': image_embeddings.new_tensor(float(self.use_host_deflated_input)).detach(),
+            'host_deflated_input_applied': image_embeddings.new_zeros(()).detach(),
+        }
+        if image_local_tokens is None:
+            fallback_tokens = image_embeddings.unsqueeze(1)
+            return self.local_routing_adapter(self.image_adapter(fallback_tokens)), debug_metrics
+
+        if image_local_tokens.ndim != 3:
+            raise ValueError('image_local_tokens must have shape [B, M, D] when routing_source=local_evidence.')
+        if image_local_tokens.size(0) != image_embeddings.size(0):
+            raise ValueError('image_local_tokens and image_embeddings must share the same batch size.')
+
+        # Prefer patch/local evidence over CLS when available.
+        local_tokens = image_local_tokens[:, 1:, :] if image_local_tokens.size(1) > 1 else image_local_tokens
+        if local_tokens.size(1) <= 0:
+            local_tokens = image_local_tokens
+        if self.use_host_deflated_input:
+            local_tokens, host_deflated_debug = self.compute_host_deflated_patch_tokens(
+                patch_tokens=local_tokens,
+                img_global=image_embeddings,
+            )
+            debug_metrics.update(host_deflated_debug)
+            debug_metrics['host_deflated_input_applied'] = image_embeddings.new_tensor(1.0).detach()
+        local_tokens = self.image_adapter(local_tokens)
+        local_tokens = self.local_routing_adapter(local_tokens)
+        if local_tokens.size(-1) != self.prototype_dim:
+            raise ValueError(
+                'Local routing tokens must end in prototype_dim after adapters; '
+                f'expected {self.prototype_dim}, got {local_tokens.size(-1)}.'
+            )
+        return local_tokens, debug_metrics
+
+    def _compute_routing_weights(
+        self,
+        image_embeddings: torch.Tensor,
+        image_features: torch.Tensor,
+        contextualized_prototypes: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        if self.routing_source == 'local_evidence':
+            local_tokens, local_token_debug = self._prepare_local_routing_tokens(
+                image_embeddings=image_embeddings,
+                image_local_tokens=image_local_tokens,
+            )
+            routing_weights, routing_debug = self.router.route_from_local_evidence(
+                local_embeddings=local_tokens,
+                prototypes=contextualized_prototypes,
+                pooling=self.local_routing_pooling,
+                temperature=self.local_routing_temperature,
+                normalize_inputs=self.local_routing_normalize_inputs,
+                return_debug=True,
+            )
+            routing_debug.update(local_token_debug)
+            routing_debug['routing_source_mode'] = routing_weights.new_tensor(1.0).detach()
+            return {
+                'routing_weights': routing_weights,
+                'routing_debug': routing_debug,
+            }
+
+        routing_weights, routing_debug = self.router(image_features, contextualized_prototypes, return_debug=True)
+        routing_debug['routing_source_mode'] = routing_weights.new_tensor(0.0).detach()
+        routing_debug.setdefault('local_routing_entropy', routing_debug.get('prototype_assignment_entropy', routing_weights.new_zeros(())))
+        routing_debug.setdefault('local_routing_max_mean', routing_debug.get('routing_max_prob', routing_weights.new_zeros(())))
+        routing_debug.setdefault('local_routing_effective_support', routing_debug.get('routing_effective_support', routing_weights.new_zeros(())))
+        return {
+            'routing_weights': routing_weights,
+            'routing_debug': routing_debug,
+        }
+
     def encode_image_branch(
         self,
         image_embeddings: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor] = None,
         prototypes: Optional[torch.Tensor] = None,
         contextualized_prototypes: Optional[torch.Tensor] = None,
         return_debug: bool = False,
@@ -418,7 +656,14 @@ class PrototypeConditionedTextHead(nn.Module):
                 **context['contextualizer_debug'],
             }
 
-        routing_weights, routing_debug = self.router(image_features, contextualized_prototypes, return_debug=True)
+        routing_outputs = self._compute_routing_weights(
+            image_embeddings=image_embeddings,
+            image_features=image_features,
+            contextualized_prototypes=contextualized_prototypes,
+            image_local_tokens=image_local_tokens,
+        )
+        routing_weights = routing_outputs['routing_weights']
+        routing_debug = routing_outputs['routing_debug']
         summary, aggregator_debug = self.aggregator(routing_weights, contextualized_prototypes, return_debug=True)
         # Prototype score anchor uses visual global features plus a compact projection of query summary q_i.
         image_proxy_features = image_features + self.proto_query_proj(summary)
@@ -764,6 +1009,7 @@ class PrototypeConditionedTextHead(nn.Module):
         image_embeddings: torch.Tensor,
         text_token_states: torch.Tensor,
         token_ids: torch.Tensor,
+        image_local_tokens: Optional[torch.Tensor] = None,
         pids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
@@ -774,6 +1020,7 @@ class PrototypeConditionedTextHead(nn.Module):
         context = self.get_prototype_context(return_debug=return_debug)
         image_outputs = self.encode_image_branch(
             image_embeddings,
+            image_local_tokens=image_local_tokens,
             prototypes=context['prototypes'],
             contextualized_prototypes=context['contextualized_prototypes'],
             return_debug=return_debug,
@@ -806,6 +1053,7 @@ class PrototypeConditionedTextHead(nn.Module):
         )
         collect_debug_diagnostics = self.collect_debug_metrics or bool(return_debug)
         scalar_metrics = {}
+        image_path_debug_extras: Dict[str, object] = {}
         if collect_debug_diagnostics:
             scalar_metrics = self._collect_scalar_metrics(
                 prototypes=context['prototypes'],
@@ -826,6 +1074,12 @@ class PrototypeConditionedTextHead(nn.Module):
                 router_debug=image_outputs['router_debug'],
                 pooler_debug=exact_outputs['pooler_debug'],
             )
+            image_path_metrics, image_path_debug_extras = self._compute_proto_image_path_diagnostics(
+                image_base_features=image_outputs['image_embedding'],
+                image_proxy_features=image_outputs['image_proxy_features'],
+                image_projected=image_outputs['image_projected'],
+            )
+            scalar_metrics.update(image_path_metrics)
             scalar_metrics.update(
                 self._compute_routing_certification_metrics(
                     routing_weights=image_outputs['routing_weights'],
@@ -900,6 +1154,7 @@ class PrototypeConditionedTextHead(nn.Module):
             'metrics': scalar_metrics,
         }
         outputs['debug'] = dict(scalar_metrics)
+        outputs['debug'].update(image_path_debug_extras)
         if return_debug:
             outputs['debug'].update(
                 {
@@ -941,8 +1196,3 @@ class PrototypeConditionedTextHead(nn.Module):
                 outputs['debug']['text_exact_proxy_logits'] = loss_outputs['text_exact_proxy_logits'].detach()
                 outputs['debug']['class_proxies'] = loss_outputs['class_proxies']
         return outputs
-
-
-
-
-

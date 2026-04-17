@@ -807,6 +807,7 @@ class PASModel(nn.Module):
         if self.prototype_head is not None:
             prototype_image = self.prototype_head.encode_image_branch(
                 self._cast_to_prototype_dtype(image_output.projected_pooled),
+                image_local_tokens=self._cast_to_prototype_dtype(image_output.projected_tokens),
                 return_debug=False,
             )
             summary = prototype_image['summary']
@@ -1020,7 +1021,7 @@ class PASModel(nn.Module):
                 groups['prototype_bank'].append((name, parameter))
             elif name.startswith('prototype_head.contextualizer'):
                 groups['prototype_contextualization'].append((name, parameter))
-            elif name.startswith('prototype_head.router'):
+            elif name.startswith('prototype_head.router') or name.startswith('prototype_head.local_routing_adapter'):
                 groups['prototype_routing'].append((name, parameter))
             elif (
                 name.startswith('prototype_head.text_pool_query')
@@ -1118,6 +1119,7 @@ class PASModel(nn.Module):
         else:
             prototype_outputs = self.prototype_head(
                 image_embeddings=self._cast_to_prototype_dtype(image_output.projected_pooled),
+                image_local_tokens=self._cast_to_prototype_dtype(image_output.projected_tokens),
                 text_token_states=self._cast_to_prototype_dtype(self._resolve_text_states(text_output)),
                 token_ids=caption_ids,
                 pids=pids,

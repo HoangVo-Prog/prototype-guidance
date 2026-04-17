@@ -97,6 +97,15 @@ class ConfigSurfaceTests(unittest.TestCase):
         args = get_args(['--config_file', path])
         self.assertAlmostEqual(args.diag_temperature, 0.15)
 
+    def test_prototype_host_deflated_input_flag_is_accepted(self):
+        path = self._write_config({'prototype': {'use_host_deflated_input': True}})
+        args = get_args(['--config_file', path])
+        self.assertTrue(args.prototype_use_host_deflated_input)
+
+    def test_cli_prototype_host_deflated_input_flag_is_accepted(self):
+        args = get_args(['--prototype_use_host_deflated_input', 'true'])
+        self.assertTrue(args.prototype_use_host_deflated_input)
+
     def test_stage2_allows_missing_finetune_checkpoint(self):
         path = self._write_config(
             {
@@ -489,5 +498,3 @@ class ConfigSurfaceTests(unittest.TestCase):
 
 if __name__ == '__main__':  # pragma: no cover
     unittest.main()
-
-

@@ -64,6 +64,13 @@ prototype:
   prototype_init_seed:
   routing_type: cosine
   routing_temperature: 0.07
+  routing_source: local_evidence
+  local_routing_temperature: 0.07
+  local_routing_pooling: logsumexp
+  local_routing_use_adapter: true
+  local_routing_adapter_dim:
+  local_routing_normalize_inputs: true
+  use_host_deflated_input: true
   contextualization_enabled: true
   contextualization_type: self_attention
   contextualization_residual: false
@@ -100,7 +107,6 @@ objectives:
     prototype_gap_margin: 0.05
     prototype_support_target: 12.0
     use_loss_ret: true
-
     use_loss_weight_ret: false
     weight_ret_margin_delta: 0.0
     weight_ret_detach_host: true
@@ -115,13 +121,12 @@ objectives:
     proxy_text: 0.0
     proxy_text_exact: 0.0
     align: 0.0
-    diag: 1.0
+    diag: 10.0
     gap: 0.0
-    ret: 0.0
-
+    support: 1.0
+    ret: 5.0
     weight_ret: 0.0
-    support: 0.1
-    balance: 0.5
+    balance: 0.0
     diversity: 0.0
 
 text_pooling:
@@ -137,7 +142,7 @@ text_pooling:
 
 training:
   batch_size: 128
-  epochs: 40
+  epochs: 15
   log_period: 50
   eval_frequency: 1
   save_interval: 1
@@ -182,13 +187,11 @@ training:
     # Stage 2: host active; prototype branch remains trainable with significantly smaller lr.
     - name: stage2_lowlr_adaptation
       epoch_start: 1
-      epoch_end: 40
+      epoch_end: 15
       trainable_groups: [host_backbone, host_retrieval, prototype_bank, prototype_projector,
         routing, fusion]
       frozen_groups: []
       lr_overrides:
-        host_backbone: 5.0e-6
-        host_retrieval: 1.0e-5
         prototype_bank: 2.0e-6
         prototype_projector: 5.0e-6
         routing: 2.0e-6

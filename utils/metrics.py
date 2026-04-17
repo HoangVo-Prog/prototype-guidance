@@ -97,6 +97,8 @@ class Evaluator:
             self.default_fusion_lambda_prototype,
         ) = self._resolve_default_fusion_weights()
         self.eval_fusion_subsets = self._resolve_fusion_eval_subsets()
+        self.selection_from_eval_subsets = self._should_select_from_eval_subsets()
+        self.eval_subset_selection_row_names = self._resolve_eval_subset_selection_row_names()
 
     @staticmethod
     def _pair_close(lhs: float, rhs: float, tol: float = 1e-6) -> bool:
@@ -164,6 +166,52 @@ class Evaluator:
     def _metric_slug(value: str) -> str:
         normalized = re.sub(r'[^a-zA-Z0-9]+', '_', str(value).strip().lower()).strip('_')
         return normalized or 'row'
+
+    @classmethod
+    def _is_host_only_selection_row(cls, task_name: object) -> bool:
+        label = str(task_name or '').strip().lower()
+        if not label:
+            return False
+        # Exclude host-only labels (e.g., "host-t2i", "host_only-t2i", "host-t2i out").
+        if re.match(r'^host(?:[-_\s]*only)?(?:[-_\s]*t2i)?(?:\b|[-_\s].*)$', label):
+            return True
+        # Exclude explicit fusion labels that reduce to host-only behavior.
+        compact = re.sub(r'\s+', '', label)
+        if re.match(
+            r'^host\([0-9]*\.?[0-9]+\)\+prototype\((?:0|0\.0+)\)-t2i(?:[-_a-z0-9]*)$',
+            compact,
+        ):
+            return True
+        return False
+
+    @classmethod
+    def _is_pas_selection_row(cls, task_name: object) -> bool:
+        label = str(task_name or '').strip().lower()
+        if not label:
+            return False
+        return bool(re.match(r'^pas[-_\s]*t2i(?:\b|[-_\s].*)?$', label))
+
+    def _should_select_from_eval_subsets(self) -> bool:
+        config_data = getattr(self.args, 'config_data', None)
+        if not isinstance(config_data, dict):
+            return False
+        fusion_cfg = config_data.get('fusion')
+        if not isinstance(fusion_cfg, dict):
+            return False
+        has_explicit_lambda = ('lambda_host' in fusion_cfg) or ('lambda_prototype' in fusion_cfg)
+        return (not has_explicit_lambda) and bool(self.eval_fusion_subsets)
+
+    def _resolve_eval_subset_selection_row_names(self) -> set:
+        names = set()
+        for spec in self.eval_fusion_subsets:
+            lambda_host = float(spec['lambda_host'])
+            lambda_prototype = float(spec['lambda_prototype'])
+            row_name = spec.get('name') or self._format_fusion_row_name(lambda_host, lambda_prototype)
+            row_name = str(row_name).strip() or self._format_fusion_row_name(lambda_host, lambda_prototype)
+            if not row_name.endswith('-t2i'):
+                row_name = f'{row_name}-t2i'
+            names.add(row_name)
+        return names
 
     @classmethod
     def _format_fusion_row_name(cls, lambda_host: float, lambda_prototype: float) -> str:
@@ -513,12 +561,52 @@ class Evaluator:
         ]
         if not metrics_rows:
             raise RuntimeError('Evaluation produced no similarity rows.')
-        # Select the best retrieval row by R1 for checkpointing/logged current R1,
-        # excluding the pure host-only row.
-        eligible_rows = [row for row in metrics_rows if str(row.get('task', '')).strip() != 'host-t2i']
-        if not eligible_rows:
-            eligible_rows = metrics_rows
-        metrics = max(eligible_rows, key=lambda row: float(row['R1']))
+        selected_source_row = None
+        if self.selection_from_eval_subsets and self.eval_subset_selection_row_names:
+            subset_rows = [
+                row
+                for row in metrics_rows
+                if str(row.get('task', '')).strip() in self.eval_subset_selection_row_names
+                and not self._is_host_only_selection_row(row.get('task', ''))
+            ]
+            if subset_rows:
+                # When default fusion lambdas are omitted from config, select checkpoint/current-R1 from eval_subsets.
+                metrics = max(subset_rows, key=lambda row: float(row['R1']))
+                selected_source_row = str(metrics.get('task', '')).strip()
+                for row_metrics in metrics_rows:
+                    if self._is_pas_selection_row(row_metrics.get('task', '')):
+                        for metric_name in SUPPORTED_RETRIEVAL_METRICS:
+                            row_metrics[metric_name] = float(metrics[metric_name])
+                        break
+            else:
+                eligible_rows = [row for row in metrics_rows if not self._is_host_only_selection_row(row.get('task', ''))]
+                if not eligible_rows:
+                    eligible_rows = metrics_rows
+                preferred_pas_rows = [row for row in eligible_rows if self._is_pas_selection_row(row.get('task', ''))]
+                if preferred_pas_rows:
+                    metrics = max(preferred_pas_rows, key=lambda row: float(row['R1']))
+                else:
+                    metrics = max(eligible_rows, key=lambda row: float(row['R1']))
+                selected_source_row = str(metrics.get('task', '')).strip()
+        else:
+            # Select checkpoint/current-R1 metric row by:
+            # 1) excluding host-only rows,
+            # 2) preferring pas-t2i when available,
+            # 3) otherwise taking the best remaining row by R1.
+            eligible_rows = [row for row in metrics_rows if not self._is_host_only_selection_row(row.get('task', ''))]
+            if not eligible_rows:
+                eligible_rows = metrics_rows
+            preferred_pas_rows = [row for row in eligible_rows if self._is_pas_selection_row(row.get('task', ''))]
+            if preferred_pas_rows:
+                metrics = max(preferred_pas_rows, key=lambda row: float(row['R1']))
+            else:
+                metrics = max(eligible_rows, key=lambda row: float(row['R1']))
+            selected_source_row = str(metrics.get('task', '')).strip()
+
+        selected_display_row = metrics['task']
+        if self.selection_from_eval_subsets and self.eval_subset_selection_row_names:
+            if any(self._is_pas_selection_row(row.get('task', '')) for row in metrics_rows):
+                selected_display_row = 'pas-t2i'
 
         table = PrettyTable(['task'] + list(self.requested_metrics))
         for row_metrics in metrics_rows:
@@ -532,7 +620,8 @@ class Evaluator:
         }
         self.latest_metrics = build_validation_retrieval_metrics(retrieval_metrics)
         self.latest_metrics['val/top1'] = metrics['R1']
-        self.latest_metrics['val/top1_row'] = metrics['task']
+        self.latest_metrics['val/top1_row'] = selected_display_row
+        self.latest_metrics['val/top1_source_row'] = selected_source_row
         for row_metrics in metrics_rows:
             row_slug = self._metric_slug(row_metrics['task'])
             for metric_name in self.requested_metrics:
@@ -551,7 +640,9 @@ class Evaluator:
                     hardest_negative,
                     margin,
                 )
-        self.logger.info('\ncurrent R1 = %s (%s)', str(metrics['R1']), metrics['task'])
+        self.logger.info('\ncurrent R1 = %s (%s)', str(metrics['R1']), selected_display_row)
+        if selected_source_row and selected_source_row != selected_display_row:
+            self.logger.info('current R1 source row = %s', selected_source_row)
         return metrics['R1']
 
 

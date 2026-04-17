@@ -156,6 +156,21 @@ def build_parser():
     parser.add_argument('--prototype_init_seed', type=int, default=None)
     parser.add_argument('--routing_similarity', '--prototype_routing_type', dest='prototype_routing_type', type=str, default='cosine')
     parser.add_argument('--tau_p', '--prototype_temperature', dest='prototype_temperature', type=float, default=0.07)
+    parser.add_argument('--prototype_routing_source', type=str, default='global')
+    parser.add_argument('--prototype_local_routing_temperature', type=float, default=None)
+    parser.add_argument('--prototype_local_routing_pooling', type=str, default='logsumexp')
+    parser.add_argument('--prototype_local_routing_use_adapter', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--prototype_local_routing_adapter_dim', type=int, default=None)
+    parser.add_argument('--prototype_local_routing_normalize_inputs', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument(
+        '--prototype_use_host_deflated_input',
+        '--use_host_deflated_input',
+        dest='prototype_use_host_deflated_input',
+        type=_str2bool,
+        nargs='?',
+        const=True,
+        default=False,
+    )
     parser.add_argument('--prototype_contextualization_enabled', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--prototype_contextualization_type', type=str, default='self_attention')
     parser.add_argument('--prototype_contextualization_residual', type=_str2bool, nargs='?', const=True, default=True)
@@ -379,6 +394,21 @@ def _finalize_args(args):
     args.support_min = float(args.prototype_support_target)
     args.use_loss_ret = bool(args.use_loss_ret)
     args.lambda_ret = float(args.lambda_ret)
+    args.prototype_routing_source = str(getattr(args, 'prototype_routing_source', 'global')).lower()
+    args.prototype_local_routing_temperature = getattr(args, 'prototype_local_routing_temperature', None)
+    if args.prototype_local_routing_temperature in ('', None):
+        args.prototype_local_routing_temperature = None
+    else:
+        args.prototype_local_routing_temperature = float(args.prototype_local_routing_temperature)
+    args.prototype_local_routing_pooling = str(getattr(args, 'prototype_local_routing_pooling', 'logsumexp')).lower()
+    args.prototype_local_routing_use_adapter = bool(getattr(args, 'prototype_local_routing_use_adapter', True))
+    local_adapter_dim = getattr(args, 'prototype_local_routing_adapter_dim', None)
+    if local_adapter_dim in ('', None, 0):
+        args.prototype_local_routing_adapter_dim = None
+    else:
+        args.prototype_local_routing_adapter_dim = int(local_adapter_dim)
+    args.prototype_local_routing_normalize_inputs = bool(getattr(args, 'prototype_local_routing_normalize_inputs', True))
+    args.prototype_use_host_deflated_input = bool(getattr(args, 'prototype_use_host_deflated_input', False))
     args.use_loss_weight_ret = bool(getattr(args, 'use_loss_weight_ret', False))
     args.lambda_weight_ret = float(getattr(args, 'lambda_weight_ret', 0.0))
     args.weight_ret_margin_delta = float(getattr(args, 'weight_ret_margin_delta', 0.0))

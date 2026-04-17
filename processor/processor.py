@@ -22,7 +22,6 @@ from utils.metric_logging import (
     RoutingCoverageTracker,
     build_train_metrics_from_scalars,
     build_validation_metrics,
-    collect_loss_metrics,
     collect_scalar_metrics,
 )
 from utils.meter import AverageMeter
@@ -88,7 +87,11 @@ def _compute_eval_loss_metrics(model, val_loss_loader, args):
                 with build_autocast_context(args, device):
                     outputs = model(batch, return_debug=False, disable_proxy_losses=True)
                 batch_size = int(batch['images'].shape[0])
-                for key, value in collect_loss_metrics(outputs).items():
+                scalar_metrics = collect_scalar_metrics(
+                    outputs,
+                    include_debug_metrics=bool(getattr(args, 'log_debug_metrics', True)),
+                )
+                for key, value in scalar_metrics.items():
                     metrics[key] = metrics.get(key, 0.0) + (float(value) * batch_size)
                     counts[key] = counts.get(key, 0) + batch_size
     finally:
@@ -134,7 +137,7 @@ def _collect_gradient_metrics(model):
     named_parameters = list(_named_parameters_for_logging(model))
     metrics = {
         'grad_norm_class_proxies': _parameter_group_grad_norm(named_parameters, ('prototype_head.losses.class_proxies',)),
-        'grad_norm_image_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.image_projector', 'prototype_head.proto_query_proj', 'prototype_head.image_adapter', 'host_head')),
+        'grad_norm_image_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.image_projector', 'prototype_head.proto_query_proj', 'prototype_head.local_routing_adapter', 'prototype_head.image_adapter', 'host_head')),
         'grad_norm_text_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.text_projector', 'prototype_head.text_adapter', 'host_head')),
         'grad_norm_prototype_bank': _parameter_group_grad_norm(named_parameters, ('prototype_head.prototype_bank',)),
         'grad_norm_image_backbone': _parameter_group_grad_norm(named_parameters, ('base_model.visual',)),
@@ -472,17 +475,20 @@ def do_train(
                 experiment_tracker.log(validation_metrics)
             if modular_checkpoint_manager is not None:
                 model_for_group_ckpt = model.module if hasattr(model, 'module') else model
+                selected_metric_row = str(evaluator.latest_metrics.get('val/top1_row', '') or '') or None
                 modular_checkpoint_manager.save_latest(
                     model=model_for_group_ckpt,
                     epoch=epoch,
                     global_step=current_steps,
                     metric_value=float(top1),
+                    metric_row=selected_metric_row,
                 )
                 modular_checkpoint_manager.save_best_if_improved(
                     model=model_for_group_ckpt,
                     epoch=epoch,
                     global_step=current_steps,
                     metric_value=float(top1),
+                    metric_row=selected_metric_row,
                 )
             if best_top1 < top1:
                 best_top1 = top1
