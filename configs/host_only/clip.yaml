@@ -93,8 +93,17 @@ dataset:
   val_dataset: test
 
 logging:
-  use_wandb: false
-  log_debug_metrics: true
+  use_wandb: true
+  project: clip_host_only
+  entity:
+  run_name:
+  group: clip_base
+  mode: online
+  tags: [clip, host_only]
+  notes: 
+  log_interval: 50
+  log_code: false
+  log_debug_metrics: false
 
 evaluation:
   retrieval_scorer: exact
