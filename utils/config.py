@@ -914,12 +914,6 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
                 'host.type=clip with model.use_prototype_branch=false does not support prototype/auxiliary losses. '
                 f'Disable: {enabled_incompatible}.'
             )
-    elif retrieval_mode == 'clip_bidirectional':
-        raise ValueError(
-            'objectives.objectives.retrieval_mode=clip_bidirectional is only supported when '
-            'host.type=clip and model.use_prototype_branch=false.'
-        )
-
     if use_prototype_branch and use_prototype_bank and not use_image_conditioned_pooling:
         raise ValueError(
             'model.use_prototype_bank=true requires model.use_image_conditioned_pooling=true. '
