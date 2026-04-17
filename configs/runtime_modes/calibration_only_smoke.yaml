@@ -73,7 +73,7 @@ optimizer:
   lr_text_backbone: 1.0e-4
 
 dataset:
-  dataset_name: CUHK-PEDES
+  dataset_name: RSTPReid
   root_dir: data
   val_dataset: test
 

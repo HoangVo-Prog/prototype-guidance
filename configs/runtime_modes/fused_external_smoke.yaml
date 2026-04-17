@@ -69,7 +69,7 @@ optimizer:
   lr_prototype_pooling: 1.0e-5
 
 dataset:
-  dataset_name: CUHK-PEDES
+  dataset_name: RSTPReid
   root_dir: data
   val_dataset: test
 
