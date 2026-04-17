@@ -974,8 +974,6 @@ def validate_runtime_args_namespace(args) -> None:
             raise ValueError('host_type=clip with use_prototype_branch=false requires token_policy=eos_only.')
         if retrieval_mode != 'clip_bidirectional':
             raise ValueError('host_type=clip with use_prototype_branch=false requires retrieval_mode=clip_bidirectional.')
-        if not bool(getattr(args, 'use_loss_ret', True)):
-            raise ValueError('host_type=clip with use_prototype_branch=false requires use_loss_ret=true.')
         if str(getattr(args, 'retrieval_scorer', 'exact')).lower() != 'exact':
             raise ValueError('host_type=clip with use_prototype_branch=false requires retrieval_scorer=exact.')
         incompatible_flags = {
