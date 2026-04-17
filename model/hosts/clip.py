@@ -205,7 +205,9 @@ class ClipHostModel(nn.Module):
         self.losses = _VanillaClipLoss(
             temperature=float(getattr(args, 'temperature', 0.07)),
             retrieval_mode=str(getattr(args, 'retrieval_mode', 'clip_bidirectional')),
-            use_loss_ret=bool(getattr(args, 'use_host_loss', True)) and bool(getattr(args, 'use_loss_ret', True)),
+            # Host-only CLIP objective is governed by `use_host_loss`.
+            # `use_loss_ret` is reserved for prototype-side retrieval and must not gate host optimization.
+            use_loss_ret=bool(getattr(args, 'use_host_loss', True)),
         )
         self._apply_precision_policy()
         self._apply_freeze_policy()
@@ -222,6 +224,8 @@ class ClipHostModel(nn.Module):
             raise ValueError('clip host requires model.use_image_conditioned_pooling=false.')
         if str(getattr(self.args, 'token_policy', 'eos_only')).lower() != 'eos_only':
             raise ValueError('clip host requires text_pooling.token_policy=eos_only.')
+        if not bool(getattr(self.args, 'use_host_loss', True)):
+            raise ValueError('clip host requires objectives.use_host_loss=true.')
 
     def _build_clip_backbone(self) -> Tuple[nn.Module, Dict[str, object], object]:
         components = get_original_itself_components()
