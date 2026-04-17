@@ -998,11 +998,6 @@ def validate_runtime_args_namespace(args) -> None:
                 'host_type=clip with use_prototype_branch=false does not support prototype/auxiliary losses. '
                 f'Disable: {enabled_incompatible}.'
             )
-    elif retrieval_mode == 'clip_bidirectional':
-        raise ValueError(
-            'retrieval_mode=clip_bidirectional is only supported when '
-            'host_type=clip and use_prototype_branch=false.'
-        )
 
     if use_prototype_branch and use_prototype_bank and not use_image_conditioned_pooling:
         raise ValueError(
