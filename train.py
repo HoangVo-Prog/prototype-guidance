@@ -257,6 +257,14 @@ if __name__ == '__main__':
     logger.info('Using %s GPUs', num_gpus)
     logger.info('W&B/log run name: %s', get_effective_wandb_run_name(args))
     logger.info(str(args).replace(',', '\n'))
+    deprecated_freeze_controls = list(getattr(args, 'deprecated_freeze_controls', []) or [])
+    if deprecated_freeze_controls:
+        logger.warning(
+            'Deprecated freeze controls were used as compatibility fallbacks: %s. '
+            'Use training.freeze_host_retrieval/training.freeze_fusion/training.freeze_prototype_bank/'
+            'training.freeze_prototype_projector/training.freeze_routing (and optional training.freeze_host_backbone).',
+            sorted(set(deprecated_freeze_controls)),
+        )
     modular_checkpoint_manager = ModularCheckpointManager(args=args, save_dir=args.output_dir, logger=logger)
     finetune_path = str(getattr(args, 'finetune', '') or '').strip()
     if finetune_path:

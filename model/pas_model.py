@@ -19,6 +19,7 @@ from utils.precision import (
     canonicalize_prototype_precision,
     precision_to_torch_dtype,
 )
+from utils.freeze_schedule import set_group_requires_grad
 
 
 def build_CLIP_from_openai_pretrained(pretrain_choice, img_size, stride_size):
@@ -295,8 +296,8 @@ class PASModel(nn.Module):
             'lambda_ret_exact_image': 'Legacy exact image-side retrieval weighting is removed. Use loss.lambda_ret for surrogate row-wise retrieval.',
             'lambda_ret_exact_text': 'Legacy text-side retrieval weighting is removed. Column-wise text retrieval is invalid for image-conditioned text embeddings.',
             'ret_exact_temperature': 'Legacy exact retrieval temperature is removed. model.temperature defines the surrogate retrieval temperature.',
-            'freeze_prototype': 'training.freeze_prototype was replaced by training.freeze_prototype_side.',
-            'freeze_proxy': 'training.freeze_proxy was replaced by training.freeze_prototype_side.',
+            'freeze_prototype': 'training.freeze_prototype was replaced by explicit module freeze flags (training.freeze_prototype_bank/training.freeze_prototype_projector/training.freeze_routing/training.freeze_fusion).',
+            'freeze_proxy': 'training.freeze_proxy was replaced by explicit module freeze flags (training.freeze_prototype_bank/training.freeze_prototype_projector/training.freeze_routing/training.freeze_fusion).',
         }
         for attr_name, message in legacy_retrieval_flags.items():
             if not hasattr(self.args, attr_name):
@@ -327,25 +328,61 @@ class PASModel(nn.Module):
     def _apply_freeze_policy(self):
         self.freeze_image_backbone = bool(getattr(self.args, 'freeze_image_backbone', True))
         self.freeze_text_backbone = bool(getattr(self.args, 'freeze_text_backbone', True))
-        self.freeze_host_projectors = bool(getattr(self.args, 'freeze_host_projectors', False))
-        self.freeze_prototype_side = bool(getattr(self.args, 'freeze_prototype_side', False))
 
-        if self.freeze_image_backbone:
-            self._freeze_module(self.base_model.visual)
-        if self.freeze_text_backbone:
-            self._freeze_module(self.base_model.transformer)
-            self._freeze_module(self.base_model.token_embedding)
-            self.base_model.positional_embedding.requires_grad = False
-            self.base_model.ln_final.weight.requires_grad = False
-            self.base_model.ln_final.bias.requires_grad = False
-            self.base_model.text_projection.requires_grad = False
-        if self.freeze_host_projectors:
-            if hasattr(self.host_head, 'freeze_trainable_head'):
-                self.host_head.freeze_trainable_head()
-            else:
-                self._freeze_module(self.host_head)
-        if self.freeze_prototype_side and self.prototype_head is not None:
-            self._freeze_module(self.prototype_head)
+        self.freeze_host_backbone = bool(
+            getattr(
+                self.args,
+                'freeze_host_backbone',
+                self.freeze_image_backbone and self.freeze_text_backbone,
+            )
+        )
+        self.freeze_host_retrieval = bool(
+            getattr(
+                self.args,
+                'freeze_host_retrieval',
+                getattr(self.args, 'freeze_host_projectors', False),
+            )
+        )
+        self.freeze_fusion = bool(getattr(self.args, 'freeze_fusion', getattr(self.args, 'freeze_prototype_side', False)))
+        self.freeze_prototype_bank = bool(getattr(self.args, 'freeze_prototype_bank', getattr(self.args, 'freeze_prototype_side', False)))
+        self.freeze_prototype_projector = bool(
+            getattr(self.args, 'freeze_prototype_projector', getattr(self.args, 'freeze_prototype_side', False))
+        )
+        self.freeze_routing = bool(getattr(self.args, 'freeze_routing', getattr(self.args, 'freeze_prototype_side', False)))
+
+        # Backward-compatible aliases (no longer authoritative).
+        self.freeze_host_projectors = self.freeze_host_retrieval
+        self.freeze_prototype_side = bool(
+            self.freeze_fusion
+            and self.freeze_prototype_bank
+            and self.freeze_prototype_projector
+            and self.freeze_routing
+        )
+
+        if self.freeze_host_backbone:
+            set_group_requires_grad(self, 'host_backbone', False)
+        else:
+            if self.freeze_image_backbone:
+                self._freeze_module(self.base_model.visual)
+            if self.freeze_text_backbone:
+                self._freeze_module(self.base_model.transformer)
+                self._freeze_module(self.base_model.token_embedding)
+                self.base_model.positional_embedding.requires_grad = False
+                self.base_model.ln_final.weight.requires_grad = False
+                self.base_model.ln_final.bias.requires_grad = False
+                self.base_model.text_projection.requires_grad = False
+
+        if self.freeze_host_retrieval:
+            set_group_requires_grad(self, 'host_retrieval', False)
+
+        if self.freeze_fusion:
+            set_group_requires_grad(self, 'fusion', False)
+        if self.freeze_prototype_bank:
+            set_group_requires_grad(self, 'prototype_bank', False)
+        if self.freeze_prototype_projector:
+            set_group_requires_grad(self, 'prototype_projector', False)
+        if self.freeze_routing:
+            set_group_requires_grad(self, 'routing', False)
 
     def _encode_image_intermediates(self, image: torch.Tensor, return_all: bool, average_attn_weights: bool) -> Dict[str, Optional[torch.Tensor]]:
         if hasattr(self.base_model, 'encode_image_intermediates'):

@@ -7,6 +7,7 @@ model:
   runtime_mode: host_only
   variant: runtime_clip_only_realistic
   temperature: 0.07
+  use_custom_projector: false
   use_prototype_branch: false
   use_prototype_bank: false
   use_image_conditioned_pooling: false
@@ -63,18 +64,28 @@ training:
   eval_frequency: 1
   save_interval: 1
   training: true
+  freeze_host_backbone: false
+  freeze_host_retrieval: false
+  freeze_fusion: true
+  freeze_prototype_bank: true
+  freeze_prototype_projector: true
+  freeze_routing: true
   freeze_image_backbone: false
   freeze_text_backbone: false
-  freeze_host_projectors: false
-  freeze_prototype_side: true
+  grad_clip: 0.0
   amp: false
 
 optimizer:
-  type: AdamW
+  type: Adam
   lr: 1.0e-5
   lr_host_projectors: 1.0e-5
   lr_image_backbone: 1.0e-5
   lr_text_backbone: 1.0e-5
+  weight_decay: 4.0e-5
+  weight_decay_host_projectors: 4.0e-5
+  weight_decay_image_backbone: 4.0e-5
+  weight_decay_text_backbone: 4.0e-5
+  optimizer_eps: 1.0e-3
 
 dataset:
   dataset_name: RSTPReid

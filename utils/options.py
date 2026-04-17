@@ -23,8 +23,8 @@ LEGACY_RETRIEVAL_FLAGS = {
     '--clip_style_ret': 'CLIP-style symmetric retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
     '--symmetric_ret': 'Symmetric retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
     '--t2i_ret': 'Text-to-image retrieval over the surrogate score matrix is invalid because surrogate text embeddings depend on the image query.',
-    '--freeze_prototype': 'Legacy --freeze_prototype was replaced by --freeze_prototype_side.',
-    '--freeze_proxy': 'Legacy --freeze_proxy was replaced by --freeze_prototype_side.',
+    '--freeze_prototype': 'Legacy --freeze_prototype was replaced by explicit module freeze flags (freeze_prototype_bank/freeze_prototype_projector/freeze_routing/freeze_fusion).',
+    '--freeze_proxy': 'Legacy --freeze_proxy was replaced by explicit module freeze flags (freeze_prototype_bank/freeze_prototype_projector/freeze_routing/freeze_fusion).',
 }
 
 
@@ -215,6 +215,13 @@ def build_parser():
     parser.add_argument('--sampler', default='identity', help='choose sampler from [identity, random]')
     parser.add_argument('--num_instance', type=int, default=2)
     parser.add_argument('--num_workers', type=int, default=4)
+    parser.add_argument('--freeze_host_backbone', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--freeze_host_retrieval', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--freeze_fusion', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--freeze_prototype_bank', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--freeze_prototype_projector', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--freeze_routing', type=_str2bool, nargs='?', const=True, default=None)
+    # Deprecated coarse freeze aliases; retained as compatibility fallbacks.
     parser.add_argument('--freeze_host_projectors', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--freeze_image_backbone', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--freeze_text_backbone', type=_str2bool, nargs='?', const=True, default=True)
@@ -287,6 +294,75 @@ def build_parser():
 
     parser.set_defaults(special_token_ids=None)
     return parser
+
+
+def _coerce_optional_bool(value):
+    if value is None:
+        return None
+    return bool(value)
+
+
+def _resolve_freeze_controls(args):
+    deprecated_controls = []
+
+    legacy_freeze_host_projectors = bool(getattr(args, 'freeze_host_projectors', False))
+    legacy_freeze_prototype_side = bool(getattr(args, 'freeze_prototype_side', False))
+
+    freeze_host_backbone = _coerce_optional_bool(getattr(args, 'freeze_host_backbone', None))
+    freeze_host_retrieval = _coerce_optional_bool(getattr(args, 'freeze_host_retrieval', None))
+    freeze_fusion = _coerce_optional_bool(getattr(args, 'freeze_fusion', None))
+    freeze_prototype_bank = _coerce_optional_bool(getattr(args, 'freeze_prototype_bank', None))
+    freeze_prototype_projector = _coerce_optional_bool(getattr(args, 'freeze_prototype_projector', None))
+    freeze_routing = _coerce_optional_bool(getattr(args, 'freeze_routing', None))
+
+    if freeze_host_backbone is None:
+        freeze_host_backbone = bool(getattr(args, 'freeze_image_backbone', True) and getattr(args, 'freeze_text_backbone', True))
+    else:
+        args.freeze_image_backbone = bool(freeze_host_backbone)
+        args.freeze_text_backbone = bool(freeze_host_backbone)
+
+    if freeze_host_retrieval is None:
+        freeze_host_retrieval = legacy_freeze_host_projectors
+        if legacy_freeze_host_projectors:
+            deprecated_controls.append('training.freeze_host_projectors')
+
+    if freeze_fusion is None:
+        freeze_fusion = legacy_freeze_prototype_side
+        if legacy_freeze_prototype_side:
+            deprecated_controls.append('training.freeze_prototype_side')
+    if freeze_prototype_bank is None:
+        freeze_prototype_bank = legacy_freeze_prototype_side
+        if legacy_freeze_prototype_side:
+            deprecated_controls.append('training.freeze_prototype_side')
+    if freeze_prototype_projector is None:
+        freeze_prototype_projector = legacy_freeze_prototype_side
+        if legacy_freeze_prototype_side:
+            deprecated_controls.append('training.freeze_prototype_side')
+    if freeze_routing is None:
+        freeze_routing = legacy_freeze_prototype_side
+        if legacy_freeze_prototype_side:
+            deprecated_controls.append('training.freeze_prototype_side')
+
+    args.freeze_host_backbone = bool(freeze_host_backbone)
+    args.freeze_host_retrieval = bool(freeze_host_retrieval)
+    args.freeze_fusion = bool(freeze_fusion)
+    args.freeze_prototype_bank = bool(freeze_prototype_bank)
+    args.freeze_prototype_projector = bool(freeze_prototype_projector)
+    args.freeze_routing = bool(freeze_routing)
+
+    # Keep legacy attributes synchronized as backward-compatible aliases only.
+    args.freeze_host_projectors = bool(args.freeze_host_retrieval)
+    args.freeze_prototype_side = bool(
+        args.freeze_fusion
+        and args.freeze_prototype_bank
+        and args.freeze_prototype_projector
+        and args.freeze_routing
+    )
+    args.freeze_image_backbone = bool(getattr(args, 'freeze_image_backbone', True))
+    args.freeze_text_backbone = bool(getattr(args, 'freeze_text_backbone', True))
+    args.freeze_backbones = bool(args.freeze_image_backbone and args.freeze_text_backbone)
+    args.deprecated_freeze_controls = sorted(set(deprecated_controls))
+    return args
 
 
 def _finalize_args(args):
@@ -377,7 +453,7 @@ def _finalize_args(args):
         authoritative_contextualization = bool(authoritative_contextualization)
     args.prototype_contextualization_enabled = authoritative_contextualization
     args.use_prototype_contextualization = authoritative_contextualization
-    args.freeze_backbones = bool(args.freeze_image_backbone and args.freeze_text_backbone)
+    args = _resolve_freeze_controls(args)
     args.lambda_proxy_image = args.lambda_proxy if args.lambda_proxy_image is None else float(args.lambda_proxy_image)
     args.lambda_proxy_text = args.lambda_proxy if args.lambda_proxy_text is None else float(args.lambda_proxy_text)
     args.lambda_proxy_text_exact = args.lambda_proxy if args.lambda_proxy_text_exact is None else float(args.lambda_proxy_text_exact)

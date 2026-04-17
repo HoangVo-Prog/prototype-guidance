@@ -1063,6 +1063,19 @@ class PASRuntimeModel(nn.Module):
         if not torch.isfinite(loss_total):
             raise FloatingPointError('loss_total contains NaN or Inf values.')
 
+        metric_zero = host_losses['loss_total'].new_zeros(())
+        metric_use_loss_ret = metric_losses.get('use_loss_ret', metric_zero)
+        metric_lambda_ret = metric_losses.get('lambda_ret', metric_zero)
+        metric_proxy_temperature = metric_losses.get('proxy_temperature', metric_zero)
+        metric_retrieval_temperature = metric_losses.get(
+            'retrieval_temperature',
+            host_losses.get('retrieval_temperature', metric_zero),
+        )
+        metric_logit_scale = metric_losses.get(
+            'logit_scale',
+            host_losses.get('logit_scale', metric_zero),
+        )
+
         outputs = {
             'loss_total': loss_total,
             'loss_host': host_losses['loss_total'],
@@ -1108,8 +1121,8 @@ class PASRuntimeModel(nn.Module):
             'lambda_proxy_text': prototype_losses['lambda_proxy_text'],
             'lambda_proxy_text_exact': prototype_losses['lambda_proxy_text_exact'],
             'use_loss_proxy_text_exact': prototype_losses['use_loss_proxy_text_exact'],
-            'use_loss_ret': metric_losses['use_loss_ret'],
-            'lambda_ret': metric_losses['lambda_ret'],
+            'use_loss_ret': metric_use_loss_ret,
+            'lambda_ret': metric_lambda_ret,
             'use_loss_weight_ret': prototype_losses['use_loss_weight_ret'],
             'lambda_weight_ret': prototype_losses['lambda_weight_ret'],
             'weight_ret_margin_delta': prototype_losses['weight_ret_margin_delta'],
@@ -1130,10 +1143,10 @@ class PASRuntimeModel(nn.Module):
             'lambda_bal': prototype_losses['lambda_bal'],
             'prototype_gap_margin': prototype_losses['prototype_gap_margin'],
             'prototype_support_target': prototype_losses['prototype_support_target'],
-            'proxy_temperature': metric_losses['proxy_temperature'].detach(),
+            'proxy_temperature': metric_proxy_temperature.detach(),
             'diag_temperature': prototype_losses['diag_temperature'].detach(),
-            'retrieval_temperature': metric_losses['retrieval_temperature'].detach(),
-            'logit_scale': metric_losses['logit_scale'].detach(),
+            'retrieval_temperature': metric_retrieval_temperature.detach(),
+            'logit_scale': metric_logit_scale.detach(),
             'host_retrieval_temperature': host_losses['retrieval_temperature'].detach(),
             'host_logit_scale': host_losses['logit_scale'].detach(),
             'fusion_coefficient': host_losses['loss_total'].new_tensor(self.fusion_coefficient),

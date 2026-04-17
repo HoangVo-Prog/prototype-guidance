@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.precision import canonicalize_backbone_precision, canonicalize_prototype_precision
+from utils.freeze_schedule import set_group_requires_grad
 
 from .itself import get_original_itself_components
 
@@ -109,6 +110,9 @@ class _VanillaClipLoss(nn.Module):
             loss_ret = zero
         return {
             'loss_total': loss_ret,
+            'host_loss': loss_ret,
+            'host_loss_i2t': loss_i2t,
+            'host_loss_t2i': loss_t2i,
             'loss_ret': loss_ret,
             'loss_ret_i2t': loss_i2t,
             'loss_ret_t2i': loss_t2i,
@@ -242,17 +246,38 @@ class ClipHostModel(nn.Module):
             self.losses.float()
 
     def _apply_freeze_policy(self):
-        if bool(getattr(self.args, 'freeze_image_backbone', True)):
-            _freeze_module(self.base_model.visual)
-        if bool(getattr(self.args, 'freeze_text_backbone', True)):
-            _freeze_module(self.base_model.transformer)
-            _freeze_module(self.base_model.token_embedding)
-            self.base_model.positional_embedding.requires_grad = False
-            self.base_model.ln_final.weight.requires_grad = False
-            self.base_model.ln_final.bias.requires_grad = False
-            self.base_model.text_projection.requires_grad = False
-        if bool(getattr(self.args, 'freeze_host_projectors', False)):
-            _freeze_module(self.host_head)
+        freeze_image_backbone = bool(getattr(self.args, 'freeze_image_backbone', True))
+        freeze_text_backbone = bool(getattr(self.args, 'freeze_text_backbone', True))
+        freeze_host_backbone = bool(
+            getattr(
+                self.args,
+                'freeze_host_backbone',
+                freeze_image_backbone and freeze_text_backbone,
+            )
+        )
+        freeze_host_retrieval = bool(
+            getattr(
+                self.args,
+                'freeze_host_retrieval',
+                getattr(self.args, 'freeze_host_projectors', False),
+            )
+        )
+
+        if freeze_host_backbone:
+            set_group_requires_grad(self, 'host_backbone', False)
+        else:
+            if freeze_image_backbone:
+                _freeze_module(self.base_model.visual)
+            if freeze_text_backbone:
+                _freeze_module(self.base_model.transformer)
+                _freeze_module(self.base_model.token_embedding)
+                self.base_model.positional_embedding.requires_grad = False
+                self.base_model.ln_final.weight.requires_grad = False
+                self.base_model.ln_final.bias.requires_grad = False
+                self.base_model.text_projection.requires_grad = False
+
+        if freeze_host_retrieval:
+            set_group_requires_grad(self, 'host_retrieval', False)
 
     def _eos_indices(self, caption_ids: torch.Tensor) -> torch.Tensor:
         special = getattr(self.args, 'special_token_ids', None)
@@ -376,14 +401,14 @@ class ClipHostModel(nn.Module):
         losses = self.losses(image_projected, text_projected)
 
         zero = losses['loss_total'].new_zeros(())
-        host_loss_total = losses['loss_total']
+        host_loss_total = losses.get('host_loss', losses['loss_total'])
         loss_total = self.lambda_host * host_loss_total
         outputs = {
             'loss_total': loss_total,
             'loss_host': host_loss_total,
-            'loss_host_ret': losses['loss_ret'],
-            'loss_host_ret_i2t': losses['loss_ret_i2t'],
-            'loss_host_ret_t2i': losses['loss_ret_t2i'],
+            'loss_host_ret': losses.get('host_loss', losses['loss_ret']),
+            'loss_host_ret_i2t': losses.get('host_loss_i2t', losses['loss_ret_i2t']),
+            'loss_host_ret_t2i': losses.get('host_loss_t2i', losses['loss_ret_t2i']),
             'loss_host_cid': zero,
             'loss_proto_total': zero,
             'loss_host_weighted': self.lambda_host * host_loss_total,
@@ -392,7 +417,8 @@ class ClipHostModel(nn.Module):
             'loss_proxy_image': losses['loss_proxy_image'],
             'loss_proxy_text': losses['loss_proxy_text'],
             'loss_proxy_text_exact': losses['loss_proxy_text_exact'],
-            'loss_ret': losses['loss_ret'],
+            # `loss_ret` is reserved for prototype-side retrieval; host-only CLIP training optimizes `loss_host`.
+            'loss_ret': zero,
             'loss_align': losses['loss_align'],
             'loss_diag': losses['loss_diag'],
             'loss_support': losses['loss_support'],
@@ -402,15 +428,15 @@ class ClipHostModel(nn.Module):
             'loss_proxy_text_weighted': losses['loss_proxy_text_weighted'],
             'loss_proxy_text_exact_weighted': losses['loss_proxy_text_exact_weighted'],
             'loss_proxy_weighted': losses['loss_proxy_weighted'],
-            'loss_ret_weighted': losses['loss_ret_weighted'],
+            'loss_ret_weighted': zero,
             'loss_align_weighted': losses['loss_align_weighted'],
             'loss_diag_weighted': losses['loss_diag_weighted'],
             'loss_support_weighted': losses['loss_support_weighted'],
             'loss_diversity_weighted': losses['loss_diversity_weighted'],
             'loss_balance_weighted': losses['loss_balance_weighted'],
             'use_loss_proxy_text_exact': losses['use_loss_proxy_text_exact'],
-            'use_loss_ret': losses['use_loss_ret'],
-            'lambda_ret': losses['lambda_ret'],
+            'use_loss_ret': zero,
+            'lambda_ret': zero,
             'lambda_align': losses['lambda_align'],
             'lambda_diag': losses['lambda_diag'],
             'use_loss_support': losses['use_loss_support'],
@@ -435,7 +461,7 @@ class ClipHostModel(nn.Module):
                 'vanilla_clip_mode': image_projected.new_tensor(1.0),
                 'vanilla_clip_bidirectional': image_projected.new_tensor(float(self.losses.retrieval_mode == 'clip_bidirectional')),
                 'host_loss_total': host_loss_total.detach(),
-                'host_loss_ret': losses['loss_ret'].detach(),
+                'host_loss_ret': losses.get('host_loss', losses['loss_ret']).detach(),
                 'fusion_lambda_host': image_projected.new_tensor(1.0),
                 'fusion_lambda_prototype': image_projected.new_tensor(0.0),
             },
