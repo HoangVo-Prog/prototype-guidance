@@ -3,7 +3,9 @@ from __future__ import annotations
 import copy
 import glob
 import os
-from typing import Dict, Optional, Tuple
+import re
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple, Any
 
 import torch
 
@@ -74,6 +76,12 @@ DEFAULT_CHECKPOINTING_CONFIG = {
             'prototype_projector': {'enabled': False, 'path': None},
             'fusion': {'enabled': False, 'path': None},
         },
+    },
+    'authority_validation': {
+        'enabled': True,
+        'strict': True,
+        'warn_only': False,
+        'allow_fallback_row_name_classification': True,
     },
 }
 
@@ -162,6 +170,140 @@ def _prepare_state_dict_for_group_compatibility(group_name: str, state_dict: dic
     return prepared, stats
 
 
+GROUP_AUTHORITY_BUCKET = {
+    'host': 'host',
+    'prototype_bank': 'prototype',
+    'prototype_projector': 'prototype',
+    'fusion': 'fused',
+}
+
+
+@dataclass(frozen=True)
+class AuthorityValidationResult:
+    valid: bool
+    expected_bucket: Optional[str]
+    actual_bucket: Optional[str]
+    reason: str
+    group_name: str
+    row_name: Optional[str]
+
+
+class MetricAuthorityPolicy:
+    def __init__(
+        self,
+        *,
+        enabled: bool = True,
+        strict: bool = True,
+        warn_only: bool = False,
+        allow_fallback_row_name_classification: bool = True,
+    ):
+        self.enabled = bool(enabled)
+        self.strict = bool(strict)
+        self.warn_only = bool(warn_only)
+        self.allow_fallback_row_name_classification = bool(allow_fallback_row_name_classification)
+
+    @staticmethod
+    def expected_bucket_for_group(group_name: str) -> Optional[str]:
+        return GROUP_AUTHORITY_BUCKET.get(str(group_name))
+
+    @staticmethod
+    def _normalize_row_name(row_name: Optional[str]) -> Optional[str]:
+        if row_name is None:
+            return None
+        normalized = str(row_name).strip()
+        return normalized or None
+
+    @staticmethod
+    def _classify_row_name_fallback(row_name: Optional[str]) -> Optional[str]:
+        if row_name is None:
+            return None
+        label = str(row_name).strip().lower()
+        if not label:
+            return None
+        if re.match(r'^host(?:[-_\s]*only)?(?:[-_\s]*t2i)?(?:\b|[-_\s].*)?$', label):
+            return 'host'
+        if re.match(r'^prototype(?:[-_\s]*t2i)?(?:\b|[-_\s].*)?$', label):
+            return 'prototype'
+        if re.match(r'^pas[-_\s]*t2i(?:\b|[-_\s].*)?$', label):
+            return 'fused'
+        if 'prototype' in label and 'host' in label:
+            return 'fused'
+        return None
+
+    def classify_row(self, row_name: Optional[str], row_roles: Optional[Dict[str, str]] = None) -> Optional[str]:
+        normalized = self._normalize_row_name(row_name)
+        if normalized is None:
+            return None
+        if isinstance(row_roles, dict):
+            role = str(row_roles.get(normalized, '')).strip().lower()
+            if role in {'host', 'prototype', 'fused'}:
+                return role
+        if self.allow_fallback_row_name_classification:
+            fallback_role = self._classify_row_name_fallback(normalized)
+            if fallback_role is not None:
+                return fallback_role
+        return None
+
+    def validate_row_for_group(
+        self,
+        *,
+        group_name: str,
+        row_name: Optional[str],
+        row_roles: Optional[Dict[str, str]] = None,
+    ) -> AuthorityValidationResult:
+        expected_bucket = self.expected_bucket_for_group(group_name)
+        normalized_row = self._normalize_row_name(row_name)
+        if not self.enabled:
+            return AuthorityValidationResult(
+                valid=True,
+                expected_bucket=expected_bucket,
+                actual_bucket=None,
+                reason='authority_validation_disabled',
+                group_name=str(group_name),
+                row_name=normalized_row,
+            )
+
+        if expected_bucket is None:
+            return AuthorityValidationResult(
+                valid=False,
+                expected_bucket=None,
+                actual_bucket=None,
+                reason='unsupported_checkpoint_group',
+                group_name=str(group_name),
+                row_name=normalized_row,
+            )
+
+        actual_bucket = self.classify_row(normalized_row, row_roles=row_roles)
+        if actual_bucket is None:
+            return AuthorityValidationResult(
+                valid=False,
+                expected_bucket=expected_bucket,
+                actual_bucket=None,
+                reason='row_bucket_unresolved',
+                group_name=str(group_name),
+                row_name=normalized_row,
+            )
+
+        if actual_bucket != expected_bucket:
+            return AuthorityValidationResult(
+                valid=False,
+                expected_bucket=expected_bucket,
+                actual_bucket=actual_bucket,
+                reason='row_bucket_mismatch',
+                group_name=str(group_name),
+                row_name=normalized_row,
+            )
+
+        return AuthorityValidationResult(
+            valid=True,
+            expected_bucket=expected_bucket,
+            actual_bucket=actual_bucket,
+            reason='ok',
+            group_name=str(group_name),
+            row_name=normalized_row,
+        )
+
+
 class ModularCheckpointManager:
     def __init__(self, args, save_dir: str, logger):
         self.args = args
@@ -178,7 +320,17 @@ class ModularCheckpointManager:
         self.metric_mode = str(self.config.get('metric', {}).get('mode', 'max')).strip().lower() or 'max'
         if self.metric_mode not in {'max', 'min'}:
             raise ValueError(f'checkpointing.metric.mode must be one of ["max", "min"], got {self.metric_mode!r}.')
-        self.best_metric_value = None
+        self.best_metric_value_by_group: Dict[str, float] = {}
+
+        authority_cfg = self.config.get('authority_validation', {}) if isinstance(self.config.get('authority_validation', {}), dict) else {}
+        self.authority_policy = MetricAuthorityPolicy(
+            enabled=bool(authority_cfg.get('enabled', True)),
+            strict=bool(authority_cfg.get('strict', True)),
+            warn_only=bool(authority_cfg.get('warn_only', False)),
+            allow_fallback_row_name_classification=bool(
+                authority_cfg.get('allow_fallback_row_name_classification', True)
+            ),
+        )
 
     def _checkpoint_output_dir(self):
         configured = self.config.get('save', {}).get('dir')
@@ -193,6 +345,95 @@ class ModularCheckpointManager:
 
     def _selected_groups(self):
         return [group_name for group_name in CHECKPOINT_GROUPS if self._group_is_enabled(group_name)]
+
+    @staticmethod
+    def _normalize_metric_row(row_name: Optional[str]) -> Optional[str]:
+        if row_name is None:
+            return None
+        normalized = str(row_name).strip()
+        return normalized or None
+
+    def _resolve_group_metric_context(
+        self,
+        *,
+        group_name: str,
+        metric_value: Optional[float],
+        metric_row: Optional[str],
+        metric_display_row: Optional[str],
+        metric_source_row: Optional[str],
+        authority_context: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        context = authority_context if isinstance(authority_context, dict) else {}
+        candidates = context.get('candidates', {}) if isinstance(context.get('candidates', {}), dict) else {}
+        row_roles = context.get('row_roles', {}) if isinstance(context.get('row_roles', {}), dict) else {}
+        row_metrics = context.get('row_metrics', {}) if isinstance(context.get('row_metrics', {}), dict) else {}
+        source_row_from_context = self._normalize_metric_row(context.get('source_row'))
+        display_row_from_context = self._normalize_metric_row(context.get('display_row'))
+        expected_bucket = self.authority_policy.expected_bucket_for_group(group_name)
+
+        candidate_row = None
+        selection_reason = 'input_metric_row'
+        if expected_bucket is not None:
+            candidate_row = self._normalize_metric_row(candidates.get(expected_bucket))
+            if candidate_row is not None:
+                selection_reason = f'authority_candidate:{expected_bucket}'
+
+        resolved_source_row = self._normalize_metric_row(metric_source_row) or source_row_from_context
+        resolved_display_row = self._normalize_metric_row(metric_display_row) or display_row_from_context
+
+        selected_row = (
+            candidate_row
+            or resolved_source_row
+            or self._normalize_metric_row(metric_row)
+            or resolved_display_row
+        )
+        if selected_row == resolved_source_row and resolved_source_row is not None and candidate_row is None:
+            selection_reason = 'source_row'
+        elif selected_row == resolved_display_row and resolved_display_row is not None and candidate_row is None:
+            selection_reason = 'display_row'
+
+        selected_metric_value = None if metric_value is None else float(metric_value)
+        row_metric_payload = row_metrics.get(selected_row) if selected_row is not None else None
+        if isinstance(row_metric_payload, dict) and self.metric_name in row_metric_payload:
+            selected_metric_value = float(row_metric_payload[self.metric_name])
+
+        validation = self.authority_policy.validate_row_for_group(
+            group_name=group_name,
+            row_name=selected_row,
+            row_roles=row_roles,
+        )
+        return {
+            'group_name': group_name,
+            'selected_row': selected_row,
+            'selected_metric_value': selected_metric_value,
+            'display_row': resolved_display_row,
+            'source_row': resolved_source_row,
+            'selection_reason': selection_reason,
+            'validation': validation,
+            'row_roles': row_roles,
+        }
+
+    def _enforce_authority_validation(self, resolved_metric_context: Dict[str, Any]) -> bool:
+        validation: AuthorityValidationResult = resolved_metric_context['validation']
+        if validation.valid:
+            return True
+        message = (
+            'Authority validation failed for checkpoint group=%s row=%s expected_bucket=%s actual_bucket=%s reason=%s'
+            % (
+                validation.group_name,
+                validation.row_name,
+                validation.expected_bucket,
+                validation.actual_bucket,
+                validation.reason,
+            )
+        )
+        if self.authority_policy.warn_only:
+            self.logger.warning(message + ' (warn_only=true; save rejected for this group)')
+            return False
+        if self.authority_policy.strict:
+            raise ValueError(message)
+        self.logger.error(message + ' (strict=false; save rejected for this group)')
+        return False
 
     def _log_parameterless_group_skip(self, group_name: str, action: str, source_path: Optional[str] = None):
         base_message = (
@@ -211,6 +452,11 @@ class ModularCheckpointManager:
         global_step: int,
         metric_value: Optional[float],
         metric_row: Optional[str] = None,
+        metric_display_row: Optional[str] = None,
+        metric_source_row: Optional[str] = None,
+        metric_authority_bucket: Optional[str] = None,
+        metric_authority_valid: Optional[bool] = None,
+        metric_selection_reason: Optional[str] = None,
     ):
         group_state_dict = get_group_state_dict(model, group_name)
         if not group_state_dict:
@@ -225,6 +471,11 @@ class ModularCheckpointManager:
                 'value': None if metric_value is None else float(metric_value),
                 'mode': self.metric_mode,
                 'row': None if metric_row is None else str(metric_row),
+                'display_row': None if metric_display_row is None else str(metric_display_row),
+                'source_row': None if metric_source_row is None else str(metric_source_row),
+                'authority_bucket': None if metric_authority_bucket is None else str(metric_authority_bucket),
+                'authority_valid': None if metric_authority_valid is None else bool(metric_authority_valid),
+                'selection_reason': None if metric_selection_reason is None else str(metric_selection_reason),
             },
             'metadata': {
                 'host_type': str(getattr(self.args, 'host_type', 'clip')),
@@ -242,6 +493,11 @@ class ModularCheckpointManager:
         global_step: int,
         metric_value: Optional[float],
         metric_row: Optional[str] = None,
+        metric_display_row: Optional[str] = None,
+        metric_source_row: Optional[str] = None,
+        metric_authority_bucket: Optional[str] = None,
+        metric_authority_valid: Optional[bool] = None,
+        metric_selection_reason: Optional[str] = None,
     ):
         output_path = os.path.join(self._checkpoint_output_dir(), file_name)
         payload = self._build_payload(
@@ -251,18 +507,27 @@ class ModularCheckpointManager:
             global_step=global_step,
             metric_value=metric_value,
             metric_row=metric_row,
+            metric_display_row=metric_display_row,
+            metric_source_row=metric_source_row,
+            metric_authority_bucket=metric_authority_bucket,
+            metric_authority_valid=metric_authority_valid,
+            metric_selection_reason=metric_selection_reason,
         )
         if payload is None:
             self._log_parameterless_group_skip(group_name=group_name, action='save')
             return
         torch.save(payload, output_path)
         self.logger.info(
-            'Saved modular checkpoint group=%s path=%s metric=%s value=%s row=%s epoch=%d step=%d',
+            'Saved modular checkpoint group=%s path=%s metric=%s value=%s row=%s source_row=%s display_row=%s authority_bucket=%s authority_valid=%s epoch=%d step=%d',
             group_name,
             output_path,
             self.metric_name,
             metric_value,
             metric_row,
+            metric_source_row,
+            metric_display_row,
+            metric_authority_bucket,
+            metric_authority_valid,
             epoch,
             global_step,
         )
@@ -298,6 +563,9 @@ class ModularCheckpointManager:
         global_step: int,
         metric_value: Optional[float],
         metric_row: Optional[str] = None,
+        metric_display_row: Optional[str] = None,
+        metric_source_row: Optional[str] = None,
+        authority_context: Optional[Dict[str, Any]] = None,
     ):
         if not bool(self.config.get('save', {}).get('save_latest', True)):
             return
@@ -306,23 +574,52 @@ class ModularCheckpointManager:
             file_name = artifact_cfg.get('filename_latest')
             if not file_name:
                 continue
+            if not get_group_state_dict(model, group_name):
+                self._log_parameterless_group_skip(group_name=group_name, action='save_latest')
+                continue
+            resolved_metric = self._resolve_group_metric_context(
+                group_name=group_name,
+                metric_value=metric_value,
+                metric_row=metric_row,
+                metric_display_row=metric_display_row,
+                metric_source_row=metric_source_row,
+                authority_context=authority_context,
+            )
+            if not self._enforce_authority_validation(resolved_metric):
+                continue
+            validation: AuthorityValidationResult = resolved_metric['validation']
+            self.logger.info(
+                'Authority validation passed for latest-save group=%s selected_row=%s source_row=%s display_row=%s expected_bucket=%s selection_reason=%s',
+                group_name,
+                resolved_metric['selected_row'],
+                resolved_metric['source_row'],
+                resolved_metric['display_row'],
+                validation.expected_bucket,
+                resolved_metric['selection_reason'],
+            )
             self._save_group_payload(
                 model=model,
                 group_name=group_name,
                 file_name=str(file_name),
                 epoch=epoch,
                 global_step=global_step,
-                metric_value=metric_value,
-                metric_row=metric_row,
+                metric_value=resolved_metric['selected_metric_value'],
+                metric_row=resolved_metric['selected_row'],
+                metric_display_row=resolved_metric['display_row'],
+                metric_source_row=resolved_metric['source_row'],
+                metric_authority_bucket=validation.expected_bucket,
+                metric_authority_valid=validation.valid,
+                metric_selection_reason=resolved_metric['selection_reason'],
             )
             self._rotate_history_if_needed(str(file_name), epoch)
 
-    def _is_metric_improved(self, metric_value: float):
-        if self.best_metric_value is None:
+    def _is_metric_improved(self, group_name: str, metric_value: float):
+        current_best = self.best_metric_value_by_group.get(str(group_name))
+        if current_best is None:
             return True
         if self.metric_mode == 'max':
-            return float(metric_value) > float(self.best_metric_value)
-        return float(metric_value) < float(self.best_metric_value)
+            return float(metric_value) > float(current_best)
+        return float(metric_value) < float(current_best)
 
     def save_best_if_improved(
         self,
@@ -331,27 +628,60 @@ class ModularCheckpointManager:
         global_step: int,
         metric_value: Optional[float],
         metric_row: Optional[str] = None,
+        metric_display_row: Optional[str] = None,
+        metric_source_row: Optional[str] = None,
+        authority_context: Optional[Dict[str, Any]] = None,
     ):
         if not bool(self.config.get('save', {}).get('save_best', True)):
             return
-        if metric_value is None:
-            return
-        if not self._is_metric_improved(metric_value):
-            return
-        self.best_metric_value = float(metric_value)
         for group_name in self._selected_groups():
             artifact_cfg = self.config.get('save', {}).get('artifacts', {}).get(group_name, {})
             file_name = artifact_cfg.get('filename_best')
             if not file_name:
                 continue
+            if not get_group_state_dict(model, group_name):
+                self._log_parameterless_group_skip(group_name=group_name, action='save_best')
+                continue
+            resolved_metric = self._resolve_group_metric_context(
+                group_name=group_name,
+                metric_value=metric_value,
+                metric_row=metric_row,
+                metric_display_row=metric_display_row,
+                metric_source_row=metric_source_row,
+                authority_context=authority_context,
+            )
+            if not self._enforce_authority_validation(resolved_metric):
+                continue
+            selected_metric_value = resolved_metric['selected_metric_value']
+            if selected_metric_value is None:
+                continue
+            if not self._is_metric_improved(group_name, float(selected_metric_value)):
+                continue
+            self.best_metric_value_by_group[str(group_name)] = float(selected_metric_value)
+            validation: AuthorityValidationResult = resolved_metric['validation']
+            self.logger.info(
+                'Authority validation passed for best-save group=%s selected_row=%s source_row=%s display_row=%s expected_bucket=%s selection_reason=%s metric_value=%.4f',
+                group_name,
+                resolved_metric['selected_row'],
+                resolved_metric['source_row'],
+                resolved_metric['display_row'],
+                validation.expected_bucket,
+                resolved_metric['selection_reason'],
+                float(selected_metric_value),
+            )
             self._save_group_payload(
                 model=model,
                 group_name=group_name,
                 file_name=str(file_name),
                 epoch=epoch,
                 global_step=global_step,
-                metric_value=metric_value,
-                metric_row=metric_row,
+                metric_value=selected_metric_value,
+                metric_row=resolved_metric['selected_row'],
+                metric_display_row=resolved_metric['display_row'],
+                metric_source_row=resolved_metric['source_row'],
+                metric_authority_bucket=validation.expected_bucket,
+                metric_authority_valid=validation.valid,
+                metric_selection_reason=resolved_metric['selection_reason'],
             )
 
     def has_enabled_group_loading(self):

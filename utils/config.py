@@ -389,6 +389,7 @@ CHECKPOINTING_GROUP_KEYS = set(CHECKPOINT_GROUPS)
 CHECKPOINTING_METRIC_KEYS = {'name', 'mode'}
 CHECKPOINTING_SAVE_KEYS = {'dir', 'save_latest', 'save_best', 'keep_last_n', 'artifacts'}
 CHECKPOINTING_LOAD_KEYS = {'enabled', 'strict', 'sources'}
+CHECKPOINTING_AUTHORITY_VALIDATION_KEYS = {'enabled', 'strict', 'warn_only', 'allow_fallback_row_name_classification'}
 SUPPORTED_SPECIAL_TOKEN_ID_KEYS = {
     'bos_token_id',
     'cls_token_id',
@@ -667,7 +668,7 @@ def _validate_checkpointing_section(checkpointing_value: Any) -> None:
     if not isinstance(checkpointing_value, dict):
         raise ValueError('checkpointing must contain a mapping.')
 
-    allowed_root_keys = {'metric', 'groups', 'save', 'load'}
+    allowed_root_keys = {'metric', 'groups', 'save', 'load', 'authority_validation'}
     unknown_root_keys = sorted(set(checkpointing_value.keys()) - allowed_root_keys)
     if unknown_root_keys:
         raise ValueError(
@@ -765,6 +766,20 @@ def _validate_checkpointing_section(checkpointing_value: Any) -> None:
                         f'Unknown checkpointing.load.sources.{group_name} keys: {unknown_source_keys}. '
                         'Allowed keys: ["enabled", "path"]'
                     )
+
+    authority_cfg = checkpointing_value.get('authority_validation')
+    if authority_cfg is not None:
+        if not isinstance(authority_cfg, dict):
+            raise ValueError('checkpointing.authority_validation must be a mapping.')
+        unknown_authority_keys = sorted(set(authority_cfg.keys()) - CHECKPOINTING_AUTHORITY_VALIDATION_KEYS)
+        if unknown_authority_keys:
+            raise ValueError(
+                f'Unknown checkpointing.authority_validation keys: {unknown_authority_keys}. '
+                f'Allowed keys: {sorted(CHECKPOINTING_AUTHORITY_VALIDATION_KEYS)}'
+            )
+        for key in CHECKPOINTING_AUTHORITY_VALIDATION_KEYS:
+            if key in authority_cfg and not isinstance(authority_cfg[key], bool):
+                raise ValueError(f'checkpointing.authority_validation.{key} must be a boolean.')
 
 
 def _validate_supported_keys(config_data: Dict[str, Any]) -> None:

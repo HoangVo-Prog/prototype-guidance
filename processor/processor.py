@@ -475,13 +475,33 @@ def do_train(
                 experiment_tracker.log(validation_metrics)
             if modular_checkpoint_manager is not None:
                 model_for_group_ckpt = model.module if hasattr(model, 'module') else model
-                selected_metric_row = str(evaluator.latest_metrics.get('val/top1_row', '') or '') or None
+                authority_context = dict(getattr(evaluator, 'latest_authority', {}) or {})
+                selected_display_row = str(evaluator.latest_metrics.get('val/top1_row', '') or '') or None
+                selected_source_row = str(evaluator.latest_metrics.get('val/top1_source_row', '') or '') or None
+                selected_metric_row = (
+                    str(authority_context.get('source_row', '') or '').strip()
+                    or selected_source_row
+                    or selected_display_row
+                )
+                if (
+                    selected_display_row is not None
+                    and selected_source_row is not None
+                    and selected_display_row != selected_source_row
+                ):
+                    logger.warning(
+                        'Checkpoint row provenance mismatch: display_row=%s source_row=%s (authority row uses source).',
+                        selected_display_row,
+                        selected_source_row,
+                    )
                 modular_checkpoint_manager.save_latest(
                     model=model_for_group_ckpt,
                     epoch=epoch,
                     global_step=current_steps,
                     metric_value=float(top1),
                     metric_row=selected_metric_row,
+                    metric_display_row=selected_display_row,
+                    metric_source_row=selected_source_row,
+                    authority_context=authority_context,
                 )
                 modular_checkpoint_manager.save_best_if_improved(
                     model=model_for_group_ckpt,
@@ -489,6 +509,9 @@ def do_train(
                     global_step=current_steps,
                     metric_value=float(top1),
                     metric_row=selected_metric_row,
+                    metric_display_row=selected_display_row,
+                    metric_source_row=selected_source_row,
+                    authority_context=authority_context,
                 )
             if best_top1 < top1:
                 best_top1 = top1

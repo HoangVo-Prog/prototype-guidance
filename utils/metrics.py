@@ -73,6 +73,7 @@ class Evaluator:
         self.logger = logging.getLogger('pas.eval')
         self.args = args
         self.latest_metrics = {}
+        self.latest_authority = {}
         requested_metrics = tuple(getattr(args, 'retrieval_metrics', SUPPORTED_RETRIEVAL_METRICS) or SUPPORTED_RETRIEVAL_METRICS)
         unknown_metrics = sorted(set(requested_metrics) - set(SUPPORTED_RETRIEVAL_METRICS))
         if unknown_metrics:
@@ -212,6 +213,112 @@ class Evaluator:
                 row_name = f'{row_name}-t2i'
             names.add(row_name)
         return names
+
+    @classmethod
+    def _authority_role_from_weights(cls, lambda_host: float, lambda_prototype: float) -> str:
+        if cls._pair_close(lambda_host, 1.0) and cls._pair_close(lambda_prototype, 0.0):
+            return 'host'
+        if cls._pair_close(lambda_host, 0.0) and cls._pair_close(lambda_prototype, 1.0):
+            return 'prototype'
+        return 'fused'
+
+    @staticmethod
+    def _canonical_row_name(task_name: object) -> str:
+        return str(task_name or '').strip()
+
+    @classmethod
+    def _authority_role_from_row_name(cls, row_name: object) -> Optional[str]:
+        label = cls._canonical_row_name(row_name).lower()
+        if not label:
+            return None
+        if cls._is_host_only_selection_row(label):
+            return 'host'
+        if re.match(r'^prototype(?:[-_\s]*t2i)?(?:\b|[-_\s].*)?$', label):
+            return 'prototype'
+        if cls._is_pas_selection_row(label):
+            return 'fused'
+        if 'prototype' in label and 'host' in label:
+            return 'fused'
+        return None
+
+    @classmethod
+    def _build_authority_candidates(
+        cls,
+        metrics_rows: List[Dict[str, object]],
+        row_metadata: Dict[str, Dict[str, object]],
+    ) -> Dict[str, Optional[str]]:
+        candidates: Dict[str, Optional[str]] = {
+            'host': None,
+            'prototype': None,
+            'fused': None,
+        }
+        best_scores: Dict[str, float] = {
+            'host': float('-inf'),
+            'prototype': float('-inf'),
+            'fused': float('-inf'),
+        }
+        for row in metrics_rows:
+            row_name = cls._canonical_row_name(row.get('task'))
+            role = str(row_metadata.get(row_name, {}).get('authority_role', '')).strip().lower()
+            if role not in candidates:
+                role = cls._authority_role_from_row_name(row_name)
+            if role not in candidates:
+                continue
+            score = float(row.get('R1', float('-inf')))
+            if score > best_scores[role]:
+                best_scores[role] = score
+                candidates[role] = row_name
+        return candidates
+
+    @classmethod
+    def build_authority_context(
+        cls,
+        metrics_rows: List[Dict[str, object]],
+        row_metadata: Dict[str, Dict[str, object]],
+        selected_display_row: Optional[str],
+        selected_source_row: Optional[str],
+    ) -> Dict[str, object]:
+        row_metrics: Dict[str, Dict[str, float]] = {}
+        normalized_row_metadata: Dict[str, Dict[str, object]] = {}
+        for row in metrics_rows:
+            row_name = cls._canonical_row_name(row.get('task'))
+            row_metrics[row_name] = {
+                metric_name: float(row.get(metric_name, 0.0))
+                for metric_name in SUPPORTED_RETRIEVAL_METRICS
+                if metric_name in row
+            }
+            metadata = dict(row_metadata.get(row_name, {}))
+            authority_role = str(metadata.get('authority_role', '')).strip().lower()
+            if authority_role not in {'host', 'prototype', 'fused'}:
+                inferred_role = cls._authority_role_from_row_name(row_name)
+                if inferred_role is not None:
+                    authority_role = inferred_role
+            if authority_role:
+                metadata['authority_role'] = authority_role
+            normalized_row_metadata[row_name] = metadata
+
+        candidates = cls._build_authority_candidates(metrics_rows, normalized_row_metadata)
+        source_row = cls._canonical_row_name(selected_source_row)
+        display_row = cls._canonical_row_name(selected_display_row)
+        source_role = str(normalized_row_metadata.get(source_row, {}).get('authority_role', '')).strip().lower()
+        if source_role not in {'host', 'prototype', 'fused'}:
+            inferred_source_role = cls._authority_role_from_row_name(source_row)
+            source_role = inferred_source_role if inferred_source_role is not None else ''
+
+        return {
+            'display_row': display_row or None,
+            'source_row': source_row or None,
+            'mismatch': bool(display_row and source_row and display_row != source_row),
+            'selected_source_role': source_role or None,
+            'candidates': candidates,
+            'row_roles': {
+                row_name: str(metadata.get('authority_role', '')).strip().lower()
+                for row_name, metadata in normalized_row_metadata.items()
+                if str(metadata.get('authority_role', '')).strip().lower()
+            },
+            'row_metadata': normalized_row_metadata,
+            'row_metrics': row_metrics,
+        }
 
     @classmethod
     def _format_fusion_row_name(cls, lambda_host: float, lambda_prototype: float) -> str:
@@ -402,10 +509,21 @@ class Evaluator:
         host_similarity: Optional[torch.Tensor],
         prototype_similarity: Optional[torch.Tensor],
         default_similarity: torch.Tensor,
-    ) -> List[Tuple[str, torch.Tensor]]:
+    ) -> Tuple[List[Tuple[str, torch.Tensor]], Dict[str, Dict[str, object]]]:
         rows: List[Tuple[str, torch.Tensor]] = [('pas-t2i', default_similarity.float().cpu())]
+        row_metadata: Dict[str, Dict[str, object]] = {
+            'pas-t2i': {
+                'lambda_host': float(self.default_fusion_lambda_host),
+                'lambda_prototype': float(self.default_fusion_lambda_prototype),
+                'authority_role': self._authority_role_from_weights(
+                    self.default_fusion_lambda_host,
+                    self.default_fusion_lambda_prototype,
+                ),
+                'source': 'default_similarity',
+            }
+        }
         if not isinstance(host_similarity, torch.Tensor):
-            return rows
+            return rows, row_metadata
 
         host_similarity = host_similarity.float().cpu()
         prototype_similarity = prototype_similarity.float().cpu() if isinstance(prototype_similarity, torch.Tensor) else None
@@ -456,9 +574,16 @@ class Evaluator:
             if row_name in emitted_names:
                 row_name = f'{row_name}-{len(emitted_names)}'
             rows.append((row_name, similarity))
+            row_metadata[row_name] = {
+                'lambda_host': float(lambda_host),
+                'lambda_prototype': float(lambda_prototype),
+                'authority_role': self._authority_role_from_weights(lambda_host, lambda_prototype),
+                'source': 'candidate_spec',
+                'name_specified': bool(spec.get('name')),
+            }
             emitted_pairs.add(pair_key)
             emitted_names.add(row_name)
-        return rows
+        return rows, row_metadata
 
     def _compute_similarity(self, model):
         model = model.eval()
@@ -544,17 +669,17 @@ class Evaluator:
         if isinstance(prototype_similarity, torch.Tensor):
             prototype_similarity = self._check_similarity_matrix(prototype_similarity, expected_shape, field_name='Prototype retrieval similarity')
 
-        similarity_rows = self._build_similarity_rows(
+        similarity_rows, row_metadata = self._build_similarity_rows(
             model=model,
             host_similarity=host_similarity,
             prototype_similarity=prototype_similarity,
             default_similarity=similarity,
         )
         debug_metrics = self._compute_eval_debug_metrics(model, similarity, text_ids, image_ids, image_features, text_features)
-        return similarity_rows, text_ids, image_ids, debug_metrics
+        return similarity_rows, text_ids, image_ids, debug_metrics, row_metadata
 
     def eval(self, model):
-        similarity_rows, text_ids, image_ids, debug_metrics = self._compute_similarity(model)
+        similarity_rows, text_ids, image_ids, debug_metrics, row_metadata = self._compute_similarity(model)
         metrics_rows = [
             get_metrics(similarity=row_similarity, qids=text_ids, gids=image_ids, name=row_name)
             for row_name, row_similarity in similarity_rows
@@ -573,11 +698,6 @@ class Evaluator:
                 # When default fusion lambdas are omitted from config, select checkpoint/current-R1 from eval_subsets.
                 metrics = max(subset_rows, key=lambda row: float(row['R1']))
                 selected_source_row = str(metrics.get('task', '')).strip()
-                for row_metrics in metrics_rows:
-                    if self._is_pas_selection_row(row_metrics.get('task', '')):
-                        for metric_name in SUPPORTED_RETRIEVAL_METRICS:
-                            row_metrics[metric_name] = float(metrics[metric_name])
-                        break
             else:
                 eligible_rows = [row for row in metrics_rows if not self._is_host_only_selection_row(row.get('task', ''))]
                 if not eligible_rows:
@@ -608,6 +728,21 @@ class Evaluator:
             if any(self._is_pas_selection_row(row.get('task', '')) for row in metrics_rows):
                 selected_display_row = 'pas-t2i'
 
+        authority_context = self.build_authority_context(
+            metrics_rows=metrics_rows,
+            row_metadata=row_metadata,
+            selected_display_row=selected_display_row,
+            selected_source_row=selected_source_row,
+        )
+        if authority_context.get('mismatch'):
+            self.logger.warning(
+                'Row provenance mismatch detected: display_row=%s source_row=%s selected_source_role=%s',
+                authority_context.get('display_row'),
+                authority_context.get('source_row'),
+                authority_context.get('selected_source_role'),
+            )
+        self.latest_authority = authority_context
+
         table = PrettyTable(['task'] + list(self.requested_metrics))
         for row_metrics in metrics_rows:
             table.add_row([row_metrics['task']] + [row_metrics[metric_name] for metric_name in self.requested_metrics])
@@ -622,6 +757,14 @@ class Evaluator:
         self.latest_metrics['val/top1'] = metrics['R1']
         self.latest_metrics['val/top1_row'] = selected_display_row
         self.latest_metrics['val/top1_source_row'] = selected_source_row
+        self.latest_metrics['val/top1_display_row'] = selected_display_row
+        self.latest_metrics['val/authority/selected_source_role'] = authority_context.get('selected_source_role')
+        self.latest_metrics['val/authority/selected_authority_row'] = authority_context.get('source_row')
+        self.latest_metrics['val/authority/display_source_mismatch'] = float(bool(authority_context.get('mismatch')))
+        candidates = authority_context.get('candidates', {}) if isinstance(authority_context, dict) else {}
+        self.latest_metrics['val/authority/host_candidate_row'] = candidates.get('host')
+        self.latest_metrics['val/authority/prototype_candidate_row'] = candidates.get('prototype')
+        self.latest_metrics['val/authority/fused_candidate_row'] = candidates.get('fused')
         for row_metrics in metrics_rows:
             row_slug = self._metric_slug(row_metrics['task'])
             for metric_name in self.requested_metrics:
