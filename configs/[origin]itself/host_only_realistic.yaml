@@ -13,7 +13,22 @@ model:
   return_debug_outputs: false
 
 host:
-  type: clip
+  type: itself
+  freeze_projectors: true
+  itself_loss_names: tal+cid
+  itself_only_global: false
+  itself_select_ratio: 0.4
+  itself_grab_embed_dim: 4096
+  itself_score_weight_global: 0.32
+  itself_tau: 0.015
+  itself_margin: 0.1
+  itself_return_all: true
+  itself_topk_type: custom
+  itself_layer_index: -1
+  itself_average_attn_weights: true
+  itself_modify_k: true
+  itself_lambda1_weight: 0.5
+  itself_lambda2_weight: 3.5
 
 fusion:
   enabled: false
@@ -45,7 +60,7 @@ objectives:
     diag: 0.0
     gap: 0.0
     support: 0.0
-    ret: 1.0
+    ret: 0.0
     weight_ret: 0.0
     balance: 0.0
     diversity: 0.0
@@ -70,7 +85,7 @@ training:
   amp: false
 
 optimizer:
-  type: AdamW
+  type: Adam
   lr: 1.0e-5
   lr_host_projectors: 1.0e-5
   lr_image_backbone: 1.0e-5

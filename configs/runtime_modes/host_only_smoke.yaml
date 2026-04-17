@@ -28,7 +28,7 @@ objectives:
     use_loss_support: false
     prototype_gap_margin: 0.05
     prototype_support_target: 4.0
-    use_loss_ret: true
+    use_loss_ret: false
     use_loss_weight_ret: false
     retrieval_mode: clip_bidirectional
     use_balancing_loss: false
@@ -43,7 +43,7 @@ objectives:
     diag: 0.0
     gap: 0.0
     support: 0.0
-    ret: 1.0
+    ret: 0.0
     weight_ret: 0.0
     balance: 0.0
     diversity: 0.0
