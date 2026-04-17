@@ -1,10 +1,12 @@
 experiment:
-  name: runtime_host_only_smoke
+  name: runtime_host_only_realistic
   output_dir: runs
   seed: 1
 
 model:
   runtime_mode: host_only
+  variant: runtime_clip_only_realistic
+  temperature: 0.07
   use_prototype_branch: false
   use_prototype_bank: false
   use_image_conditioned_pooling: false
@@ -56,8 +58,8 @@ text_pooling:
     pad_token_id: 0
 
 training:
-  batch_size: 8
-  epochs: 1
+  batch_size: 128
+  epochs: 15
   eval_frequency: 1
   save_interval: 1
   training: true
@@ -85,7 +87,7 @@ logging:
 
 evaluation:
   retrieval_scorer: exact
-  batch_size: 64
+  batch_size: 512
 
 checkpointing:
   metric:
@@ -100,6 +102,10 @@ checkpointing:
       enabled: false
     fusion:
       enabled: false
+  save:
+    save_latest: true
+    save_best: true
+    keep_last_n: 2
   authority_validation:
     enabled: true
     strict: true

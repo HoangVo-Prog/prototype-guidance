@@ -5,7 +5,7 @@ experiment:
 
 model:
   runtime_mode: host_only
-  variant: runtime_host_only_realistic
+  variant: runtime_itself_only_realistic
   temperature: 0.07
   use_prototype_branch: false
   use_prototype_bank: false
@@ -45,7 +45,7 @@ objectives:
     use_loss_support: false
     prototype_gap_margin: 0.05
     prototype_support_target: 4.0
-    use_loss_ret: true
+    use_loss_ret: false
     use_loss_weight_ret: false
     retrieval_mode: clip_bidirectional
     use_balancing_loss: false
