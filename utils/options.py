@@ -58,6 +58,7 @@ def build_parser():
     parser.add_argument('--model_name', default='PAS')
     parser.add_argument('--model_variant', default='pas_v1')
     parser.add_argument('--training_mode', type=str, default='pas')
+    parser.add_argument('--runtime_mode', type=str, default='auto')
     parser.add_argument('--pretrain_choice', default='ViT-B/16')
     parser.add_argument('--image_backbone', default='clip_visual')
     parser.add_argument('--text_backbone', default='clip_text_transformer')
@@ -143,6 +144,7 @@ def build_parser():
     parser.add_argument('--fusion_lambda_prototype', type=float, default=None)
     parser.add_argument('--fusion_coefficient', type=float, default=None)
     parser.add_argument('--fusion_coefficient_source', type=str, default='fixed')
+    parser.add_argument('--composer_calibration_enabled', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_prototype_contextualization', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--return_debug_outputs', type=_str2bool, nargs='?', const=True, default=False)
 
@@ -315,6 +317,7 @@ def _finalize_args(args):
     args.use_image_conditioned_pooling = bool(args.use_image_conditioned_pooling) if args.use_prototype_branch else False
     args.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
     args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
+    args.runtime_mode = str(getattr(args, 'runtime_mode', 'auto')).lower()
     args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
     config_data = getattr(args, 'config_data', {}) or {}
     training_config = config_data.get('training', {}) if isinstance(config_data.get('training', {}), dict) else {}

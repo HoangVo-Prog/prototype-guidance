@@ -4,6 +4,15 @@ import time
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
+from model.runtime_modes import (
+    RUNTIME_MODE_CALIBRATION_ONLY,
+    RUNTIME_MODE_FUSED_EXTERNAL,
+    RUNTIME_MODE_HOST_ONLY,
+    RUNTIME_MODE_JOINT_TRAINING,
+    RUNTIME_MODE_PROTOTYPE_ONLY,
+    normalize_runtime_mode,
+    resolve_runtime_mode_from_args,
+)
 from solver import build_lr_scheduler, build_optimizer, summarize_optimizer_param_groups
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
@@ -136,12 +145,59 @@ def _parameter_group_grad_norm(named_parameters, prefixes):
 def _collect_gradient_metrics(model):
     named_parameters = list(_named_parameters_for_logging(model))
     metrics = {
-        'grad_norm_class_proxies': _parameter_group_grad_norm(named_parameters, ('prototype_head.losses.class_proxies',)),
-        'grad_norm_image_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.image_projector', 'prototype_head.proto_query_proj', 'prototype_head.local_routing_adapter', 'prototype_head.image_adapter', 'host_head')),
-        'grad_norm_text_projector': _parameter_group_grad_norm(named_parameters, ('prototype_head.text_projector', 'prototype_head.text_adapter', 'host_head')),
-        'grad_norm_prototype_bank': _parameter_group_grad_norm(named_parameters, ('prototype_head.prototype_bank',)),
-        'grad_norm_image_backbone': _parameter_group_grad_norm(named_parameters, ('base_model.visual',)),
-        'grad_norm_text_backbone': _parameter_group_grad_norm(named_parameters, ('base_model.transformer', 'base_model.token_embedding', 'base_model.positional_embedding', 'base_model.ln_final', 'base_model.text_projection')),
+        'grad_norm_class_proxies': _parameter_group_grad_norm(
+            named_parameters,
+            ('prototype_head.losses.class_proxies', 'prototype_plugin.prototype_head.losses.class_proxies'),
+        ),
+        'grad_norm_image_projector': _parameter_group_grad_norm(
+            named_parameters,
+            (
+                'prototype_head.image_projector',
+                'prototype_head.proto_query_proj',
+                'prototype_head.local_routing_adapter',
+                'prototype_head.image_adapter',
+                'prototype_plugin.prototype_head.image_projector',
+                'prototype_plugin.prototype_head.proto_query_proj',
+                'prototype_plugin.prototype_head.local_routing_adapter',
+                'prototype_plugin.prototype_head.image_adapter',
+                'host_head',
+                'host_core.host_head',
+            ),
+        ),
+        'grad_norm_text_projector': _parameter_group_grad_norm(
+            named_parameters,
+            (
+                'prototype_head.text_projector',
+                'prototype_head.text_adapter',
+                'prototype_plugin.prototype_head.text_projector',
+                'prototype_plugin.prototype_head.text_adapter',
+                'host_head',
+                'host_core.host_head',
+            ),
+        ),
+        'grad_norm_prototype_bank': _parameter_group_grad_norm(
+            named_parameters,
+            ('prototype_head.prototype_bank', 'prototype_plugin.prototype_head.prototype_bank'),
+        ),
+        'grad_norm_image_backbone': _parameter_group_grad_norm(
+            named_parameters,
+            ('base_model.visual', 'host_core.base_model.visual'),
+        ),
+        'grad_norm_text_backbone': _parameter_group_grad_norm(
+            named_parameters,
+            (
+                'base_model.transformer',
+                'base_model.token_embedding',
+                'base_model.positional_embedding',
+                'base_model.ln_final',
+                'base_model.text_projection',
+                'host_core.base_model.transformer',
+                'host_core.base_model.token_embedding',
+                'host_core.base_model.positional_embedding',
+                'host_core.base_model.ln_final',
+                'host_core.base_model.text_projection',
+            ),
+        ),
     }
     total = 0.0
     for _, parameter in named_parameters:
@@ -220,7 +276,63 @@ def _rewind_scheduler_to_epoch(scheduler, completed_epochs: int):
     scheduler.step(completed)
 
 
-def do_train(
+def _set_requires_grad_by_prefixes(model, prefixes, requires_grad: bool) -> int:
+    touched = 0
+    for name, parameter in model.named_parameters():
+        if any(name.startswith(prefix) for prefix in prefixes):
+            parameter.requires_grad = bool(requires_grad)
+            touched += 1
+    return touched
+
+
+def _apply_runtime_mode_trainability(model, runtime_mode: str, logger) -> None:
+    mode = normalize_runtime_mode(runtime_mode)
+    host_prefixes = (
+        'base_model.',
+        'host_head.',
+        'host_core.base_model.',
+        'host_core.host_head.',
+    )
+    prototype_prefixes = (
+        'prototype_head.',
+        'prototype_plugin.prototype_head.',
+    )
+    composer_prefixes = (
+        'fusion_module.',
+        'composer.fusion_module.',
+        'composer.host_log_scale',
+        'composer.prototype_log_scale',
+        'composer.log_temperature',
+    )
+    if mode == RUNTIME_MODE_JOINT_TRAINING:
+        return
+    if mode == RUNTIME_MODE_HOST_ONLY:
+        frozen = _set_requires_grad_by_prefixes(model, prototype_prefixes + composer_prefixes, False)
+        logger.info('Runtime mode `%s`: froze prototype/composer tensors=%d.', mode, frozen)
+        return
+    if mode in {RUNTIME_MODE_PROTOTYPE_ONLY, RUNTIME_MODE_FUSED_EXTERNAL}:
+        frozen_host = _set_requires_grad_by_prefixes(model, host_prefixes + composer_prefixes, False)
+        unfrozen_proto = _set_requires_grad_by_prefixes(model, prototype_prefixes, True)
+        logger.info(
+            'Runtime mode `%s`: froze host/composer tensors=%d, unfroze prototype tensors=%d.',
+            mode,
+            frozen_host,
+            unfrozen_proto,
+        )
+        return
+    if mode == RUNTIME_MODE_CALIBRATION_ONLY:
+        frozen_host = _set_requires_grad_by_prefixes(model, host_prefixes + prototype_prefixes, False)
+        unfrozen_composer = _set_requires_grad_by_prefixes(model, composer_prefixes, True)
+        logger.info(
+            'Runtime mode `%s`: froze host/prototype tensors=%d, unfroze composer tensors=%d.',
+            mode,
+            frozen_host,
+            unfrozen_composer,
+        )
+        return
+
+
+def _do_train_runtime(
     start_epoch,
     args,
     model,
@@ -232,6 +344,7 @@ def do_train(
     experiment_tracker: ExperimentTracker = None,
     eval_loss_loader=None,
     modular_checkpoint_manager=None,
+    runtime_mode: str = None,
 ):
     log_period = args.log_period
     eval_period = args.eval_period
@@ -242,6 +355,22 @@ def do_train(
 
     logger = logging.getLogger('pas.train')
     logger.info('start training')
+    resolved_runtime_mode = normalize_runtime_mode(
+        runtime_mode or resolve_runtime_mode_from_args(args, for_training=True)
+    )
+    logger.info('Trainer runtime_mode=%s', resolved_runtime_mode)
+    runtime_model = _unwrap_model(model)
+    if hasattr(runtime_model, 'set_runtime_mode'):
+        runtime_model.set_runtime_mode(resolved_runtime_mode)
+    _apply_runtime_mode_trainability(runtime_model, resolved_runtime_mode, logger)
+    if resolved_runtime_mode != RUNTIME_MODE_JOINT_TRAINING:
+        optimizer = build_optimizer(args, runtime_model)
+        scheduler = build_lr_scheduler(args, optimizer)
+        _rewind_scheduler_to_epoch(scheduler, start_epoch - 1)
+        logger.info(
+            'Rebuilt optimizer/scheduler for runtime_mode=%s to enforce explicit trainable boundary.',
+            resolved_runtime_mode,
+        )
     if getattr(args, 'prototype_selection_metric', None):
         logger.warning(
             'training.prototype_selection_metric is deprecated by checkpointing.metric/checkpointing.save.*. '
@@ -267,10 +396,18 @@ def do_train(
     last_epoch = start_epoch - 1
     log_debug_metrics = bool(getattr(args, 'log_debug_metrics', True))
     coverage_tracker = RoutingCoverageTracker() if log_debug_metrics else None
-    freeze_schedule_phases = parse_freeze_schedule_config(
-        getattr(args, 'freeze_schedule', None),
-        num_epoch=num_epoch,
-    )
+    if resolved_runtime_mode == RUNTIME_MODE_JOINT_TRAINING:
+        freeze_schedule_phases = parse_freeze_schedule_config(
+            getattr(args, 'freeze_schedule', None),
+            num_epoch=num_epoch,
+        )
+    else:
+        if getattr(args, 'freeze_schedule', None):
+            logger.warning(
+                'Ignoring training.freeze_schedule in runtime_mode=%s; mode routing defines semantics first.',
+                resolved_runtime_mode,
+            )
+        freeze_schedule_phases = []
     active_freeze_phase_name = None
     missing_phase_warning_emitted = False
     if freeze_schedule_phases:
@@ -363,7 +500,11 @@ def do_train(
             batch = {key: value.to(device) for key, value in batch.items()}
             optimizer.zero_grad(set_to_none=True)
             with build_autocast_context(args, device):
-                outputs = model(batch, current_step=current_steps)
+                outputs = model(
+                    batch,
+                    current_step=current_steps,
+                    disable_proxy_losses=(resolved_runtime_mode == RUNTIME_MODE_CALIBRATION_ONLY),
+                )
                 total_loss = outputs['loss_total']
 
             if scaler.is_enabled():
@@ -527,6 +668,96 @@ def do_train(
 
     tb_writer.close()
 
+
+def train_host_core(*args, **kwargs):
+    kwargs['runtime_mode'] = RUNTIME_MODE_HOST_ONLY
+    return _do_train_runtime(*args, **kwargs)
+
+
+def train_prototype_external(*args, **kwargs):
+    kwargs['runtime_mode'] = RUNTIME_MODE_PROTOTYPE_ONLY
+    return _do_train_runtime(*args, **kwargs)
+
+
+def train_composer_calibration(*args, **kwargs):
+    kwargs['runtime_mode'] = RUNTIME_MODE_CALIBRATION_ONLY
+    return _do_train_runtime(*args, **kwargs)
+
+
+def train_joint(*args, **kwargs):
+    kwargs['runtime_mode'] = RUNTIME_MODE_JOINT_TRAINING
+    return _do_train_runtime(*args, **kwargs)
+
+
+def do_train(
+    start_epoch,
+    args,
+    model,
+    train_loader,
+    evaluator,
+    optimizer,
+    scheduler,
+    checkpointer,
+    experiment_tracker: ExperimentTracker = None,
+    eval_loss_loader=None,
+    modular_checkpoint_manager=None,
+):
+    resolved_runtime_mode = resolve_runtime_mode_from_args(args, for_training=True)
+    if resolved_runtime_mode == RUNTIME_MODE_HOST_ONLY:
+        return train_host_core(
+            start_epoch,
+            args,
+            model,
+            train_loader,
+            evaluator,
+            optimizer,
+            scheduler,
+            checkpointer,
+            experiment_tracker=experiment_tracker,
+            eval_loss_loader=eval_loss_loader,
+            modular_checkpoint_manager=modular_checkpoint_manager,
+        )
+    if resolved_runtime_mode in {RUNTIME_MODE_PROTOTYPE_ONLY, RUNTIME_MODE_FUSED_EXTERNAL}:
+        return train_prototype_external(
+            start_epoch,
+            args,
+            model,
+            train_loader,
+            evaluator,
+            optimizer,
+            scheduler,
+            checkpointer,
+            experiment_tracker=experiment_tracker,
+            eval_loss_loader=eval_loss_loader,
+            modular_checkpoint_manager=modular_checkpoint_manager,
+        )
+    if resolved_runtime_mode == RUNTIME_MODE_CALIBRATION_ONLY:
+        return train_composer_calibration(
+            start_epoch,
+            args,
+            model,
+            train_loader,
+            evaluator,
+            optimizer,
+            scheduler,
+            checkpointer,
+            experiment_tracker=experiment_tracker,
+            eval_loss_loader=eval_loss_loader,
+            modular_checkpoint_manager=modular_checkpoint_manager,
+        )
+    return train_joint(
+        start_epoch,
+        args,
+        model,
+        train_loader,
+        evaluator,
+        optimizer,
+        scheduler,
+        checkpointer,
+        experiment_tracker=experiment_tracker,
+        eval_loss_loader=eval_loss_loader,
+        modular_checkpoint_manager=modular_checkpoint_manager,
+    )
 
 
 def do_inference(model, test_img_loader, test_txt_loader, args):

@@ -1,0 +1,104 @@
+experiment:
+  name: runtime_host_only_smoke
+  output_dir: runs
+  seed: 1
+
+model:
+  runtime_mode: host_only
+  use_prototype_branch: false
+  use_prototype_bank: false
+  use_image_conditioned_pooling: false
+  return_debug_outputs: false
+
+host:
+  type: clip
+
+fusion:
+  enabled: false
+
+objectives:
+  objectives:
+    use_host_loss: true
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: false
+    use_loss_diag: false
+    use_loss_gap: false
+    use_loss_support: false
+    prototype_gap_margin: 0.05
+    prototype_support_target: 4.0
+    use_loss_ret: true
+    use_loss_weight_ret: false
+    retrieval_mode: clip_bidirectional
+    use_balancing_loss: false
+    use_diversity_loss: false
+  lambda:
+    host: 1.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.0
+    diag: 0.0
+    gap: 0.0
+    support: 0.0
+    ret: 1.0
+    weight_ret: 0.0
+    balance: 0.0
+    diversity: 0.0
+
+text_pooling:
+  token_policy: eos_only
+
+training:
+  batch_size: 8
+  epochs: 1
+  eval_frequency: 1
+  save_interval: 1
+  training: true
+  freeze_image_backbone: false
+  freeze_text_backbone: false
+  freeze_host_projectors: false
+  freeze_prototype_side: true
+  amp: false
+
+optimizer:
+  type: AdamW
+  lr: 1.0e-5
+  lr_host_projectors: 1.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
+
+dataset:
+  dataset_name: CUHK-PEDES
+  root_dir: data
+  val_dataset: test
+
+logging:
+  use_wandb: false
+  log_debug_metrics: true
+
+evaluation:
+  retrieval_scorer: exact
+  batch_size: 64
+
+checkpointing:
+  metric:
+    name: R1
+    mode: max
+  groups:
+    host:
+      enabled: true
+    prototype_bank:
+      enabled: false
+    prototype_projector:
+      enabled: false
+    fusion:
+      enabled: false
+  authority_validation:
+    enabled: true
+    strict: true
+    warn_only: false
+    allow_fallback_row_name_classification: true
+

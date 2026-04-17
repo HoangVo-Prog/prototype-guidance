@@ -1,0 +1,107 @@
+experiment:
+  name: runtime_fused_external_realistic
+  output_dir: runs
+  seed: 1
+
+model:
+  runtime_mode: fused_external
+  variant: runtime_fused_external_realistic
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+  return_debug_outputs: false
+
+host:
+  type: clip
+
+prototype:
+  num_prototypes: 32
+  prototype_dim: 512
+  prototype_init: normalized_random
+  routing_type: cosine
+  routing_temperature: 0.07
+  routing_source: global
+  local_routing_pooling: logsumexp
+  contextualization_enabled: true
+  contextualization_type: self_attention
+  contextualization_residual: true
+  dead_prototype_threshold: 0.005
+
+fusion:
+  enabled: true
+  lambda_host: 0.6
+  lambda_prototype: 0.4
+  coefficient_source: fixed
+  composer_calibration_enabled: true
+  eval_subsets:
+    - { name: "host_only", lambda_host: 1.0, lambda_prototype: 0.0 }
+    - { name: "proto_only", lambda_host: 0.0, lambda_prototype: 1.0 }
+    - { name: "fused_020", lambda_host: 0.8, lambda_prototype: 0.2 }
+    - { name: "fused_040", lambda_host: 0.6, lambda_prototype: 0.4 }
+    - { name: "fused_060", lambda_host: 0.4, lambda_prototype: 0.6 }
+
+objectives:
+  objectives:
+    use_host_loss: true
+    use_loss_ret: true
+    retrieval_mode: surrogate_i2t
+  lambda:
+    host: 1.0
+    ret: 1.0
+
+text_pooling:
+  token_policy: content_only
+
+dataset:
+  dataset_name: RSTPReid
+  root_dir: data
+  val_dataset: test
+
+logging:
+  use_wandb: false
+  log_debug_metrics: true
+
+evaluation:
+  retrieval_scorer: approximate
+  batch_size: 512
+  prototype_image_chunk_size: 32
+  prototype_text_chunk_size: 128
+
+checkpointing:
+  metric:
+    name: R1
+    mode: max
+  groups:
+    host:
+      enabled: true
+    prototype_bank:
+      enabled: true
+    prototype_projector:
+      enabled: true
+    fusion:
+      enabled: true
+  save:
+    save_latest: false
+    save_best: false
+  load:
+    enabled: true
+    strict: true
+    sources:
+      host:
+        enabled: true
+        path: /absolute/path/to/checkpoint_host_best.pth
+      prototype_bank:
+        enabled: true
+        path: /absolute/path/to/checkpoint_prototype_bank_best.pth
+      prototype_projector:
+        enabled: true
+        path: /absolute/path/to/checkpoint_prototype_projector_best.pth
+      fusion:
+        enabled: true
+        path: /absolute/path/to/checkpoint_fusion_best.pth
+  authority_validation:
+    enabled: true
+    strict: true
+    warn_only: false
+    allow_fallback_row_name_classification: true
+

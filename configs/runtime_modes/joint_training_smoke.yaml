@@ -1,0 +1,125 @@
+experiment:
+  name: runtime_joint_training_smoke
+  output_dir: runs
+  seed: 1
+
+model:
+  runtime_mode: joint_training
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+  return_debug_outputs: false
+
+host:
+  type: clip
+
+prototype:
+  num_prototypes: 16
+  prototype_dim: 512
+  prototype_init: normalized_random
+  routing_type: cosine
+  routing_temperature: 0.07
+  routing_source: global
+  local_routing_pooling: logsumexp
+  contextualization_enabled: true
+  contextualization_type: self_attention
+  contextualization_residual: true
+
+fusion:
+  enabled: true
+  lambda_host: 0.5
+  lambda_prototype: 0.5
+  coefficient_source: fixed
+  composer_calibration_enabled: true
+
+objectives:
+  objectives:
+    use_host_loss: true
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: false
+    use_loss_diag: true
+    use_loss_gap: false
+    use_loss_support: false
+    prototype_gap_margin: 0.05
+    prototype_support_target: 4.0
+    use_loss_ret: true
+    use_loss_weight_ret: false
+    retrieval_mode: surrogate_i2t
+    use_balancing_loss: false
+    use_diversity_loss: false
+  lambda:
+    host: 1.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.0
+    diag: 1.0
+    gap: 0.0
+    support: 0.0
+    ret: 1.0
+    weight_ret: 0.0
+    balance: 0.0
+    diversity: 0.0
+
+text_pooling:
+  token_policy: content_only
+
+training:
+  batch_size: 8
+  epochs: 1
+  eval_frequency: 1
+  save_interval: 1
+  training: true
+  freeze_image_backbone: false
+  freeze_text_backbone: false
+  freeze_host_projectors: false
+  freeze_prototype_side: false
+  amp: false
+
+optimizer:
+  type: AdamW
+  lr: 1.0e-5
+  lr_prototype_bank: 1.0e-5
+  lr_projectors: 1.0e-5
+  lr_prototype_routing: 1.0e-5
+  lr_prototype_pooling: 1.0e-5
+  lr_prototype_contextualization: 1.0e-5
+  lr_host_projectors: 1.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
+
+dataset:
+  dataset_name: CUHK-PEDES
+  root_dir: data
+  val_dataset: test
+
+logging:
+  use_wandb: false
+  log_debug_metrics: true
+
+evaluation:
+  retrieval_scorer: exact
+  batch_size: 64
+
+checkpointing:
+  metric:
+    name: R1
+    mode: max
+  groups:
+    host:
+      enabled: true
+    prototype_bank:
+      enabled: true
+    prototype_projector:
+      enabled: true
+    fusion:
+      enabled: true
+  authority_validation:
+    enabled: true
+    strict: true
+    warn_only: false
+    allow_fallback_row_name_classification: true
+

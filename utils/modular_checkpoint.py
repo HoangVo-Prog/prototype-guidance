@@ -159,7 +159,7 @@ def _prepare_state_dict_for_group_compatibility(group_name: str, state_dict: dic
                 stats['legacy_renamed'] += 1
 
             if (
-                not key.startswith(('host_head.', 'base_model.', 'prototype_head.'))
+                not key.startswith(('host_head.', 'base_model.', 'prototype_head.', 'host_core.', 'prototype_plugin.', 'composer.'))
                 and ('host_head.' + key) in model_keys
             ):
                 key = 'host_head.' + key
@@ -175,6 +175,13 @@ GROUP_AUTHORITY_BUCKET = {
     'prototype_bank': 'prototype',
     'prototype_projector': 'prototype',
     'fusion': 'fused',
+}
+
+GROUP_COMPONENT_NAME = {
+    'host': 'HostCore',
+    'prototype_bank': 'PrototypePlugin',
+    'prototype_projector': 'PrototypePlugin',
+    'fusion': 'Composer',
 }
 
 
@@ -332,6 +339,162 @@ class ModularCheckpointManager:
             ),
         )
 
+    @staticmethod
+    def _strict_or_warn(*, strict: bool, logger, message: str) -> None:
+        if strict:
+            raise RuntimeError(message)
+        logger.warning(message)
+
+    @staticmethod
+    def _normalize_compatibility_payload(metadata: Dict[str, Any]) -> Dict[str, Any]:
+        normalized: Dict[str, Any] = {}
+        if not isinstance(metadata, dict):
+            return normalized
+        compatibility_block = metadata.get('compatibility')
+        if isinstance(compatibility_block, dict):
+            normalized.update(compatibility_block)
+        for key in (
+            'runtime_mode',
+            'component_name',
+            'component_schema_version',
+            'host_export_interface_version',
+            'accepted_host_interface_versions',
+            'expected_host_score_schema_version',
+            'expected_prototype_score_schema_version',
+            'compatible_runtime_modes',
+        ):
+            if key in metadata and key not in normalized:
+                normalized[key] = metadata.get(key)
+        return normalized
+
+    @staticmethod
+    def _model_group_compatibility(model, group_name: str) -> Dict[str, Any]:
+        if hasattr(model, 'get_group_checkpoint_compatibility'):
+            compatibility = model.get_group_checkpoint_compatibility(group_name)
+            if isinstance(compatibility, dict):
+                return dict(compatibility)
+        return {}
+
+    def _validate_checkpoint_compatibility(
+        self,
+        *,
+        group_name: str,
+        payload_type: str,
+        payload_metadata: Dict[str, Any],
+        model,
+        strict: bool,
+    ) -> None:
+        if payload_type != 'modular_group_payload':
+            return
+        metadata = payload_metadata if isinstance(payload_metadata, dict) else {}
+        checkpoint_compat = self._normalize_compatibility_payload(metadata)
+        model_compat = self._model_group_compatibility(model, group_name)
+        expected_component = GROUP_COMPONENT_NAME.get(group_name)
+
+        payload_component = checkpoint_compat.get('component_name')
+        if expected_component and payload_component and str(payload_component) != str(expected_component):
+            self._strict_or_warn(
+                strict=strict,
+                logger=self.logger,
+                message=(
+                    f'Checkpoint component mismatch for group={group_name}: '
+                    f'expected {expected_component!r}, got {payload_component!r}.'
+                ),
+            )
+        model_component = model_compat.get('component_name')
+        if model_component and payload_component and str(payload_component) != str(model_component):
+            self._strict_or_warn(
+                strict=strict,
+                logger=self.logger,
+                message=(
+                    f'Checkpoint/model component mismatch for group={group_name}: '
+                    f'checkpoint={payload_component!r}, model={model_component!r}.'
+                ),
+            )
+
+        payload_schema_version = checkpoint_compat.get('component_schema_version')
+        model_schema_version = model_compat.get('component_schema_version')
+        if payload_schema_version and model_schema_version and str(payload_schema_version) != str(model_schema_version):
+            self._strict_or_warn(
+                strict=strict,
+                logger=self.logger,
+                message=(
+                    f'Checkpoint component schema mismatch for group={group_name}: '
+                    f'checkpoint={payload_schema_version!r}, model={model_schema_version!r}.'
+                ),
+            )
+
+        payload_runtime_mode = checkpoint_compat.get('runtime_mode')
+        model_runtime_mode = model_compat.get('runtime_mode')
+        model_allowed_modes = model_compat.get('compatible_runtime_modes')
+        if (
+            payload_runtime_mode is not None
+            and isinstance(model_allowed_modes, (list, tuple, set))
+            and len(model_allowed_modes) > 0
+            and str(payload_runtime_mode) not in {str(item) for item in model_allowed_modes}
+        ):
+            self._strict_or_warn(
+                strict=strict,
+                logger=self.logger,
+                message=(
+                    f'Checkpoint runtime_mode incompatible for group={group_name}: '
+                    f'checkpoint={payload_runtime_mode!r}, allowed={sorted({str(item) for item in model_allowed_modes})!r}.'
+                ),
+            )
+        elif payload_runtime_mode and model_runtime_mode and str(payload_runtime_mode) != str(model_runtime_mode):
+            # When no explicit allow-list exists, enforce exact runtime mode match.
+            self._strict_or_warn(
+                strict=strict,
+                logger=self.logger,
+                message=(
+                    f'Checkpoint runtime_mode mismatch for group={group_name}: '
+                    f'checkpoint={payload_runtime_mode!r}, model={model_runtime_mode!r}.'
+                ),
+            )
+
+        payload_host_export_version = checkpoint_compat.get('host_export_interface_version')
+        if group_name in {'prototype_bank', 'prototype_projector'}:
+            model_accepted_interface_versions = model_compat.get('accepted_host_interface_versions', [])
+            if (
+                payload_host_export_version is not None
+                and isinstance(model_accepted_interface_versions, (list, tuple, set))
+                and len(model_accepted_interface_versions) > 0
+                and str(payload_host_export_version) not in {str(item) for item in model_accepted_interface_versions}
+            ):
+                self._strict_or_warn(
+                    strict=strict,
+                    logger=self.logger,
+                    message=(
+                        f'Checkpoint interface version incompatible for group={group_name}: '
+                        f'checkpoint={payload_host_export_version!r}, '
+                        f'model accepts={sorted({str(item) for item in model_accepted_interface_versions})!r}.'
+                    ),
+                )
+
+        if group_name == 'fusion':
+            payload_host_schema = checkpoint_compat.get('expected_host_score_schema_version')
+            model_host_schema = model_compat.get('expected_host_score_schema_version')
+            if payload_host_schema and model_host_schema and str(payload_host_schema) != str(model_host_schema):
+                self._strict_or_warn(
+                    strict=strict,
+                    logger=self.logger,
+                    message=(
+                        f'Checkpoint host score schema mismatch for group=fusion: '
+                        f'checkpoint={payload_host_schema!r}, model={model_host_schema!r}.'
+                    ),
+                )
+            payload_proto_schema = checkpoint_compat.get('expected_prototype_score_schema_version')
+            model_proto_schema = model_compat.get('expected_prototype_score_schema_version')
+            if payload_proto_schema and model_proto_schema and str(payload_proto_schema) != str(model_proto_schema):
+                self._strict_or_warn(
+                    strict=strict,
+                    logger=self.logger,
+                    message=(
+                        f'Checkpoint prototype score schema mismatch for group=fusion: '
+                        f'checkpoint={payload_proto_schema!r}, model={model_proto_schema!r}.'
+                    ),
+                )
+
     def _checkpoint_output_dir(self):
         configured = self.config.get('save', {}).get('dir')
         output_dir = self.save_dir if configured in (None, '', 'null') else str(configured)
@@ -461,6 +624,15 @@ class ModularCheckpointManager:
         group_state_dict = get_group_state_dict(model, group_name)
         if not group_state_dict:
             return None
+        compatibility = self._model_group_compatibility(model, group_name)
+        runtime_mode = str(compatibility.get('runtime_mode', getattr(self.args, 'runtime_mode', 'auto')))
+        component_name = str(compatibility.get('component_name', GROUP_COMPONENT_NAME.get(group_name, group_name)))
+        component_schema_version = compatibility.get('component_schema_version')
+        host_export_interface_version = compatibility.get('host_export_interface_version')
+        accepted_host_interface_versions = compatibility.get('accepted_host_interface_versions')
+        expected_host_score_schema_version = compatibility.get('expected_host_score_schema_version')
+        expected_prototype_score_schema_version = compatibility.get('expected_prototype_score_schema_version')
+        compatible_runtime_modes = compatibility.get('compatible_runtime_modes')
         return {
             'group_name': group_name,
             'state_dict': group_state_dict,
@@ -481,6 +653,24 @@ class ModularCheckpointManager:
                 'host_type': str(getattr(self.args, 'host_type', 'clip')),
                 'run_name': str(getattr(self.args, 'run_name', '')),
                 'training_stage': str(getattr(self.args, 'training_stage', 'joint')),
+                'runtime_mode': runtime_mode,
+                'component_name': component_name,
+                'component_schema_version': None if component_schema_version is None else str(component_schema_version),
+                'host_export_interface_version': None if host_export_interface_version is None else str(host_export_interface_version),
+                'accepted_host_interface_versions': None
+                if not isinstance(accepted_host_interface_versions, (list, tuple, set))
+                else [str(item) for item in accepted_host_interface_versions],
+                'expected_host_score_schema_version': None
+                if expected_host_score_schema_version is None
+                else str(expected_host_score_schema_version),
+                'expected_prototype_score_schema_version': None
+                if expected_prototype_score_schema_version is None
+                else str(expected_prototype_score_schema_version),
+                'compatible_runtime_modes': None
+                if not isinstance(compatible_runtime_modes, (list, tuple, set))
+                else [str(item) for item in compatible_runtime_modes],
+                'authority_bucket_expected': str(GROUP_AUTHORITY_BUCKET.get(group_name, 'unknown')),
+                'compatibility': compatibility,
             },
         }
 
@@ -743,6 +933,25 @@ class ModularCheckpointManager:
             )
             payload = torch.load(str(source_path), map_location='cpu')
             state_dict, payload_type = _extract_state_dict_from_checkpoint_payload(payload)
+            metadata = payload.get('metadata', {}) if isinstance(payload, dict) else {}
+            if isinstance(metadata, dict):
+                expected_component = GROUP_COMPONENT_NAME.get(group_name)
+                payload_component = metadata.get('component_name')
+                if expected_component and payload_component and str(payload_component) != str(expected_component):
+                    message = (
+                        f'Checkpoint component mismatch for group={group_name}: '
+                        f'expected {expected_component!r}, got {payload_component!r}.'
+                    )
+                    if strict:
+                        raise RuntimeError(message)
+                    self.logger.warning(message)
+            self._validate_checkpoint_compatibility(
+                group_name=group_name,
+                payload_type=payload_type,
+                payload_metadata=metadata if isinstance(metadata, dict) else {},
+                model=model,
+                strict=strict,
+            )
             host_type = str(getattr(self.args, 'host_type', 'clip')).lower()
             compatible_state_dict, compat_stats = _prepare_state_dict_for_group_compatibility(
                 group_name=group_name,

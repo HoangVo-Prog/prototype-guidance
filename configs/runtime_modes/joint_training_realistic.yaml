@@ -1,0 +1,175 @@
+experiment:
+  name: runtime_joint_training_realistic
+  output_dir: runs
+  seed: 1
+
+model:
+  runtime_mode: joint_training
+  variant: runtime_joint_training_realistic
+  temperature: 0.02
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+  return_debug_outputs: false
+
+host:
+  type: clip
+
+prototype:
+  num_prototypes: 32
+  prototype_dim: 512
+  prototype_init: kmeans_centroids
+  routing_type: cosine
+  routing_temperature: 0.07
+  routing_source: global
+  local_routing_pooling: logsumexp
+  local_routing_use_adapter: true
+  contextualization_enabled: true
+  contextualization_type: self_attention
+  contextualization_residual: true
+  dead_prototype_threshold: 0.005
+
+fusion:
+  enabled: true
+  lambda_host: 0.6
+  lambda_prototype: 0.4
+  coefficient_source: fixed
+  composer_calibration_enabled: true
+  eval_subsets:
+    - { name: "host_only", lambda_host: 1.0, lambda_prototype: 0.0 }
+    - { name: "fused_040", lambda_host: 0.6, lambda_prototype: 0.4 }
+    - { name: "proto_only", lambda_host: 0.0, lambda_prototype: 1.0 }
+
+objectives:
+  objectives:
+    use_host_loss: true
+    use_loss_proxy_image: false
+    use_loss_proxy_text: false
+    use_loss_proxy_text_exact: false
+    use_loss_align: true
+    use_loss_diag: true
+    use_loss_gap: true
+    use_loss_support: true
+    prototype_gap_margin: 0.05
+    prototype_support_target: 4.0
+    use_loss_ret: true
+    use_loss_weight_ret: false
+    retrieval_mode: surrogate_i2t
+    use_balancing_loss: false
+    use_diversity_loss: false
+  lambda:
+    host: 1.0
+    proxy: 0.0
+    proxy_image: 0.0
+    proxy_text: 0.0
+    proxy_text_exact: 0.0
+    align: 0.5
+    diag: 1.0
+    gap: 0.5
+    support: 0.1
+    ret: 1.0
+    weight_ret: 0.0
+    balance: 0.0
+    diversity: 0.0
+
+text_pooling:
+  token_policy: content_only
+
+training:
+  batch_size: 128
+  epochs: 20
+  eval_frequency: 1
+  save_interval: 1
+  training: true
+  freeze_image_backbone: false
+  freeze_text_backbone: false
+  freeze_host_projectors: false
+  freeze_prototype_side: false
+  amp: false
+  freeze_schedule:
+    - name: warmup_prototype
+      epoch_start: 1
+      epoch_end: 5
+      trainable_groups: [prototype_bank, prototype_projector, routing, fusion]
+      frozen_groups: [host_backbone, host_retrieval]
+      lr_overrides:
+        prototype_bank: 5.0e-5
+        prototype_projector: 5.0e-5
+        routing: 5.0e-5
+        fusion: 5.0e-5
+      loss_weights:
+        lambda_host: 0.0
+        lambda_ret: 1.0
+        lambda_diag: 1.0
+        lambda_gap: 0.5
+        lambda_support: 0.1
+    - name: joint_adaptation
+      epoch_start: 6
+      epoch_end: 20
+      trainable_groups: [host_backbone, host_retrieval, prototype_bank, prototype_projector, routing, fusion]
+      frozen_groups: []
+      lr_overrides:
+        host_backbone: 1.0e-5
+        host_retrieval: 1.0e-5
+        prototype_bank: 1.0e-5
+        prototype_projector: 2.0e-5
+        routing: 1.0e-5
+        fusion: 2.0e-5
+      loss_weights:
+        lambda_host: 1.0
+        lambda_ret: 1.0
+        lambda_diag: 1.0
+        lambda_gap: 0.5
+        lambda_support: 0.1
+
+optimizer:
+  type: AdamW
+  lr: 1.0e-5
+  lr_prototype_bank: 1.0e-5
+  lr_projectors: 2.0e-5
+  lr_prototype_routing: 1.0e-5
+  lr_prototype_pooling: 1.0e-5
+  lr_prototype_contextualization: 1.0e-5
+  lr_host_projectors: 1.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
+  weight_decay: 4.0e-5
+
+dataset:
+  dataset_name: RSTPReid
+  root_dir: data
+  val_dataset: test
+
+logging:
+  use_wandb: false
+  log_debug_metrics: true
+
+evaluation:
+  retrieval_scorer: exact
+  batch_size: 512
+  prototype_image_chunk_size: 32
+  prototype_text_chunk_size: 128
+
+checkpointing:
+  metric:
+    name: R1
+    mode: max
+  groups:
+    host:
+      enabled: true
+    prototype_bank:
+      enabled: true
+    prototype_projector:
+      enabled: true
+    fusion:
+      enabled: true
+  save:
+    save_latest: true
+    save_best: true
+    keep_last_n: 2
+  authority_validation:
+    enabled: true
+    strict: true
+    warn_only: false
+    allow_fallback_row_name_classification: true
+

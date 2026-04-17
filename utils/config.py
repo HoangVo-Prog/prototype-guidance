@@ -18,6 +18,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'name'): 'model_name',
     ('model', 'variant'): 'model_variant',
     ('model', 'training_mode'): 'training_mode',
+    ('model', 'runtime_mode'): 'runtime_mode',
     ('model', 'pretrain_choice'): 'pretrain_choice',
     ('model', 'image_backbone'): 'image_backbone',
     ('model', 'text_backbone'): 'text_backbone',
@@ -86,6 +87,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('fusion', 'lambda_prototype'): 'fusion_lambda_prototype',
     ('fusion', 'eval_subsets'): 'fusion_eval_subsets',
     ('fusion', 'coefficient_source'): 'fusion_coefficient_source',
+    ('fusion', 'composer_calibration_enabled'): 'composer_calibration_enabled',
 
     ('objectives', 'objectives', 'use_host_loss'): 'use_host_loss',
     ('objectives', 'objectives', 'use_loss_proxy_image'): 'use_loss_proxy_image',
@@ -224,6 +226,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 # not part of canonical configs/base.yaml.
 READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'training_stage'): 'training_stage',
+    ('training', 'runtime_mode'): 'runtime_mode',
     ('training', 'num_epoch'): 'num_epoch',
     ('training', 'eval_period'): 'eval_period',
     ('optimizer', 'optimizer'): 'optimizer',
@@ -438,6 +441,7 @@ UNSUPPORTED_CONFIG_PATHS = {
 
 CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('model', 'training_mode'): ('pas', 'vanilla_clip'),
+    ('model', 'runtime_mode'): ('auto', 'host_only', 'prototype_only', 'fused_external', 'joint_training', 'calibration_only'),
     ('host', 'type'): ('clip', 'itself'),
     ('host', 'itself_topk_type'): ('mean', 'std', 'layer_index', 'custom'),
     ('model', 'projector_type'): ('mlp2', 'linear'),
@@ -469,6 +473,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
 
 RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'training_mode': ('pas', 'vanilla_clip'),
+    'runtime_mode': ('auto', 'host_only', 'prototype_only', 'fused_external', 'joint_training', 'calibration_only'),
     'host_type': ('clip', 'itself'),
     'itself_topk_type': ('mean', 'std', 'layer_index', 'custom'),
     'projector_type': ('mlp2', 'linear'),
