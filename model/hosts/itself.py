@@ -170,7 +170,6 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
             return bool(
                 str(getattr(self.args, 'host_type', 'itself')).lower() == 'itself'
                 and bool(getattr(self.args, 'itself_lambda_ablation_enabled', False))
-                and not bool(getattr(self.args, 'training', True))
             )
 
         def _resolve_alphas(self):

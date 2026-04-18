@@ -83,7 +83,6 @@ class Evaluator:
             )
         self.requested_metrics = requested_metrics
         self.host_type = str(getattr(args, 'host_type', 'clip')).lower()
-        self.training_enabled = bool(getattr(args, 'training', True))
         self.itself_lambda_ablation_enabled = bool(getattr(args, 'itself_lambda_ablation_enabled', False))
         self.itself_lambda_ablation_include_default = bool(
             getattr(args, 'itself_lambda_ablation_include_default', True)
@@ -220,7 +219,6 @@ class Evaluator:
         return (
             self.host_type == 'itself'
             and self.itself_lambda_ablation_enabled
-            and not self.training_enabled
         )
 
     @staticmethod

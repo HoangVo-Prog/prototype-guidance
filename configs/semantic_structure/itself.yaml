@@ -34,7 +34,6 @@ model:
   prototype_method_role: semantic_structure
   prototype_semantic_enabled: true
   prototype_recompute_enabled: true
-  prototype_inference_mode: host_only
 
 host:
   type: itself
@@ -54,7 +53,7 @@ host:
   itself_lambda2_weight: 3.5
 
 prototype:
-  num_prototypes: 20000
+  num_prototypes: 32
   prototype_dim: 512
   prototype_init: kmeans_centroids
   prototype_init_hybrid_ratio: 0.5
@@ -165,7 +164,6 @@ training:
   training: true
   freeze_host_backbone: false
   freeze_host_retrieval: false
-  freeze_fusion: false
   freeze_prototype_bank: false
   freeze_prototype_projector: false
   freeze_routing: false
@@ -215,7 +213,6 @@ evaluation:
   batch_size: 512
   prototype_image_chunk_size: 32
   prototype_text_chunk_size: 128
-  retrieval_scorer: exact
 
 checkpointing:
   metric:
@@ -227,8 +224,6 @@ checkpointing:
     prototype_bank:
       enabled: false
     prototype_projector:
-      enabled: false
-    fusion:
       enabled: false
   save:
     save_latest: true
