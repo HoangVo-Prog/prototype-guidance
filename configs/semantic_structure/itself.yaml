@@ -210,6 +210,8 @@ evaluation:
   cross_domain_generalization: false
   target_domain: CUHK-PEDES
   retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
+  itself_lambda_ablation_enabled: true
+  itself_lambda_ablation_alphas: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32]
   batch_size: 512
   prototype_image_chunk_size: 32
   prototype_text_chunk_size: 128

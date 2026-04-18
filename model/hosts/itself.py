@@ -25,6 +25,7 @@ _ADAPTER_NAMESPACE = '_itself_original_source'
 _IMPORT_LOCK = threading.Lock()
 _CACHED_COMPONENTS = None
 _STATIC_MIX_EVALUATOR_CACHE = None
+_DEFAULT_ITSELF_ABLATION_ALPHAS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32)
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,41 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
     class ITSELFStaticMixEvaluator(metrics_module.Evaluator):
         """Evaluator variant with static global/grab mixing from config."""
 
+        @staticmethod
+        def _format_alpha(alpha: float) -> str:
+            return f'{alpha:.2f}'.rstrip('0').rstrip('.')
+
+        def _ablation_enabled(self) -> bool:
+            return bool(
+                str(getattr(self.args, 'host_type', 'itself')).lower() == 'itself'
+                and bool(getattr(self.args, 'itself_lambda_ablation_enabled', False))
+                and not bool(getattr(self.args, 'training', True))
+            )
+
+        def _resolve_alphas(self):
+            configured = getattr(self.args, 'itself_lambda_ablation_alphas', None)
+            if configured in (None, []):
+                alphas = list(_DEFAULT_ITSELF_ABLATION_ALPHAS)
+            else:
+                alphas = [float(alpha) for alpha in configured]
+            if bool(getattr(self.args, 'itself_lambda_ablation_include_default', True)):
+                default_alpha = getattr(self.args, 'score_weight_global', None)
+                if default_alpha is None:
+                    default_alpha = getattr(self.args, 'itself_score_weight_global', None)
+                if default_alpha is not None:
+                    alphas.append(float(default_alpha))
+            deduped = []
+            seen = set()
+            for alpha in alphas:
+                if alpha < 0.0 or alpha > 1.0:
+                    continue
+                rounded = round(float(alpha), 6)
+                if rounded in seen:
+                    continue
+                seen.add(rounded)
+                deduped.append(float(alpha))
+            return deduped
+
         def eval(self, model, i2t_metric=False):
             if bool(getattr(self.args, 'only_global', False)):
                 return super().eval(model, i2t_metric=i2t_metric)
@@ -191,15 +227,36 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
             vg_feats = F.normalize(vg_feats, p=2, dim=1)
             sims_grab = vq_feats @ vg_feats.t()
 
-            sims = alpha * sims_global + (1.0 - alpha) * sims_grab
-            row = metrics_module.get_metrics(sims, qids, gids, f'global+grab({alpha:.2f})-t2i', False)
-            top1 = float(row[1])
-
             table = PrettyTable(['task', 'R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum'])
-            table.add_row(row)
+            if self._ablation_enabled():
+                rows = [
+                    metrics_module.get_metrics(sims_global, qids, gids, 'global-t2i', False),
+                    metrics_module.get_metrics(sims_grab, qids, gids, 'grab-t2i', False),
+                ]
+                for alpha_sweep in self._resolve_alphas():
+                    sims_mix = alpha_sweep * sims_global + (1.0 - alpha_sweep) * sims_grab
+                    rows.append(
+                        metrics_module.get_metrics(
+                            sims_mix,
+                            qids,
+                            gids,
+                            f'global+grab({self._format_alpha(alpha_sweep)})-t2i',
+                            False,
+                        )
+                    )
+                top1 = 0.0
+                for row in rows:
+                    table.add_row(row)
+                    top1 = max(top1, float(row[1]))
+            else:
+                sims = alpha * sims_global + (1.0 - alpha) * sims_grab
+                row = metrics_module.get_metrics(sims, qids, gids, f'global+grab({alpha:.2f})-t2i', False)
+                top1 = float(row[1])
+                table.add_row(row)
             if i2t_metric:
+                i2t_similarity = sims if 'sims' in locals() else sims_global
                 i2t_cmc, i2t_mAP, i2t_mINP, _ = metrics_module.rank(
-                    similarity=sims.t(),
+                    similarity=i2t_similarity.t(),
                     q_pids=gids,
                     g_pids=qids,
                     max_rank=10,
@@ -215,7 +272,10 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
             table.custom_format['mINP'] = lambda _, value: f'{value:.2f}'
             table.custom_format['RSum'] = lambda _, value: f'{value:.2f}'
             self.logger.info('\n' + str(table))
-            self.logger.info('\n' + f'static global-grab alpha = {alpha:.4f}')
+            if self._ablation_enabled():
+                self.logger.info('\n' + f'itself lambda ablation enabled with {len(self._resolve_alphas())} mix settings.')
+            else:
+                self.logger.info('\n' + f'static global-grab alpha = {alpha:.4f}')
             self.logger.info('\n' + f'best R1 = {top1}')
             self.logger.info('Static ITSELF evaluation finished in %.1fs.', time.time() - start_time)
             return top1

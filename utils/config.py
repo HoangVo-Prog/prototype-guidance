@@ -241,6 +241,9 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('evaluation', 'cross_domain_generalization'): 'cross_domain_generalization',
     ('evaluation', 'target_domain'): 'target_domain',
     ('evaluation', 'retrieval_metrics'): 'retrieval_metrics',
+    ('evaluation', 'itself_lambda_ablation_enabled'): 'itself_lambda_ablation_enabled',
+    ('evaluation', 'itself_lambda_ablation_alphas'): 'itself_lambda_ablation_alphas',
+    ('evaluation', 'itself_lambda_ablation_include_default'): 'itself_lambda_ablation_include_default',
     ('evaluation', 'batch_size'): 'test_batch_size',
     ('evaluation', 'prototype_image_chunk_size'): 'prototype_eval_image_chunk_size',
     ('evaluation', 'prototype_text_chunk_size'): 'prototype_eval_text_chunk_size',
@@ -572,6 +575,20 @@ def _validate_retrieval_metrics_value(field_name: str, value: Any) -> None:
         )
 
 
+def _validate_itself_lambda_ablation_alphas(field_name: str, value: Any) -> None:
+    if value in (None, []):
+        return
+    if not isinstance(value, list):
+        raise ValueError(f'{field_name} must be a list of floats in [0, 1].')
+    for alpha in value:
+        try:
+            alpha_float = float(alpha)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f'{field_name} contains a non-numeric value: {alpha!r}.') from exc
+        if alpha_float < 0.0 or alpha_float > 1.0:
+            raise ValueError(f'{field_name} values must be in [0, 1]. Got {alpha_float}.')
+
+
 def _validate_fusion_config_data(config_data: Dict[str, Any]) -> None:
     fusion_cfg = config_data.get('fusion')
     if isinstance(fusion_cfg, dict) and fusion_cfg:
@@ -831,6 +848,11 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         _validate_enum_value('.'.join(path), current, allowed_values)
     if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
         _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
+    if _path_exists(config_data, ('evaluation', 'itself_lambda_ablation_alphas')):
+        _validate_itself_lambda_ablation_alphas(
+            'evaluation.itself_lambda_ablation_alphas',
+            config_data['evaluation']['itself_lambda_ablation_alphas'],
+        )
     _validate_fusion_config_data(config_data)
 
     flat = flatten_config_dict(config_data)
@@ -936,6 +958,10 @@ def validate_runtime_args_namespace(args) -> None:
     retrieval_metrics = getattr(args, 'retrieval_metrics', None)
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
+    _validate_itself_lambda_ablation_alphas(
+        'itself_lambda_ablation_alphas',
+        getattr(args, 'itself_lambda_ablation_alphas', None),
+    )
     _validate_runtime_fusion_args(args)
     parse_freeze_schedule_config(
         getattr(args, 'freeze_schedule', None),

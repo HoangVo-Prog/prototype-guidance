@@ -32,6 +32,32 @@ class _HostOnlyModel(torch.nn.Module):
         return text_features['text_projected'] @ image_features['image_projected'].t()
 
 
+class _ITSELFAblationModel(torch.nn.Module):
+    def __init__(self, alpha=0.32):
+        super().__init__()
+        self.dummy = torch.nn.Parameter(torch.zeros(1))
+        self.alpha = float(alpha)
+
+    def encode_text_for_retrieval(self, caption):
+        return {
+            'text_projected': caption.float(),
+            'global_text_embedding': caption.float(),
+            'grab_text_embedding': torch.flip(caption.float(), dims=[1]),
+        }
+
+    def encode_image_for_retrieval(self, image):
+        return {
+            'image_projected': image.float(),
+            'global_image_embedding': image.float(),
+            'grab_image_embedding': image.float(),
+        }
+
+    def compute_retrieval_similarity(self, image_features, text_features):
+        global_sim = text_features['global_text_embedding'] @ image_features['global_image_embedding'].t()
+        grab_sim = text_features['grab_text_embedding'] @ image_features['grab_image_embedding'].t()
+        return (self.alpha * global_sim) + ((1.0 - self.alpha) * grab_sim)
+
+
 class StructuralSplitRuntimeTests(unittest.TestCase):
     def test_obsolete_runtime_modes_are_rejected(self):
         for removed in ('prototype_only', 'fused_external', 'calibration_only'):
@@ -71,6 +97,42 @@ class StructuralSplitRuntimeTests(unittest.TestCase):
     def test_removed_retrieval_scorer_flag_fails_clearly(self):
         with self.assertRaisesRegex(ValueError, 'retrieval_scorer'):
             validate_config_data({'evaluation': {'retrieval_scorer': 'approximate'}})
+
+    def test_itself_ablation_alphas_out_of_range_fail(self):
+        with self.assertRaisesRegex(ValueError, 'itself_lambda_ablation_alphas'):
+            validate_config_data({'evaluation': {'itself_lambda_ablation_alphas': [1.2]}})
+
+    def test_itself_inference_ablation_adds_global_grab_rows(self):
+        args = types.SimpleNamespace(
+            retrieval_metrics=['R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum'],
+            amp=False,
+            log_debug_metrics=False,
+            host_type='itself',
+            training=False,
+            itself_lambda_ablation_enabled=True,
+            itself_lambda_ablation_alphas=[0.1, 0.9],
+            itself_lambda_ablation_include_default=True,
+            itself_score_weight_global=0.32,
+        )
+        txt = _TinyLoader([
+            (torch.tensor([1]), torch.tensor([[1.0, 0.0]])),
+            (torch.tensor([2]), torch.tensor([[0.0, 1.0]])),
+        ])
+        img = _TinyLoader([
+            (torch.tensor([1]), torch.tensor([[1.0, 0.0]])),
+            (torch.tensor([2]), torch.tensor([[0.0, 1.0]])),
+        ])
+        evaluator = Evaluator(img, txt, args)
+        _ = evaluator.eval(_ITSELFAblationModel(alpha=0.32))
+
+        rows = evaluator.latest_authority['row_roles']
+        self.assertIn('host-t2i', rows)
+        self.assertIn('global-t2i', rows)
+        self.assertIn('grab-t2i', rows)
+        self.assertIn('global+grab(0.1)-t2i', rows)
+        self.assertIn('global+grab(0.9)-t2i', rows)
+        self.assertIn('global+grab(0.32)-t2i', rows)
+        self.assertEqual(evaluator.latest_metrics['val/top1_row'], 'host-t2i')
 
 
 if __name__ == '__main__':

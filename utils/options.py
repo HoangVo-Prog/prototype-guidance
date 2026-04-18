@@ -296,6 +296,9 @@ def build_parser():
     parser.add_argument('--cross_domain_generalization', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--target_domain', default='RSTPReid')
     parser.add_argument('--retrieval_metrics', nargs='+', default=list(DEFAULT_RETRIEVAL_METRICS))
+    parser.add_argument('--itself_lambda_ablation_enabled', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--itself_lambda_ablation_alphas', type=float, nargs='+', default=None)
+    parser.add_argument('--itself_lambda_ablation_include_default', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--prototype_eval_image_chunk_size', type=int, default=32)
     parser.add_argument('--prototype_eval_text_chunk_size', type=int, default=128)
 
@@ -394,6 +397,28 @@ def _finalize_args(args):
         args.prototype_init_path = None
     if not args.retrieval_metrics:
         args.retrieval_metrics = list(DEFAULT_RETRIEVAL_METRICS)
+    args.itself_lambda_ablation_enabled = bool(getattr(args, 'itself_lambda_ablation_enabled', False))
+    args.itself_lambda_ablation_include_default = bool(
+        getattr(args, 'itself_lambda_ablation_include_default', True)
+    )
+    ablation_alphas = getattr(args, 'itself_lambda_ablation_alphas', None)
+    if ablation_alphas is None:
+        args.itself_lambda_ablation_alphas = []
+    else:
+        normalized_alphas = []
+        seen_alphas = set()
+        for raw_alpha in list(ablation_alphas):
+            alpha = float(raw_alpha)
+            if alpha < 0.0 or alpha > 1.0:
+                raise ValueError(
+                    f'itself_lambda_ablation_alphas must be within [0, 1]. Got {alpha}.'
+                )
+            rounded = round(alpha, 6)
+            if rounded in seen_alphas:
+                continue
+            seen_alphas.add(rounded)
+            normalized_alphas.append(alpha)
+        args.itself_lambda_ablation_alphas = normalized_alphas
     args.host_type = str(getattr(args, 'host_type', 'clip')).lower()
     override_config_data = getattr(args, 'override_config_data', {}) or {}
     model_config = override_config_data.get('model', {}) if isinstance(override_config_data.get('model', {}), dict) else {}
