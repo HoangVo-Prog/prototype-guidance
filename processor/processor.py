@@ -388,6 +388,74 @@ def _do_train_runtime(
         )
         logger.info('Using training.freeze_schedule phases: %s', schedule_preview)
 
+    def _run_validation(eval_epoch: int) -> float:
+        logger.info('Validation Results - Epoch: {}'.format(eval_epoch))
+        eval_loss_metrics = _compute_eval_loss_metrics(
+            model.module if args.distributed else model,
+            eval_loss_loader,
+            args,
+        )
+        eval_loss_total = eval_loss_metrics.get('loss_total')
+        if eval_loss_total is not None:
+            logger.info('Selected eval split loss (proxy-disabled): %.4f', eval_loss_total)
+        if args.distributed:
+            top1_score = evaluator.eval(model.module.eval())
+        else:
+            top1_score = evaluator.eval(model.eval())
+        torch.cuda.empty_cache()
+        if experiment_tracker is not None:
+            validation_metrics = build_validation_metrics(eval_epoch, evaluator=evaluator, loss_metrics=eval_loss_metrics)
+            experiment_tracker.log(validation_metrics)
+        if modular_checkpoint_manager is not None:
+            model_for_group_ckpt = model.module if hasattr(model, 'module') else model
+            authority_context = dict(getattr(evaluator, 'latest_authority', {}) or {})
+            selected_display_row = str(evaluator.latest_metrics.get('val/top1_row', '') or '') or None
+            selected_source_row = str(evaluator.latest_metrics.get('val/top1_source_row', '') or '') or None
+            selected_metric_row = (
+                str(authority_context.get('source_row', '') or '').strip()
+                or selected_source_row
+                or selected_display_row
+            )
+            if (
+                selected_display_row is not None
+                and selected_source_row is not None
+                and selected_display_row != selected_source_row
+            ):
+                logger.warning(
+                    'Checkpoint row provenance mismatch: display_row=%s source_row=%s (authority row uses source).',
+                    selected_display_row,
+                    selected_source_row,
+                )
+            modular_checkpoint_manager.save_latest(
+                model=model_for_group_ckpt,
+                epoch=eval_epoch,
+                global_step=current_steps,
+                metric_value=float(top1_score),
+                metric_row=selected_metric_row,
+                metric_display_row=selected_display_row,
+                metric_source_row=selected_source_row,
+                authority_context=authority_context,
+            )
+            modular_checkpoint_manager.save_best_if_improved(
+                model=model_for_group_ckpt,
+                epoch=eval_epoch,
+                global_step=current_steps,
+                metric_value=float(top1_score),
+                metric_row=selected_metric_row,
+                metric_display_row=selected_display_row,
+                metric_source_row=selected_source_row,
+                authority_context=authority_context,
+            )
+        return float(top1_score)
+
+    # Match the original ITSELF workflow: one validation pass before any updates.
+    if get_rank() == 0 and start_epoch <= 1:
+        top1_epoch0 = _run_validation(eval_epoch=0)
+        if best_top1 < top1_epoch0:
+            best_top1 = top1_epoch0
+            best_epoch = 0
+            arguments['epoch'] = 0
+
     for epoch in range(start_epoch, num_epoch + 1):
         active_phase = get_active_phase(freeze_schedule_phases, epoch)
         if active_phase is not None and active_phase.name != active_freeze_phase_name:
@@ -570,63 +638,7 @@ def _do_train_runtime(
             )
 
         if epoch % eval_period == 0 and get_rank() == 0:
-            logger.info('Validation Results - Epoch: {}'.format(epoch))
-            eval_loss_metrics = _compute_eval_loss_metrics(
-                model.module if args.distributed else model,
-                eval_loss_loader,
-                args,
-            )
-            eval_loss_total = eval_loss_metrics.get('loss_total')
-            if eval_loss_total is not None:
-                logger.info('Selected eval split loss (proxy-disabled): %.4f', eval_loss_total)
-            if args.distributed:
-                top1 = evaluator.eval(model.module.eval())
-            else:
-                top1 = evaluator.eval(model.eval())
-            torch.cuda.empty_cache()
-            if experiment_tracker is not None:
-                validation_metrics = build_validation_metrics(epoch, evaluator=evaluator, loss_metrics=eval_loss_metrics)
-                experiment_tracker.log(validation_metrics)
-            if modular_checkpoint_manager is not None:
-                model_for_group_ckpt = model.module if hasattr(model, 'module') else model
-                authority_context = dict(getattr(evaluator, 'latest_authority', {}) or {})
-                selected_display_row = str(evaluator.latest_metrics.get('val/top1_row', '') or '') or None
-                selected_source_row = str(evaluator.latest_metrics.get('val/top1_source_row', '') or '') or None
-                selected_metric_row = (
-                    str(authority_context.get('source_row', '') or '').strip()
-                    or selected_source_row
-                    or selected_display_row
-                )
-                if (
-                    selected_display_row is not None
-                    and selected_source_row is not None
-                    and selected_display_row != selected_source_row
-                ):
-                    logger.warning(
-                        'Checkpoint row provenance mismatch: display_row=%s source_row=%s (authority row uses source).',
-                        selected_display_row,
-                        selected_source_row,
-                    )
-                modular_checkpoint_manager.save_latest(
-                    model=model_for_group_ckpt,
-                    epoch=epoch,
-                    global_step=current_steps,
-                    metric_value=float(top1),
-                    metric_row=selected_metric_row,
-                    metric_display_row=selected_display_row,
-                    metric_source_row=selected_source_row,
-                    authority_context=authority_context,
-                )
-                modular_checkpoint_manager.save_best_if_improved(
-                    model=model_for_group_ckpt,
-                    epoch=epoch,
-                    global_step=current_steps,
-                    metric_value=float(top1),
-                    metric_row=selected_metric_row,
-                    metric_display_row=selected_display_row,
-                    metric_source_row=selected_source_row,
-                    authority_context=authority_context,
-                )
+            top1 = _run_validation(eval_epoch=epoch)
             if best_top1 < top1:
                 best_top1 = top1
                 best_epoch = epoch

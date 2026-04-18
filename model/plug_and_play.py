@@ -418,6 +418,9 @@ class PASRuntimeModel(nn.Module):
         self.semantic_structure_enabled = bool(
             getattr(args, 'semantic_structure_enabled', getattr(legacy_model, 'semantic_structure_enabled', self.prototype_semantic_enabled))
         )
+        self.semantic_ramp_use_prototype = bool(getattr(args, 'semantic_ramp_use_prototype', False))
+        self.semantic_recompute_start_epoch = max(int(getattr(args, 'semantic_recompute_start_epoch', 0)), 0)
+        self.semantic_recompute_start_step = max(int(getattr(args, 'semantic_recompute_start_step', 0)), 0)
         self.prototype_inference_mode = 'host_only'
         self.host_export_interface_version = HOST_EXPORT_INTERFACE_VERSION
         self.host_component_schema_version = 'host_core_v1'
@@ -529,6 +532,26 @@ class PASRuntimeModel(nn.Module):
         if mode == RUNTIME_MODE_JOINT_TRAINING and not self.training:
             return RUNTIME_MODE_HOST_ONLY
         return mode
+
+    def _semantic_schedule_started(self, *, epoch: Optional[int], current_step: Optional[int]) -> bool:
+        if epoch is not None and int(epoch) < int(self.semantic_recompute_start_epoch):
+            return False
+        if current_step is not None and int(current_step) < int(self.semantic_recompute_start_step):
+            return False
+        return True
+
+    def _prototype_branch_active_for_step(
+        self,
+        *,
+        mode: str,
+        epoch: Optional[int],
+        current_step: Optional[int],
+    ) -> bool:
+        if mode != RUNTIME_MODE_JOINT_TRAINING or self.prototype_plugin is None:
+            return False
+        if not self.semantic_ramp_use_prototype:
+            return True
+        return self._semantic_schedule_started(epoch=epoch, current_step=current_step)
 
     def _policy_for_runtime_mode(self, mode: str) -> HostExportPolicy:
         if mode == RUNTIME_MODE_JOINT_TRAINING:
@@ -795,7 +818,12 @@ class PASRuntimeModel(nn.Module):
         )
         host_losses = host_outputs['losses']
         prototype_outputs = None
-        if mode == RUNTIME_MODE_HOST_ONLY or self.prototype_plugin is None:
+        prototype_active = self._prototype_branch_active_for_step(
+            mode=mode,
+            epoch=epoch,
+            current_step=current_step,
+        )
+        if not prototype_active:
             prototype_outputs = self._empty_prototype_outputs(
                 host_outputs=host_outputs,
                 text_output=text_output,
@@ -826,7 +854,7 @@ class PASRuntimeModel(nn.Module):
             )
 
         prototype_losses = prototype_outputs['losses']
-        metric_losses = prototype_losses if self.prototype_plugin is not None and mode == RUNTIME_MODE_JOINT_TRAINING else host_losses
+        metric_losses = prototype_losses if prototype_active else host_losses
         if mode == RUNTIME_MODE_JOINT_TRAINING:
             loss_total = (self.lambda_host * host_losses['loss_total']) + prototype_losses['loss_total']
         elif mode == RUNTIME_MODE_HOST_ONLY:
@@ -949,6 +977,7 @@ class PASRuntimeModel(nn.Module):
         }
         outputs['debug'].update(prototype_outputs.get('metrics', {}))
         outputs['debug']['runtime_mode'] = mode
+        outputs['debug']['prototype_branch_active'] = float(prototype_active)
         outputs['debug']['prototype_method_role_semantic_structure'] = float(self.prototype_method_role == 'semantic_structure')
         outputs['debug']['prototype_semantic_enabled'] = float(self.prototype_semantic_enabled)
         outputs['debug']['semantic_structure_enabled'] = float(self.semantic_structure_enabled)

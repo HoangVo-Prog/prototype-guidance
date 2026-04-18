@@ -175,7 +175,7 @@ training:
   amp_dtype: fp16
 
 optimizer:
-  type: AdamW          # SGD | Adam | AdamW
+  type: Adam         # SGD | Adam | AdamW
   lr: 1.0e-5           # default LR for "other" params
   weight_decay: 4.0e-5 # default WD for "other" params
 
