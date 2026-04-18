@@ -46,7 +46,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'return_debug_outputs'): 'return_debug_outputs',
 
     ('host', 'type'): 'host_type',
-    ('host', 'freeze_projectors'): 'freeze_host_retrieval',
     ('host', 'itself_loss_names'): 'itself_loss_names',
     ('host', 'itself_only_global'): 'itself_only_global',
     ('host', 'itself_select_ratio'): 'itself_select_ratio',
@@ -403,6 +402,7 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('host', 'lambda1_weight'): 'lambda1_weight',
     ('host', 'lambda2_weight'): 'lambda2_weight',
     ('host', 'use_custom_projector'): 'use_custom_projector',
+    ('host', 'freeze_projectors'): 'freeze_host_projectors',
     ('host', 'enabled'): 'use_host_loss',
     ('host', 'loss_weight'): 'lambda_host',
     ('training', 'freeze_host_projectors'): 'freeze_host_projectors',

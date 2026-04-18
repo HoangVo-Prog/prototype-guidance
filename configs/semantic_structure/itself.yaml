@@ -38,7 +38,6 @@ model:
 
 host:
   type: itself
-  freeze_projectors: true
   itself_loss_names: tal+cid
   itself_only_global: false
   itself_select_ratio: 0.4
