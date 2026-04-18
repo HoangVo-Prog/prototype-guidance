@@ -169,10 +169,14 @@ training:
   num_instance: 2
   num_workers: 4  
   training: true
+  freeze_host_backbone: false
+  freeze_host_retrieval: false
+  freeze_fusion: false
+  freeze_prototype_bank: false
+  freeze_prototype_projector: false
+  freeze_routing: false
   freeze_image_backbone: false
   freeze_text_backbone: false
-  freeze_host_projectors: false
-  freeze_prototype_side: true
   grad_clip: 0.0
   amp: false
   amp_dtype: fp16
