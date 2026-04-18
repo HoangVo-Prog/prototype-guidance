@@ -72,7 +72,7 @@ prototype:
   contextualization_residual: false
 
   bank_source: recomputed_kmeans
-  use_contextualized_for_routing: true
+  use_base_for_semantic_targets: true
 
   normalize_for_self_interaction: true
   normalize_for_routing: true

@@ -56,7 +56,7 @@ prototype:
   bank_source: recomputed_kmeans
   contextualization_enabled: true
   contextualization_residual: true
-  use_contextualized_for_routing: true
+  use_base_for_semantic_targets: true
 
 semantic_structure:
   enabled: true

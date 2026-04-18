@@ -46,7 +46,7 @@ class PrototypeConditionedTextHead(nn.Module):
         prototype_semantic_enabled: bool = False,
         prototype_recompute_enabled: bool = False,
         prototype_bank_source: str = 'learnable_legacy',
-        prototype_use_contextualized_for_routing: bool = True,
+        prototype_use_base_for_semantic_targets: bool = True,
         semantic_structure_enabled: bool = False,
         semantic_feature_space: str = 'prototype_projected',
         semantic_pbt_enabled: bool = True,
@@ -153,7 +153,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 f'Unsupported prototype_bank_source={prototype_bank_source!r}. '
                 'Allowed values: [\"learnable_legacy\", \"recomputed_kmeans\"].'
             )
-        self.prototype_use_contextualized_for_routing = bool(prototype_use_contextualized_for_routing)
+        self.prototype_use_base_for_semantic_targets = bool(prototype_use_base_for_semantic_targets)
         self.semantic_feature_space = str(semantic_feature_space).lower()
         self.semantic_pbt_enabled = bool(semantic_pbt_enabled)
         self.semantic_soft_target_enabled = bool(semantic_soft_target_enabled)
@@ -741,7 +741,7 @@ class PrototypeConditionedTextHead(nn.Module):
             base_prototypes,
             return_debug=True,
         )
-        routing_prototypes = contextualized if self.prototype_use_contextualized_for_routing else base_prototypes
+        routing_prototypes = contextualized
 
         outputs = {
             'legacy_prototypes': legacy_prototypes,
@@ -1347,7 +1347,11 @@ class PrototypeConditionedTextHead(nn.Module):
                 image_chunk_size=image_outputs['image_projected'].size(0),
                 text_chunk_size=token_ids.size(0),
             )
-        semantic_target_prototypes = context['base_prototypes']
+        semantic_target_prototypes = (
+            context['base_prototypes']
+            if self.prototype_use_base_for_semantic_targets
+            else context['contextualized_prototypes']
+        )
         semantic_loss_scale = self._semantic_loss_scale(epoch=epoch, current_step=current_step)
         loss_outputs = self.losses(
             image_outputs['image_projected'],
