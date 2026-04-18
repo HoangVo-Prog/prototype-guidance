@@ -73,7 +73,15 @@ def _use_original_itself_stage0_optimizer(args, model) -> bool:
     return should_use_original_itself_runtime(args)
 
 
-def _itself_stage0_group_spec(name: str, base_lr: float, base_weight_decay: float, lr_factor: float, bias_lr_factor: float, weight_decay_bias: float):
+def _itself_stage0_group_spec(
+    name: str,
+    base_lr: float,
+    base_weight_decay: float,
+    lr_factor: float,
+    bias_lr_factor: float,
+    weight_decay_bias: float,
+    grab_embedding_lr: float = 1e-3,
+):
     lr = base_lr
     weight_decay = base_weight_decay
     label = 'base'
@@ -89,13 +97,54 @@ def _itself_stage0_group_spec(name: str, base_lr: float, base_weight_decay: floa
         lr = base_lr * lr_factor
         label = 'classifier_bias' if 'bias' in name else 'classifier'
     if 'visul_emb_layer' in name or 'visual_embedding_layer' in name:
-        lr = base_lr * lr_factor
+        lr = float(grab_embedding_lr)
         label = 'visual_embedding_bias' if 'bias' in name else 'visual_embedding'
     if 'texual_emb_layer' in name or 'textual_embedding_layer' in name:
-        lr = base_lr * lr_factor
+        lr = float(grab_embedding_lr)
         label = 'textual_embedding_bias' if 'bias' in name else 'textual_embedding'
 
     return label, lr, weight_decay
+
+
+def _should_apply_itself_host_projector_lr_policy(args, group_name: str) -> bool:
+    return (
+        str(group_name) == 'host_projectors'
+        and str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
+    )
+
+
+def _build_itself_host_projector_param_groups(args, group_name: str, named_params):
+    base_lr = _group_lr(args, group_name)
+    base_weight_decay = _group_weight_decay(args, group_name)
+    lr_factor = float(getattr(args, 'lr_factor', 5.0))
+    bias_lr_factor = float(getattr(args, 'bias_lr_factor', 2.0))
+    weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))
+    grab_embedding_lr = float(getattr(args, 'itself_grab_embedding_lr', 1e-3))
+
+    grouped_params = {}
+    for name, parameter in named_params:
+        _, lr, weight_decay = _itself_stage0_group_spec(
+            name=name,
+            base_lr=base_lr,
+            base_weight_decay=base_weight_decay,
+            lr_factor=lr_factor,
+            bias_lr_factor=bias_lr_factor,
+            weight_decay_bias=weight_decay_bias,
+            grab_embedding_lr=grab_embedding_lr,
+        )
+        key = (float(lr), float(weight_decay))
+        bucket = grouped_params.setdefault(key, [])
+        bucket.append(parameter)
+
+    param_groups = []
+    for (lr, weight_decay), parameters in grouped_params.items():
+        param_groups.append({
+            'params': parameters,
+            'lr': lr,
+            'weight_decay': weight_decay,
+            'name': group_name,
+        })
+    return param_groups
 
 
 def _validate_param_group_assignment(model, named_group_entries):
@@ -183,13 +232,25 @@ def build_optimizer(args, model):
     for group_name, named_params in named_groups.items():
         if not named_params:
             continue
+        if _should_apply_itself_host_projector_lr_policy(args, group_name):
+            param_groups.extend(
+                _build_itself_host_projector_param_groups(
+                    args=args,
+                    group_name=group_name,
+                    named_params=named_params,
+                )
+            )
+            continue
+
         parameters = [parameter for _, parameter in named_params]
-        param_groups.append({
-            'params': parameters,
-            'lr': _group_lr(args, group_name),
-            'weight_decay': _group_weight_decay(args, group_name),
-            'name': group_name,
-        })
+        param_groups.append(
+            {
+                'params': parameters,
+                'lr': _group_lr(args, group_name),
+                'weight_decay': _group_weight_decay(args, group_name),
+                'name': group_name,
+            }
+        )
 
     optimizer_eps = float(getattr(args, 'optimizer_eps', 1e-8))
     if args.optimizer == 'SGD':
