@@ -180,6 +180,13 @@ optimizer:
   lr_host_projectors: 1.0e-5
   lr_image_backbone: 1.0e-5
   lr_text_backbone: 1.0e-5
+  lr_prototype_bank: 1e-4
+  lr_prototype_projector: 1e-4
+  lr_prototype_routing: 5e-5
+  lr_prototype_pooling: 5e-5
+  lr_host_projectors: 1e-5
+  lr_class_proxies: 1e-5
+
   weight_decay: 4.0e-5
   weight_decay_host_projectors: 4.0e-5
   weight_decay_image_backbone: 4.0e-5
