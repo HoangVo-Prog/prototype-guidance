@@ -174,11 +174,7 @@ def build_parser():
     parser.add_argument('--prototype_contextualization_type', type=str, default='self_attention')
     parser.add_argument('--prototype_contextualization_residual', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--prototype_bank_source', type=str, default='learnable_legacy')
-    parser.add_argument('--prototype_contextualization_mode', type=str, default='legacy')
-    parser.add_argument('--prototype_contextualization_residual_alpha', type=float, default=1.0)
-    parser.add_argument('--prototype_contextualization_detach_base', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--prototype_use_contextualized_for_routing', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--prototype_use_base_for_semantic_targets', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--normalize_for_self_interaction', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--normalize_for_routing', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--semantic_structure_enabled', type=_str2bool, nargs='?', const=True, default=None)
@@ -481,24 +477,8 @@ def _finalize_args(args):
     args.prototype_bank_source = str(getattr(args, 'prototype_bank_source', 'learnable_legacy')).lower()
     if args.prototype_bank_source in {'', 'auto'}:
         args.prototype_bank_source = 'recomputed_kmeans' if semantic_mode_selected else 'learnable_legacy'
-    args.prototype_contextualization_mode = str(getattr(args, 'prototype_contextualization_mode', 'legacy')).lower()
-    contextualization_mode_explicit = (
-        ('prototype_contextualization_mode' in cli_dests)
-        or _has_override_path('prototype', 'contextualization_mode')
-    )
-    if semantic_mode_selected and not contextualization_mode_explicit and args.prototype_contextualization_mode in {'legacy', ''}:
-        args.prototype_contextualization_mode = 'residual_attention'
-    args.prototype_contextualization_residual_alpha = float(
-        getattr(args, 'prototype_contextualization_residual_alpha', 1.0)
-    )
-    args.prototype_contextualization_detach_base = bool(
-        getattr(args, 'prototype_contextualization_detach_base', False)
-    )
     args.prototype_use_contextualized_for_routing = bool(
         getattr(args, 'prototype_use_contextualized_for_routing', True)
-    )
-    args.prototype_use_base_for_semantic_targets = bool(
-        getattr(args, 'prototype_use_base_for_semantic_targets', True)
     )
     args.semantic_feature_space = str(getattr(args, 'semantic_feature_space', 'prototype_projected')).lower()
     args.semantic_pbt_enabled = bool(getattr(args, 'semantic_pbt_enabled', True))

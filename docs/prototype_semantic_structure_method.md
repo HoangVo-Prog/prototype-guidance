@@ -25,7 +25,8 @@ model:
 
 prototype:
   bank_source: learnable_legacy
-  contextualization_mode: legacy
+  contextualization_enabled: true
+  contextualization_residual: true
 
 semantic_structure:
   enabled: false
@@ -53,11 +54,9 @@ model:
 
 prototype:
   bank_source: recomputed_kmeans
-  contextualization_mode: residual_attention
-  contextualization_residual_alpha: 0.1
-  contextualization_detach_base: false
+  contextualization_enabled: true
+  contextualization_residual: true
   use_contextualized_for_routing: true
-  use_base_for_semantic_targets: true
 
 semantic_structure:
   enabled: true

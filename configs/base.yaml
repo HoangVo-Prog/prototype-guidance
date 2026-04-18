@@ -82,11 +82,7 @@ prototype:
   contextualization_type: none
   contextualization_residual: false
   bank_source: learnable_legacy
-  contextualization_mode: legacy
-  contextualization_residual_alpha: 1.0
-  contextualization_detach_base: false
   use_contextualized_for_routing: true
-  use_base_for_semantic_targets: true
   normalize_for_self_interaction: true
   normalize_for_routing: true
   dead_prototype_threshold: 0.005

@@ -57,11 +57,7 @@ def build_prototype_head(
         getattr(args, 'prototype_recompute_enabled', prototype_semantic_enabled and prototype_method_role == 'semantic_structure')
     )
     prototype_bank_source = str(getattr(args, 'prototype_bank_source', 'learnable_legacy')).lower()
-    prototype_contextualization_mode = str(getattr(args, 'prototype_contextualization_mode', 'legacy')).lower()
-    prototype_contextualization_residual_alpha = float(getattr(args, 'prototype_contextualization_residual_alpha', 1.0))
-    prototype_contextualization_detach_base = bool(getattr(args, 'prototype_contextualization_detach_base', False))
     prototype_use_contextualized_for_routing = bool(getattr(args, 'prototype_use_contextualized_for_routing', True))
-    prototype_use_base_for_semantic_targets = bool(getattr(args, 'prototype_use_base_for_semantic_targets', True))
     semantic_feature_space = str(getattr(args, 'semantic_feature_space', 'prototype_projected')).lower()
     semantic_pbt_enabled = bool(getattr(args, 'semantic_pbt_enabled', True))
     semantic_soft_target_enabled = bool(getattr(args, 'semantic_soft_target_enabled', True))
@@ -190,11 +186,7 @@ def build_prototype_head(
         prototype_semantic_enabled=prototype_semantic_enabled,
         prototype_recompute_enabled=prototype_recompute_enabled,
         prototype_bank_source=prototype_bank_source,
-        prototype_contextualization_mode=prototype_contextualization_mode,
-        prototype_contextualization_residual_alpha=prototype_contextualization_residual_alpha,
-        prototype_contextualization_detach_base=prototype_contextualization_detach_base,
         prototype_use_contextualized_for_routing=prototype_use_contextualized_for_routing,
-        prototype_use_base_for_semantic_targets=prototype_use_base_for_semantic_targets,
         semantic_structure_enabled=semantic_structure_enabled,
         semantic_feature_space=semantic_feature_space,
         semantic_pbt_enabled=semantic_pbt_enabled,

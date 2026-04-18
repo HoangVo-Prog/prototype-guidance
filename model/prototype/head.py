@@ -46,11 +46,7 @@ class PrototypeConditionedTextHead(nn.Module):
         prototype_semantic_enabled: bool = False,
         prototype_recompute_enabled: bool = False,
         prototype_bank_source: str = 'learnable_legacy',
-        prototype_contextualization_mode: str = 'legacy',
-        prototype_contextualization_residual_alpha: float = 1.0,
-        prototype_contextualization_detach_base: bool = False,
         prototype_use_contextualized_for_routing: bool = True,
-        prototype_use_base_for_semantic_targets: bool = True,
         semantic_structure_enabled: bool = False,
         semantic_feature_space: str = 'prototype_projected',
         semantic_pbt_enabled: bool = True,
@@ -157,16 +153,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 f'Unsupported prototype_bank_source={prototype_bank_source!r}. '
                 'Allowed values: [\"learnable_legacy\", \"recomputed_kmeans\"].'
             )
-        self.prototype_contextualization_mode = str(prototype_contextualization_mode).lower()
-        if self.prototype_contextualization_mode not in {'legacy', 'none', 'residual_attention'}:
-            raise ValueError(
-                f'Unsupported prototype_contextualization_mode={prototype_contextualization_mode!r}. '
-                'Allowed values: [\"legacy\", \"none\", \"residual_attention\"].'
-            )
-        self.prototype_contextualization_residual_alpha = float(prototype_contextualization_residual_alpha)
-        self.prototype_contextualization_detach_base = bool(prototype_contextualization_detach_base)
         self.prototype_use_contextualized_for_routing = bool(prototype_use_contextualized_for_routing)
-        self.prototype_use_base_for_semantic_targets = bool(prototype_use_base_for_semantic_targets)
         self.semantic_feature_space = str(semantic_feature_space).lower()
         self.semantic_pbt_enabled = bool(semantic_pbt_enabled)
         self.semantic_soft_target_enabled = bool(semantic_soft_target_enabled)
@@ -719,46 +706,8 @@ class PrototypeConditionedTextHead(nn.Module):
         *,
         return_debug: bool,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        context_debug: Dict[str, torch.Tensor] = {}
-        if self.prototype_contextualization_mode == 'none':
-            identity = torch.eye(base_prototypes.size(0), device=base_prototypes.device, dtype=base_prototypes.dtype)
-            context_debug = {
-                'contextualized_prototypes': base_prototypes,
-                'prototype_similarity': identity,
-                'contextualization_weights': identity,
-                'contextualization_enabled': base_prototypes.new_zeros(()),
-                'contextualization_type': 'none',
-                'contextualization_residual': base_prototypes.new_zeros(()),
-                'contextualization_num_layers': base_prototypes.new_zeros(()),
-            }
-            return base_prototypes, context_debug
-
-        contextualization_input = base_prototypes.detach() if self.prototype_contextualization_detach_base else base_prototypes
-        if self.prototype_contextualization_mode == 'legacy':
-            contextualized_raw, context_debug = self.contextualizer(contextualization_input, return_debug=True)
-        else:
-            normalized = F.normalize(contextualization_input, dim=-1)
-            similarity = (normalized @ normalized.t()) / (contextualization_input.size(-1) ** 0.5)
-            weights = torch.softmax(similarity, dim=-1)
-            updated = weights @ contextualization_input
-            contextualized_raw = contextualization_input + updated
-            context_debug = {
-                'contextualized_prototypes': contextualized_raw,
-                'prototype_similarity': similarity,
-                'contextualization_weights': weights,
-                'contextualization_enabled': base_prototypes.new_ones(()),
-                'contextualization_type': 'residual_attention',
-                'contextualization_residual': base_prototypes.new_ones(()),
-                'contextualization_num_layers': base_prototypes.new_ones(()),
-                'prototype_contextualization_entropy': (-(weights * weights.clamp_min(1e-12).log()).sum(dim=-1).mean()).detach(),
-            }
-
-        alpha = float(self.prototype_contextualization_residual_alpha)
-        if alpha != 1.0:
-            contextualized = base_prototypes + (contextualized_raw - base_prototypes) * alpha
-        else:
-            contextualized = contextualized_raw
-        context_debug['contextualized_prototypes'] = contextualized
+        del return_debug
+        contextualized, context_debug = self.contextualizer(base_prototypes, return_debug=True)
         return contextualized, context_debug
 
     def get_prototype_context(
@@ -1398,11 +1347,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 image_chunk_size=image_outputs['image_projected'].size(0),
                 text_chunk_size=token_ids.size(0),
             )
-        semantic_target_prototypes = (
-            context['base_prototypes']
-            if self.prototype_use_base_for_semantic_targets
-            else context['contextualized_prototypes']
-        )
+        semantic_target_prototypes = context['base_prototypes']
         semantic_loss_scale = self._semantic_loss_scale(epoch=epoch, current_step=current_step)
         loss_outputs = self.losses(
             image_outputs['image_projected'],
