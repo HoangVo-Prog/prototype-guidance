@@ -101,8 +101,9 @@ semantic_structure:
   loss_ramp_start_step: 0
   loss_ramp_epochs: 0
   loss_ramp_steps: 0
-  ramp_loss_diag: false
+  ramp_loss_diag: true
   ramp_loss_semantic_pbt: true
+  ramp_use_prototype: true
 
 objectives:
   objectives:

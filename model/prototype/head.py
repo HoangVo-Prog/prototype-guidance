@@ -68,6 +68,7 @@ class PrototypeConditionedTextHead(nn.Module):
         semantic_loss_ramp_steps: int = 0,
         semantic_ramp_loss_diag: bool = False,
         semantic_ramp_loss_semantic_pbt: bool = True,
+        semantic_ramp_use_prototype: bool = False,
         token_scoring_type: str = 'cosine',
         token_temperature: float = 0.07,
         token_policy: str = 'content_only',
@@ -186,6 +187,7 @@ class PrototypeConditionedTextHead(nn.Module):
         self.semantic_loss_ramp_steps = max(int(semantic_loss_ramp_steps), 0)
         self.semantic_ramp_loss_diag = bool(semantic_ramp_loss_diag)
         self.semantic_ramp_loss_semantic_pbt = bool(semantic_ramp_loss_semantic_pbt)
+        self.semantic_ramp_use_prototype = bool(semantic_ramp_use_prototype)
         self._semantic_recompute_count = 0
         self._semantic_last_recompute_epoch: Optional[int] = None
         self._semantic_last_recompute_step: Optional[int] = None
@@ -567,6 +569,85 @@ class PrototypeConditionedTextHead(nn.Module):
             step_progress = (float(current_step) - float(self.semantic_loss_ramp_start_step) + 1.0) / float(self.semantic_loss_ramp_steps)
             scale = min(scale, max(0.0, min(step_progress, 1.0)))
         return float(max(scale, 0.0))
+
+    def _zero_loss_outputs(self, reference: torch.Tensor) -> Dict[str, torch.Tensor]:
+        zero = reference.new_zeros(())
+        return {
+            'loss_total': zero,
+            'loss_proxy': zero,
+            'loss_proxy_image': zero,
+            'loss_proxy_text': zero,
+            'loss_proxy_text_exact': zero,
+            'loss_ret': zero,
+            'loss_semantic_pbt': zero,
+            'loss_align': zero,
+            'loss_dir': zero,
+            'loss_gap': zero,
+            'loss_sup': zero,
+            'loss_diag': zero,
+            'loss_support': zero,
+            'loss_diversity': zero,
+            'loss_balance': zero,
+            'loss_proxy_image_weighted': zero,
+            'loss_proxy_text_weighted': zero,
+            'loss_proxy_text_exact_weighted': zero,
+            'loss_proxy_weighted': zero,
+            'loss_ret_weighted': zero,
+            'loss_semantic_pbt_weighted': zero,
+            'loss_weight_ret': zero,
+            'loss_weight_ret_weighted': zero,
+            'loss_align_weighted': zero,
+            'loss_dir_weighted': zero,
+            'loss_gap_weighted': zero,
+            'loss_sup_weighted': zero,
+            'loss_diag_weighted': zero,
+            'loss_support_weighted': zero,
+            'loss_diversity_weighted': zero,
+            'loss_balance_weighted': zero,
+            'lambda_proxy': zero,
+            'lambda_proxy_image': zero,
+            'lambda_proxy_text': zero,
+            'lambda_proxy_text_exact': zero,
+            'use_loss_proxy_image': zero,
+            'use_loss_proxy_text': zero,
+            'use_loss_proxy_text_exact': zero,
+            'use_loss_ret': zero,
+            'lambda_ret': zero,
+            'use_loss_semantic_pbt': zero,
+            'lambda_semantic_pbt': zero,
+            'prototype_loss_scale': zero,
+            'prototype_loss_ramp_scale': zero,
+            'loss_diag_scale': zero,
+            'loss_semantic_pbt_scale': zero,
+            'semantic_loss_scale': zero,
+            'use_loss_weight_ret': zero,
+            'lambda_weight_ret': zero,
+            'weight_ret_margin_delta': zero,
+            'weight_ret_tau': zero,
+            'weight_ret_detach_host': zero,
+            'weight_ret_normalize_mean_one': zero,
+            'use_loss_align': zero,
+            'lambda_align': zero,
+            'use_loss_dir': zero,
+            'lambda_dir': zero,
+            'use_loss_gap': zero,
+            'lambda_gap': zero,
+            'use_loss_sup': zero,
+            'lambda_sup': zero,
+            'use_loss_diag': zero,
+            'lambda_diag': zero,
+            'use_loss_support': zero,
+            'lambda_support': zero,
+            'lambda_div': zero,
+            'lambda_bal': zero,
+            'prototype_gap_margin': zero,
+            'prototype_support_target': zero,
+            'proxy_temperature': zero,
+            'diag_temperature': zero,
+            'retrieval_temperature': zero,
+            'logit_scale': zero,
+            'debug_metrics': {},
+        }
 
     # Backward-compatible alias kept while downstream references migrate.
     def _semantic_loss_scale(self, *, epoch: Optional[int], current_step: Optional[int]) -> float:
@@ -1368,8 +1449,15 @@ class PrototypeConditionedTextHead(nn.Module):
                 'semantic_empty_cluster_count': semantic_empty_clusters.detach(),
             }
         )
+        prototype_usage_enabled = True
+        if self.semantic_ramp_use_prototype and self._semantic_mode_enabled():
+            prototype_usage_enabled = self._semantic_schedule_started(epoch=epoch, current_step=current_step)
+        scalar_metrics['prototype_ramp_use_enabled'] = image_outputs['image_projected'].new_tensor(
+            float(prototype_usage_enabled)
+        ).detach()
+
         surrogate_pairwise_logits = None
-        if self.losses.use_loss_ret:
+        if prototype_usage_enabled and self.losses.use_loss_ret:
             surrogate_pairwise_logits = self.compute_surrogate_pairwise_logits(
                 image_projected=image_outputs['image_projected'],
                 routing_weights=image_outputs['routing_weights'],
@@ -1398,24 +1486,30 @@ class PrototypeConditionedTextHead(nn.Module):
         ramp_scale = self._prototype_loss_scale(epoch=epoch, current_step=current_step)
         diag_loss_scale = ramp_scale if self.semantic_ramp_loss_diag else 1.0
         semantic_pbt_loss_scale = ramp_scale if self.semantic_ramp_loss_semantic_pbt else 1.0
-        loss_outputs = self.losses(
-            image_outputs['image_projected'],
-            surrogate_text_projected,
-            exact_outputs['text_projected'],
-            pids=pids,
-            prototypes=context['base_prototypes'],
-            routing_weights=image_outputs['routing_weights'],
-            surrogate_pairwise_logits=surrogate_pairwise_logits,
-            host_pairwise_logits=host_pairwise_logits,
-            semantic_image_student_embeddings=image_outputs['image_projected'],
-            semantic_text_student_embeddings=surrogate_text_projected,
-            semantic_text_teacher_embeddings=exact_outputs['text_projected'],
-            semantic_base_prototypes=semantic_target_features,
-            diag_loss_scale=diag_loss_scale,
-            semantic_pbt_loss_scale=semantic_pbt_loss_scale,
-            return_debug=return_debug,
-            disable_proxy_losses=disable_proxy_losses,
-        )
+        if not prototype_usage_enabled:
+            ramp_scale = 0.0
+            diag_loss_scale = 0.0
+            semantic_pbt_loss_scale = 0.0
+            loss_outputs = self._zero_loss_outputs(image_outputs['image_projected'])
+        else:
+            loss_outputs = self.losses(
+                image_outputs['image_projected'],
+                surrogate_text_projected,
+                exact_outputs['text_projected'],
+                pids=pids,
+                prototypes=context['base_prototypes'],
+                routing_weights=image_outputs['routing_weights'],
+                surrogate_pairwise_logits=surrogate_pairwise_logits,
+                host_pairwise_logits=host_pairwise_logits,
+                semantic_image_student_embeddings=image_outputs['image_projected'],
+                semantic_text_student_embeddings=surrogate_text_projected,
+                semantic_text_teacher_embeddings=exact_outputs['text_projected'],
+                semantic_base_prototypes=semantic_target_features,
+                diag_loss_scale=diag_loss_scale,
+                semantic_pbt_loss_scale=semantic_pbt_loss_scale,
+                return_debug=return_debug,
+                disable_proxy_losses=disable_proxy_losses,
+            )
         if collect_debug_diagnostics:
             scalar_metrics.update(loss_outputs.get('debug_metrics', {}))
 
