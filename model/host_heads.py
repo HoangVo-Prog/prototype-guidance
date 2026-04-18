@@ -440,6 +440,7 @@ class ITSELFHostHead(nn.Module):
                 image_output.projected_tokens.float(),
                 attention.float(),
                 current_step=current_step if self.modify_k else None,
+                total_steps=total_steps if self.modify_k else None,
             )
         if return_debug:
             outputs['debug'] = {
@@ -470,6 +471,7 @@ class ITSELFHostHead(nn.Module):
                 token_ids.long(),
                 attention.float(),
                 current_step=current_step if self.modify_k else None,
+                total_steps=total_steps if self.modify_k else None,
             )
         if return_debug:
             outputs['debug'] = {
