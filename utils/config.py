@@ -945,6 +945,7 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         use_prototype_branch = True
     use_prototype_bank = bool(flat.get('use_prototype_bank', use_prototype_branch))
     use_image_conditioned_pooling = bool(flat.get('use_image_conditioned_pooling', use_prototype_branch))
+    runtime_mode = str(flat.get('runtime_mode', 'auto')).lower()
     retrieval_mode = str(flat.get('retrieval_mode', 'surrogate_i2t')).lower()
     prototype_method_role = str(flat.get('prototype_method_role', 'retrieval_branch')).lower()
     semantic_target_temperature = float(flat.get('semantic_target_temperature', 0.01))
@@ -1005,6 +1006,12 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         raise ValueError('semantic_structure.min_cluster_count_for_pbt must be positive.')
     if use_loss_semantic_pbt and not use_prototype_branch:
         raise ValueError('loss.use_loss_semantic_pbt requires model.use_prototype_branch=true.')
+    if use_loss_semantic_pbt and runtime_mode == 'host_only':
+        raise ValueError(
+            'loss.use_loss_semantic_pbt is incompatible with model.runtime_mode=host_only because '
+            'host-only runtime disables prototype loss computation. '
+            'Use model.runtime_mode=joint_training or prototype_only.'
+        )
 
     training_config = config_data.get('training', {})
     if isinstance(training_config, dict) and 'freeze_schedule' in training_config:
@@ -1048,6 +1055,7 @@ def validate_runtime_args_namespace(args) -> None:
         use_prototype_branch = True
     use_prototype_bank = bool(getattr(args, 'use_prototype_bank', use_prototype_branch))
     use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', use_prototype_branch))
+    runtime_mode = str(getattr(args, 'runtime_mode', 'auto')).lower()
     retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
     prototype_method_role = str(getattr(args, 'prototype_method_role', 'retrieval_branch')).lower()
     semantic_target_temperature = float(getattr(args, 'semantic_target_temperature', 0.01))
@@ -1106,6 +1114,11 @@ def validate_runtime_args_namespace(args) -> None:
         raise ValueError('semantic_min_cluster_count_for_pbt must be positive.')
     if use_loss_semantic_pbt and not use_prototype_branch:
         raise ValueError('use_loss_semantic_pbt requires use_prototype_branch=true.')
+    if use_loss_semantic_pbt and runtime_mode == 'host_only':
+        raise ValueError(
+            'use_loss_semantic_pbt is incompatible with runtime_mode=host_only because host-only runtime disables '
+            'prototype loss computation. Use runtime_mode=joint_training or prototype_only.'
+        )
 
 
 
