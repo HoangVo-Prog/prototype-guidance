@@ -87,7 +87,7 @@ semantic_structure:
   soft_target_enabled: true
   target_temperature: 0.01
   pred_temperature: 0.07
-
+  
   recompute_schedule: epoch
   recompute_interval: 1
   min_cluster_count_for_pbt: 1.0

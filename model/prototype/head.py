@@ -710,6 +710,26 @@ class PrototypeConditionedTextHead(nn.Module):
         contextualized, context_debug = self.contextualizer(base_prototypes, return_debug=True)
         return contextualized, context_debug
 
+    def _prepare_semantic_anchor_features(
+        self,
+        anchor_prototypes: torch.Tensor,
+        *,
+        target_feature_dim: int,
+    ) -> Tuple[torch.Tensor, str]:
+        if anchor_prototypes.ndim != 2:
+            return anchor_prototypes, 'invalid_rank'
+        if anchor_prototypes.size(-1) == target_feature_dim and self.semantic_feature_space != 'prototype_projected':
+            return anchor_prototypes, 'prototype_native'
+
+        if self.semantic_feature_space == 'prototype_projected' or anchor_prototypes.size(-1) != target_feature_dim:
+            image_projected = self.image_projector(anchor_prototypes, return_debug=False)
+            text_projected = self.text_projector(anchor_prototypes, return_debug=False)
+            projected = F.normalize(0.5 * (image_projected + text_projected), dim=-1)
+            source = 'prototype_projected' if self.semantic_feature_space == 'prototype_projected' else 'auto_projected_dim_fix'
+            return projected, source
+
+        return anchor_prototypes, 'prototype_native'
+
     def get_prototype_context(
         self,
         return_debug: bool = False,
@@ -1352,6 +1372,19 @@ class PrototypeConditionedTextHead(nn.Module):
             if self.prototype_use_base_for_semantic_targets
             else context['contextualized_prototypes']
         )
+        semantic_target_features, semantic_anchor_feature_source = self._prepare_semantic_anchor_features(
+            semantic_target_prototypes,
+            target_feature_dim=exact_outputs['text_projected'].size(-1),
+        )
+        scalar_metrics.update(
+            {
+                'semantic_anchor_input_dim': semantic_target_prototypes.new_tensor(float(semantic_target_prototypes.size(-1))).detach(),
+                'semantic_anchor_feature_dim': semantic_target_features.new_tensor(float(semantic_target_features.size(-1))).detach(),
+                'semantic_anchor_space_projected': semantic_target_features.new_tensor(
+                    float(semantic_anchor_feature_source in {'prototype_projected', 'auto_projected_dim_fix'})
+                ).detach(),
+            }
+        )
         semantic_loss_scale = self._semantic_loss_scale(epoch=epoch, current_step=current_step)
         loss_outputs = self.losses(
             image_outputs['image_projected'],
@@ -1365,7 +1398,7 @@ class PrototypeConditionedTextHead(nn.Module):
             semantic_image_student_embeddings=image_outputs['image_projected'],
             semantic_text_student_embeddings=surrogate_text_projected,
             semantic_text_teacher_embeddings=exact_outputs['text_projected'],
-            semantic_base_prototypes=semantic_target_prototypes,
+            semantic_base_prototypes=semantic_target_features,
             semantic_loss_scale=semantic_loss_scale,
             return_debug=return_debug,
             disable_proxy_losses=disable_proxy_losses,
