@@ -7,10 +7,6 @@ model:
   runtime_mode: host_only
   variant: itself_semantic_structure
   temperature: 0.07
-  use_prototype_branch: true
-  use_prototype_bank: true
-  use_image_conditioned_pooling: true
-  return_debug_outputs: false
 
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
@@ -29,9 +25,10 @@ model:
   stride_size: 16
   text_length: 77
   vocab_size: 49408
-  use_prototype_branch: false
-  use_prototype_bank: false
-  use_image_conditioned_pooling: false
+
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
   return_debug_outputs: false
 
   prototype_method_role: semantic_structure

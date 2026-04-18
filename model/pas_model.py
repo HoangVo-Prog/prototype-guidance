@@ -257,8 +257,7 @@ class PASModel(nn.Module):
                     'model.training_mode=vanilla_clip does not support prototype/auxiliary losses. '
                     f'Disable: {enabled_incompatible}.'
                 )
-        elif self.retrieval_mode == 'clip_bidirectional':
-            raise ValueError('loss.retrieval_mode=clip_bidirectional is only supported when model.training_mode=vanilla_clip.')
+
         if self.use_prototype_branch and self.use_prototype_bank and not self.use_image_conditioned_pooling:
             raise ValueError(
                 'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
