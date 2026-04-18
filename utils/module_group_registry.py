@@ -62,10 +62,6 @@ LOGICAL_MODULE_GROUP_PREFIXES: Dict[str, Tuple[str, ...]] = {
         'prototype_plugin.prototype_head.token_scorer',
         'prototype_plugin.prototype_head.token_mask_builder',
         'prototype_plugin.prototype_head.aggregator',
-        'composer.fusion_module',
-        'composer.host_log_scale',
-        'composer.prototype_log_scale',
-        'composer.log_temperature',
     ),
 }
 
@@ -75,7 +71,6 @@ CHECKPOINT_GROUP_MEMBERS: Dict[str, Tuple[str, ...]] = {
     'host': ('host_backbone', 'host_retrieval'),
     'prototype_bank': ('prototype_bank',),
     'prototype_projector': ('prototype_projector',),
-    'fusion': ('fusion',),
 }
 
 CHECKPOINT_GROUPS: Tuple[str, ...] = tuple(CHECKPOINT_GROUP_MEMBERS.keys())

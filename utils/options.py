@@ -25,6 +25,14 @@ LEGACY_RETRIEVAL_FLAGS = {
     '--t2i_ret': 'Text-to-image retrieval over the surrogate score matrix is invalid because surrogate text embeddings depend on the image query.',
     '--freeze_prototype': 'Legacy --freeze_prototype was replaced by explicit module freeze flags (freeze_prototype_bank/freeze_prototype_projector/freeze_routing/freeze_fusion).',
     '--freeze_proxy': 'Legacy --freeze_proxy was replaced by explicit module freeze flags (freeze_prototype_bank/freeze_prototype_projector/freeze_routing/freeze_fusion).',
+    '--fusion_enabled': 'Fusion-based retrieval was removed. HostCore is the only retrieval scorer.',
+    '--fusion_lambda_host': 'Fusion-based retrieval was removed. HostCore is the only retrieval scorer.',
+    '--fusion_lambda_prototype': 'Fusion-based retrieval was removed. HostCore is the only retrieval scorer.',
+    '--fusion_coefficient': 'Fusion-based retrieval was removed. HostCore is the only retrieval scorer.',
+    '--fusion_coefficient_source': 'Fusion-based retrieval was removed. HostCore is the only retrieval scorer.',
+    '--composer_calibration_enabled': 'Composer calibration was removed from active runtime semantics.',
+    '--retrieval_scorer': 'evaluation.retrieval_scorer was removed. Retrieval scoring is always exact host-only.',
+    '--prototype_inference_mode': 'prototype_inference_mode was removed. Retrieval inference is always host_only.',
 }
 
 
@@ -59,10 +67,9 @@ def build_parser():
     parser.add_argument('--model_variant', default='pas_v1')
     parser.add_argument('--training_mode', type=str, default='pas')
     parser.add_argument('--runtime_mode', type=str, default='auto')
-    parser.add_argument('--prototype_method_role', type=str, default='retrieval_branch')
+    parser.add_argument('--prototype_method_role', type=str, default='semantic_structure')
     parser.add_argument('--prototype_semantic_enabled', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--prototype_recompute_enabled', type=_str2bool, nargs='?', const=True, default=None)
-    parser.add_argument('--prototype_inference_mode', type=str, default='auto')
     parser.add_argument('--pretrain_choice', default='ViT-B/16')
     parser.add_argument('--image_backbone', default='clip_visual')
     parser.add_argument('--text_backbone', default='clip_text_transformer')
@@ -145,12 +152,6 @@ def build_parser():
     parser.add_argument('--use_prototype_branch', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--use_prototype_bank', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_image_conditioned_pooling', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--fusion_enabled', type=_str2bool, nargs='?', const=True, default=None)
-    parser.add_argument('--fusion_lambda_host', type=float, default=None)
-    parser.add_argument('--fusion_lambda_prototype', type=float, default=None)
-    parser.add_argument('--fusion_coefficient', type=float, default=None)
-    parser.add_argument('--fusion_coefficient_source', type=str, default='fixed')
-    parser.add_argument('--composer_calibration_enabled', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_prototype_contextualization', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--return_debug_outputs', type=_str2bool, nargs='?', const=True, default=False)
 
@@ -297,7 +298,6 @@ def build_parser():
     parser.add_argument('--retrieval_metrics', nargs='+', default=list(DEFAULT_RETRIEVAL_METRICS))
     parser.add_argument('--prototype_eval_image_chunk_size', type=int, default=32)
     parser.add_argument('--prototype_eval_text_chunk_size', type=int, default=128)
-    parser.add_argument('--retrieval_scorer', type=str, default='exact')
 
     parser.add_argument('--use_wandb', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--wandb_project', default='PAS')
@@ -415,10 +415,11 @@ def _finalize_args(args):
     args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
     args.runtime_mode = str(getattr(args, 'runtime_mode', 'auto')).lower()
     args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
-    args.prototype_method_role = str(getattr(args, 'prototype_method_role', 'retrieval_branch')).lower()
-    if args.prototype_method_role not in {'retrieval_branch', 'semantic_structure'}:
+    args.prototype_method_role = str(getattr(args, 'prototype_method_role', 'semantic_structure')).lower()
+    if args.prototype_method_role != 'semantic_structure':
         raise ValueError(
-            f'prototype_method_role must be one of [\"retrieval_branch\", \"semantic_structure\"], got {args.prototype_method_role!r}.'
+            'model.prototype_method_role=retrieval_branch is removed. '
+            'PrototypePlugin is structure-only and retrieval is host-only.'
         )
     config_data = getattr(args, 'config_data', {}) or {}
     training_config = config_data.get('training', {}) if isinstance(config_data.get('training', {}), dict) else {}
@@ -502,37 +503,7 @@ def _finalize_args(args):
     args.semantic_loss_ramp_steps = max(int(getattr(args, 'semantic_loss_ramp_steps', 0)), 0)
     args.semantic_ramp_loss_diag = bool(getattr(args, 'semantic_ramp_loss_diag', False))
     args.semantic_ramp_loss_semantic_pbt = bool(getattr(args, 'semantic_ramp_loss_semantic_pbt', True))
-    args.prototype_inference_mode = str(getattr(args, 'prototype_inference_mode', 'auto')).lower()
-    if args.prototype_inference_mode in {'', 'auto'}:
-        args.prototype_inference_mode = 'host_only' if semantic_mode_selected else 'legacy_fused'
-    if args.prototype_inference_mode == 'fused':
-        args.prototype_inference_mode = 'legacy_fused'
-    if args.fusion_enabled is None:
-        args.fusion_enabled = args.use_prototype_branch
-    args.fusion_enabled = bool(args.fusion_enabled) and args.use_prototype_branch
-    fusion_lambda_host = getattr(args, 'fusion_lambda_host', None)
-    fusion_lambda_prototype = getattr(args, 'fusion_lambda_prototype', None)
-    fusion_coefficient = getattr(args, 'fusion_coefficient', None)
-    if fusion_lambda_host is None and fusion_lambda_prototype is not None:
-        fusion_lambda_host = 1.0 - float(fusion_lambda_prototype)
-    elif fusion_lambda_prototype is None and fusion_lambda_host is not None:
-        fusion_lambda_prototype = 1.0 - float(fusion_lambda_host)
-
-    if fusion_lambda_host is not None or fusion_lambda_prototype is not None:
-        args.fusion_lambda_host = float(fusion_lambda_host)
-        args.fusion_lambda_prototype = float(fusion_lambda_prototype)
-        args.fusion_legacy_coefficient_mode = False
-    elif fusion_coefficient is not None:
-        args.fusion_lambda_host = 1.0
-        args.fusion_lambda_prototype = float(fusion_coefficient)
-        args.fusion_legacy_coefficient_mode = True
-    else:
-        args.fusion_lambda_host = 1.0
-        args.fusion_lambda_prototype = 0.0
-        args.fusion_legacy_coefficient_mode = False
-    if fusion_coefficient is None:
-        args.fusion_coefficient = float(args.fusion_lambda_prototype)
-    args.fusion_eval_subsets = copy.deepcopy(getattr(args, 'fusion_eval_subsets', None))
+    args.prototype_inference_mode = 'host_only'
 
     legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)
     authoritative_contextualization = getattr(args, 'prototype_contextualization_enabled', None)

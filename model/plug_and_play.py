@@ -6,26 +6,18 @@ from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-from .fusion import ResidualScoreFusion
 from .interface_contract import (
-    COMPOSER_SCHEMA_VERSION,
     HOST_EXPORT_INTERFACE_SUPPORTED_VERSIONS,
     HOST_EXPORT_INTERFACE_VERSION,
-    HOST_SCORE_SCHEMA_VERSION,
-    PROTOTYPE_SCORE_SCHEMA_VERSION,
     HostExportPolicy,
     HostPluginInterface,
     build_host_plugin_interface,
 )
 from .interfaces import EncoderOutput
 from .runtime_modes import (
-    RUNTIME_MODE_CALIBRATION_ONLY,
-    RUNTIME_MODE_FUSED_EXTERNAL,
     RUNTIME_MODE_HOST_ONLY,
     RUNTIME_MODE_JOINT_TRAINING,
-    RUNTIME_MODE_PROTOTYPE_ONLY,
     normalize_runtime_mode,
     resolve_runtime_mode_from_args,
 )
@@ -402,102 +394,6 @@ class PrototypePlugin(nn.Module):
         ).float()
 
 
-class Composer(nn.Module):
-    def __init__(self, *, fusion_module: ResidualScoreFusion, args):
-        super().__init__()
-        self.fusion_module = fusion_module
-        self.schema_version = COMPOSER_SCHEMA_VERSION
-        self.expected_host_score_schema_version = HOST_SCORE_SCHEMA_VERSION
-        self.expected_prototype_score_schema_version = PROTOTYPE_SCORE_SCHEMA_VERSION
-        self.calibration_enabled = bool(getattr(args, 'composer_calibration_enabled', True))
-        self.host_log_scale = nn.Parameter(torch.zeros((), dtype=torch.float32))
-        self.prototype_log_scale = nn.Parameter(torch.zeros((), dtype=torch.float32))
-        self.log_temperature = nn.Parameter(torch.zeros((), dtype=torch.float32))
-        self._set_calibration_trainable(False)
-
-    def _set_calibration_trainable(self, trainable: bool) -> None:
-        for parameter in (self.host_log_scale, self.prototype_log_scale, self.log_temperature):
-            parameter.requires_grad = bool(trainable)
-
-    def set_calibration_trainable(self, trainable: bool) -> None:
-        self._set_calibration_trainable(trainable)
-
-    def calibration_parameters(self):
-        return (self.host_log_scale, self.prototype_log_scale, self.log_temperature)
-
-    def _validate_score_schemas(
-        self,
-        *,
-        host_score_schema_version: Optional[str],
-        prototype_score_schema_version: Optional[str],
-    ) -> None:
-        host_version = str(host_score_schema_version or self.expected_host_score_schema_version)
-        prototype_version = str(prototype_score_schema_version or self.expected_prototype_score_schema_version)
-        if host_version != self.expected_host_score_schema_version:
-            raise ValueError(
-                f'Composer host score schema mismatch: got {host_version!r}, '
-                f'expected {self.expected_host_score_schema_version!r}.'
-            )
-        if prototype_version != self.expected_prototype_score_schema_version:
-            raise ValueError(
-                f'Composer prototype score schema mismatch: got {prototype_version!r}, '
-                f'expected {self.expected_prototype_score_schema_version!r}.'
-            )
-
-    def _apply_calibration(
-        self,
-        *,
-        host_similarity: torch.Tensor,
-        prototype_similarity: Optional[torch.Tensor],
-        lambda_host: float,
-        lambda_prototype: float,
-    ) -> torch.Tensor:
-        if not self.calibration_enabled:
-            return self.fusion_module(
-                host_similarity=host_similarity,
-                prototype_similarity=prototype_similarity,
-                lambda_host=lambda_host,
-                lambda_prototype=lambda_prototype,
-            )
-        host_scale = self.host_log_scale.exp().to(device=host_similarity.device, dtype=host_similarity.dtype)
-        prototype_scale = self.prototype_log_scale.exp().to(device=host_similarity.device, dtype=host_similarity.dtype)
-        temperature = self.log_temperature.exp().clamp_min(1e-6).to(device=host_similarity.device, dtype=host_similarity.dtype)
-        calibrated_host = host_similarity * host_scale
-        if prototype_similarity is None:
-            calibrated = calibrated_host / temperature
-            return calibrated
-        calibrated_prototype = prototype_similarity * prototype_scale
-        return ((float(lambda_host) * calibrated_host) + (float(lambda_prototype) * calibrated_prototype)) / temperature
-
-    def fuse(
-        self,
-        *,
-        host_similarity: torch.Tensor,
-        prototype_similarity: Optional[torch.Tensor],
-        lambda_host: Optional[float] = None,
-        lambda_prototype: Optional[float] = None,
-        host_score_schema_version: Optional[str] = None,
-        prototype_score_schema_version: Optional[str] = None,
-    ) -> torch.Tensor:
-        self._validate_score_schemas(
-            host_score_schema_version=host_score_schema_version,
-            prototype_score_schema_version=prototype_score_schema_version,
-        )
-        resolved_lambda_host, resolved_lambda_prototype = self.fusion_module.resolve_weights(
-            lambda_host=lambda_host,
-            lambda_prototype=lambda_prototype,
-        )
-        similarity = self._apply_calibration(
-            host_similarity=host_similarity,
-            prototype_similarity=prototype_similarity,
-            lambda_host=resolved_lambda_host,
-            lambda_prototype=resolved_lambda_prototype,
-        )
-        if not torch.isfinite(similarity).all():
-            raise FloatingPointError('Retrieval similarity contains NaN or Inf values.')
-        return similarity.float()
-
-
 class PASRuntimeModel(nn.Module):
     def __init__(self, args, num_classes, train_loader=None):
         super().__init__()
@@ -514,28 +410,16 @@ class PASRuntimeModel(nn.Module):
             getattr(legacy_model, 'use_image_conditioned_pooling', getattr(args, 'use_image_conditioned_pooling', False))
         )
         self.return_debug_outputs = bool(getattr(legacy_model, 'return_debug_outputs', getattr(args, 'return_debug_outputs', False)))
-        self.fusion_enabled = bool(getattr(legacy_model, 'fusion_enabled', getattr(args, 'fusion_enabled', False)))
-        self.fusion_lambda_host = float(getattr(legacy_model, 'fusion_lambda_host', getattr(args, 'fusion_lambda_host', 1.0)))
-        self.fusion_lambda_prototype = float(getattr(legacy_model, 'fusion_lambda_prototype', getattr(args, 'fusion_lambda_prototype', 0.0)))
-        self.fusion_coefficient = float(getattr(legacy_model, 'fusion_coefficient', self.fusion_lambda_prototype))
         self.prototype_dim = int(getattr(legacy_model, 'prototype_dim', getattr(args, 'prototype_dim', 0) or 0))
-        self.prototype_method_role = str(getattr(args, 'prototype_method_role', getattr(legacy_model, 'prototype_method_role', 'retrieval_branch'))).lower()
+        self.prototype_method_role = str(getattr(args, 'prototype_method_role', getattr(legacy_model, 'prototype_method_role', 'semantic_structure'))).lower()
         self.prototype_semantic_enabled = bool(
             getattr(args, 'prototype_semantic_enabled', getattr(legacy_model, 'prototype_semantic_enabled', self.prototype_method_role == 'semantic_structure'))
         )
         self.semantic_structure_enabled = bool(
             getattr(args, 'semantic_structure_enabled', getattr(legacy_model, 'semantic_structure_enabled', self.prototype_semantic_enabled))
         )
-        self.prototype_inference_mode = str(
-            getattr(args, 'prototype_inference_mode', getattr(legacy_model, 'prototype_inference_mode', 'auto'))
-        ).lower()
-        if self.prototype_inference_mode in {'', 'auto'}:
-            self.prototype_inference_mode = 'host_only' if self.prototype_method_role == 'semantic_structure' else 'legacy_fused'
-        if self.prototype_inference_mode == 'fused':
-            self.prototype_inference_mode = 'legacy_fused'
+        self.prototype_inference_mode = 'host_only'
         self.host_export_interface_version = HOST_EXPORT_INTERFACE_VERSION
-        self.host_score_schema_version = HOST_SCORE_SCHEMA_VERSION
-        self.prototype_score_schema_version = PROTOTYPE_SCORE_SCHEMA_VERSION
         self.host_component_schema_version = 'host_core_v1'
 
         self.host_core = HostCore(
@@ -563,7 +447,6 @@ class PASRuntimeModel(nn.Module):
                 use_prototype_bank=self.use_prototype_bank,
                 accepted_host_interface_versions=HOST_EXPORT_INTERFACE_SUPPORTED_VERSIONS,
             )
-        self.composer = Composer(fusion_module=legacy_model.fusion_module, args=args)
 
         initial_mode = resolve_runtime_mode_from_args(args, for_training=bool(getattr(args, 'training', True)))
         self.runtime_mode = normalize_runtime_mode(initial_mode)
@@ -590,10 +473,6 @@ class PASRuntimeModel(nn.Module):
             return None
         return self.prototype_plugin.prototype_head
 
-    @property
-    def fusion_module(self) -> nn.Module:
-        return self.composer.fusion_module
-
     def set_runtime_mode(self, mode: str) -> None:
         normalized = normalize_runtime_mode(mode)
         if normalized != RUNTIME_MODE_HOST_ONLY and self.prototype_plugin is None:
@@ -601,7 +480,6 @@ class PASRuntimeModel(nn.Module):
                 f'Cannot switch runtime_mode to {normalized!r} because prototype branch is unavailable.'
             )
         self.runtime_mode = normalized
-        self.composer.set_calibration_trainable(normalized == RUNTIME_MODE_CALIBRATION_ONLY)
 
     @staticmethod
     def _compute_pairwise_logits_from_outputs(outputs: Dict[str, object], *, output_name: str) -> torch.Tensor:
@@ -614,43 +492,14 @@ class PASRuntimeModel(nn.Module):
             return (image_projected.float() @ text_projected.float().t()).float()
         raise RuntimeError(
             f'{output_name} must provide surrogate_pairwise_logits or '
-            'image_projected/surrogate_text_projected tensors for calibration_only mode.'
+            'image_projected/surrogate_text_projected tensors.'
         )
-
-    def _compute_composer_calibration_loss(
-        self,
-        *,
-        host_outputs: Dict[str, object],
-        prototype_outputs: Dict[str, object],
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        host_pairwise_logits = self._compute_pairwise_logits_from_outputs(host_outputs, output_name='host_outputs')
-        prototype_pairwise_logits = self._compute_pairwise_logits_from_outputs(
-            prototype_outputs,
-            output_name='prototype_outputs',
-        )
-        fused_pairwise_logits = self.composer.fuse(
-            host_similarity=host_pairwise_logits,
-            prototype_similarity=prototype_pairwise_logits,
-            lambda_host=self.fusion_lambda_host,
-            lambda_prototype=self.fusion_lambda_prototype,
-            host_score_schema_version=self.host_score_schema_version,
-            prototype_score_schema_version=self.prototype_score_schema_version,
-        )
-        batch_size = int(fused_pairwise_logits.size(0))
-        targets = torch.arange(batch_size, device=fused_pairwise_logits.device, dtype=torch.long)
-        loss_i2t = F.cross_entropy(fused_pairwise_logits, targets)
-        loss_t2i = F.cross_entropy(fused_pairwise_logits.t(), targets)
-        calibration_loss = 0.5 * (loss_i2t + loss_t2i)
-        return calibration_loss, fused_pairwise_logits
 
     def get_group_checkpoint_compatibility(self, group_name: str) -> Dict[str, object]:
         group = str(group_name)
         all_modes = (
             RUNTIME_MODE_HOST_ONLY,
-            RUNTIME_MODE_PROTOTYPE_ONLY,
-            RUNTIME_MODE_FUSED_EXTERNAL,
             RUNTIME_MODE_JOINT_TRAINING,
-            RUNTIME_MODE_CALIBRATION_ONLY,
         )
         common = {
             'runtime_mode': str(self.runtime_mode),
@@ -671,32 +520,14 @@ class PASRuntimeModel(nn.Module):
                 'accepted_host_interface_versions': sorted(
                     self.prototype_plugin.accepted_host_interface_versions if self.prototype_plugin is not None else []
                 ),
-                'compatible_runtime_modes': [
-                    RUNTIME_MODE_PROTOTYPE_ONLY,
-                    RUNTIME_MODE_FUSED_EXTERNAL,
-                    RUNTIME_MODE_JOINT_TRAINING,
-                    RUNTIME_MODE_CALIBRATION_ONLY,
-                ],
-            }
-        if group == 'fusion':
-            return {
-                **common,
-                'component_name': 'Composer',
-                'component_schema_version': self.composer.schema_version,
-                'expected_host_score_schema_version': self.composer.expected_host_score_schema_version,
-                'expected_prototype_score_schema_version': self.composer.expected_prototype_score_schema_version,
-                'compatible_runtime_modes': [
-                    RUNTIME_MODE_FUSED_EXTERNAL,
-                    RUNTIME_MODE_JOINT_TRAINING,
-                    RUNTIME_MODE_CALIBRATION_ONLY,
-                ],
+                'compatible_runtime_modes': [RUNTIME_MODE_JOINT_TRAINING],
             }
         return dict(common)
 
     def _current_runtime_mode(self) -> str:
         mode = normalize_runtime_mode(self.runtime_mode)
         if mode == RUNTIME_MODE_JOINT_TRAINING and not self.training:
-            return RUNTIME_MODE_FUSED_EXTERNAL
+            return RUNTIME_MODE_HOST_ONLY
         return mode
 
     def _policy_for_runtime_mode(self, mode: str) -> HostExportPolicy:
@@ -704,12 +535,6 @@ class PASRuntimeModel(nn.Module):
             return HostExportPolicy(
                 detach=False,
                 allow_host_pairwise_logits=True,
-                include_image_local_tokens=True,
-            )
-        if mode in {RUNTIME_MODE_PROTOTYPE_ONLY, RUNTIME_MODE_FUSED_EXTERNAL, RUNTIME_MODE_CALIBRATION_ONLY}:
-            return HostExportPolicy(
-                detach=True,
-                allow_host_pairwise_logits=False,
                 include_image_local_tokens=True,
             )
         return HostExportPolicy(
@@ -873,58 +698,9 @@ class PASRuntimeModel(nn.Module):
         return outputs
 
     def encode_text_basis_for_retrieval(self, text: torch.Tensor) -> Dict[str, torch.Tensor]:
-        if self.prototype_plugin is None or not self.use_prototype_bank:
-            raise RuntimeError(
-                'encode_text_basis_for_retrieval is unavailable when model.use_prototype_bank=false. '
-                'Use evaluation.retrieval_scorer=exact.'
-            )
-        text_output = self.host_core.extract_text_features(text)
-        host_text = self.host_core.encode_text_branch(text_output, text.long(), return_debug=False)
-        basis_outputs = self.prototype_plugin.build_text_basis_bank(
-            text_token_states=self.host_core.resolve_text_states(text_output),
-            token_ids=text.long(),
-            attention_mask=text_output.token_mask,
-            special_token_positions=text_output.special_token_positions,
+        raise RuntimeError(
+            'encode_text_basis_for_retrieval is removed. Retrieval scoring is host-only exact.'
         )
-        return {
-            'host_text_features': host_text,
-            'host_text_projected': host_text['text_projected'],
-            'basis_bank': basis_outputs['basis_bank'],
-        }
-
-    def fuse_retrieval_similarity(
-        self,
-        host_similarity: torch.Tensor,
-        prototype_similarity: Optional[torch.Tensor] = None,
-        lambda_host: Optional[float] = None,
-        lambda_prototype: Optional[float] = None,
-    ) -> torch.Tensor:
-        return self.composer.fuse(
-            host_similarity=host_similarity,
-            prototype_similarity=prototype_similarity,
-            lambda_host=lambda_host,
-            lambda_prototype=lambda_prototype,
-            host_score_schema_version=self.host_score_schema_version,
-            prototype_score_schema_version=self.prototype_score_schema_version,
-        )
-
-    def compute_retrieval_similarity_components(
-        self,
-        image_features: Dict[str, torch.Tensor],
-        text_features: Dict[str, torch.Tensor],
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        host_similarity = self.host_core.compute_similarity_matrix(image_features, text_features)
-        prototype_similarity = None
-        if self.prototype_plugin is not None and 'text_token_states' in text_features:
-            prototype_similarity = self.prototype_plugin.compute_exact_similarity(
-                image_projected=image_features.get('prototype_image_projected', image_features.get('host_image_projected', image_features['image_projected'])),
-                summaries=image_features.get('prototype_summary', image_features['summary']),
-                text_token_states=text_features['text_token_states'],
-                token_ids=text_features['token_ids'],
-                attention_mask=text_features.get('attention_mask'),
-                special_token_positions=text_features.get('special_token_positions'),
-            )
-        return host_similarity.float(), prototype_similarity.float() if isinstance(prototype_similarity, torch.Tensor) else None
 
     def _semantic_inference_active(self) -> bool:
         return bool(
@@ -933,66 +709,18 @@ class PASRuntimeModel(nn.Module):
             and self.semantic_structure_enabled
         )
 
-    def _resolve_inference_similarity(
-        self,
-        *,
-        host_similarity: torch.Tensor,
-        prototype_similarity: Optional[torch.Tensor],
-    ) -> torch.Tensor:
-        mode = str(self.prototype_inference_mode).lower()
-        if self._semantic_inference_active() and mode in {'host_only', 'legacy_fused'}:
-            # Semantic-structure mode defaults to host-authoritative retrieval scoring.
-            if mode == 'host_only':
-                return host_similarity.float()
-            # legacy_fused remains available for explicit ablation parity.
-        if mode == 'host_only':
-            return host_similarity.float()
-        if mode == 'prototype_only':
-            if not isinstance(prototype_similarity, torch.Tensor):
-                raise RuntimeError('prototype_inference_mode=prototype_only requires prototype similarity to be available.')
-            return prototype_similarity.float()
-        return self.fuse_retrieval_similarity(host_similarity, prototype_similarity)
-
     def compute_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
-        host_similarity, prototype_similarity = self.compute_retrieval_similarity_components(image_features, text_features)
-        return self._resolve_inference_similarity(
-            host_similarity=host_similarity,
-            prototype_similarity=prototype_similarity,
-        )
+        return self.host_core.compute_similarity_matrix(image_features, text_features).float()
 
     def compute_approximate_retrieval_similarity_components(
         self,
         image_features: Dict[str, torch.Tensor],
         text_basis_features: Dict[str, torch.Tensor],
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self.prototype_plugin is None or not self.use_prototype_bank:
-            raise RuntimeError(
-                'compute_approximate_retrieval_similarity is unavailable when model.use_prototype_bank=false. '
-                'Use evaluation.retrieval_scorer=exact.'
-            )
-        host_similarity = self.host_core.compute_similarity_matrix(
-            image_features,
-            text_basis_features.get('host_text_features', {
-                'text_projected': text_basis_features['host_text_projected'],
-                'host_text_projected': text_basis_features['host_text_projected'],
-            }),
-        )
-        prototype_similarity = self.prototype_plugin.compute_approximate_similarity(
-            image_projected=image_features.get('prototype_image_projected', image_features.get('host_image_projected', image_features['image_projected'])),
-            routing_weights=image_features['routing_weights'],
-            basis_bank=text_basis_features['basis_bank'],
-        )
-        return host_similarity.float(), prototype_similarity.float()
+        raise RuntimeError('Approximate prototype retrieval scoring is removed. Retrieval is host-only exact.')
 
     def compute_approximate_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_basis_features: Dict[str, torch.Tensor]) -> torch.Tensor:
-        host_similarity, prototype_similarity = self.compute_approximate_retrieval_similarity_components(
-            image_features=image_features,
-            text_basis_features=text_basis_features,
-        )
-        return self._resolve_inference_similarity(
-            host_similarity=host_similarity,
-            prototype_similarity=prototype_similarity,
-        )
+        raise RuntimeError('Approximate prototype retrieval scoring is removed. Retrieval is host-only exact.')
 
     def named_optimizer_groups(self) -> OrderedDict:
         groups = OrderedDict(
@@ -1023,10 +751,6 @@ class PASRuntimeModel(nn.Module):
                 or name.startswith('prototype_plugin.prototype_head.token_pooler')
                 or name.startswith('prototype_plugin.prototype_head.token_scorer')
                 or name.startswith('prototype_plugin.prototype_head.token_mask_builder')
-                or name.startswith('composer.fusion_module')
-                or name.startswith('composer.host_log_scale')
-                or name.startswith('composer.prototype_log_scale')
-                or name.startswith('composer.log_temperature')
             ):
                 groups['prototype_pooling'].append((name, parameter))
             elif (
@@ -1102,25 +826,13 @@ class PASRuntimeModel(nn.Module):
             )
 
         prototype_losses = prototype_outputs['losses']
-        metric_losses = (
-            prototype_losses
-            if self.prototype_plugin is not None and mode in {RUNTIME_MODE_PROTOTYPE_ONLY, RUNTIME_MODE_FUSED_EXTERNAL, RUNTIME_MODE_JOINT_TRAINING}
-            else host_losses
-        )
-        calibration_loss = host_losses['loss_total'].new_zeros(())
-        fused_calibration_pairwise_logits = None
+        metric_losses = prototype_losses if self.prototype_plugin is not None and mode == RUNTIME_MODE_JOINT_TRAINING else host_losses
         if mode == RUNTIME_MODE_JOINT_TRAINING:
             loss_total = (self.lambda_host * host_losses['loss_total']) + prototype_losses['loss_total']
-        elif mode == RUNTIME_MODE_CALIBRATION_ONLY:
-            calibration_loss, fused_calibration_pairwise_logits = self._compute_composer_calibration_loss(
-                host_outputs=host_outputs,
-                prototype_outputs=prototype_outputs,
-            )
-            loss_total = calibration_loss
-        elif mode in {RUNTIME_MODE_HOST_ONLY}:
+        elif mode == RUNTIME_MODE_HOST_ONLY:
             loss_total = self.lambda_host * host_losses['loss_total']
         else:
-            loss_total = prototype_losses['loss_total']
+            raise ValueError(f'Unsupported runtime mode after refactor: {mode!r}')
         if not torch.isfinite(loss_total):
             raise FloatingPointError('loss_total contains NaN or Inf values.')
 
@@ -1166,7 +878,6 @@ class PASRuntimeModel(nn.Module):
             'loss_proxy_weighted': prototype_losses['loss_proxy_weighted'],
             'loss_ret_weighted': prototype_losses['loss_ret_weighted'],
             'loss_semantic_pbt_weighted': prototype_losses.get('loss_semantic_pbt_weighted', metric_zero),
-            'loss_composer_calibration': calibration_loss,
             'loss_weight_ret': prototype_losses['loss_weight_ret'],
             'loss_weight_ret_weighted': prototype_losses['loss_weight_ret_weighted'],
             'loss_align_weighted': prototype_losses['loss_align_weighted'],
@@ -1228,29 +939,20 @@ class PASRuntimeModel(nn.Module):
             'logit_scale': metric_logit_scale.detach(),
             'host_retrieval_temperature': host_losses['retrieval_temperature'].detach(),
             'host_logit_scale': host_losses['logit_scale'].detach(),
-            'fusion_coefficient': host_losses['loss_total'].new_tensor(self.fusion_coefficient),
-            'fusion_lambda_host': host_losses['loss_total'].new_tensor(self.fusion_lambda_host),
-            'fusion_lambda_prototype': host_losses['loss_total'].new_tensor(self.fusion_lambda_prototype),
             'alpha': prototype_outputs['routing_weights'].detach(),
             'z_v': prototype_outputs.get('image_projected', host_outputs['image_projected']),
             'z_t_hat_diag': prototype_outputs['surrogate_text_projected'],
             'z_t_exact_diag': prototype_outputs['exact_text_projected'],
             'surrogate_pairwise_logits': prototype_outputs.get('surrogate_pairwise_logits'),
-            'composer_pairwise_logits': fused_calibration_pairwise_logits,
             'host_pairwise_logits': host_outputs.get('surrogate_pairwise_logits'),
             'debug': dict(host_outputs.get('metrics', {})),
         }
         outputs['debug'].update(prototype_outputs.get('metrics', {}))
-        outputs['debug']['fusion_coefficient'] = self.fusion_coefficient
-        outputs['debug']['fusion_lambda_host'] = self.fusion_lambda_host
-        outputs['debug']['fusion_lambda_prototype'] = self.fusion_lambda_prototype
         outputs['debug']['runtime_mode'] = mode
         outputs['debug']['prototype_method_role_semantic_structure'] = float(self.prototype_method_role == 'semantic_structure')
         outputs['debug']['prototype_semantic_enabled'] = float(self.prototype_semantic_enabled)
         outputs['debug']['semantic_structure_enabled'] = float(self.semantic_structure_enabled)
         outputs['debug']['prototype_inference_host_only'] = float(self.prototype_inference_mode == 'host_only')
-        outputs['debug']['prototype_inference_legacy_fused'] = float(self.prototype_inference_mode == 'legacy_fused')
-        outputs['debug']['loss_composer_calibration'] = calibration_loss.detach()
         outputs['debug']['host_loss_total'] = host_losses['loss_total'].detach()
         outputs['debug']['host_loss_ret'] = host_losses['loss_ret'].detach()
         outputs['debug']['host_loss_cid'] = host_losses.get('loss_cid', host_losses['loss_total'].new_zeros(())).detach()

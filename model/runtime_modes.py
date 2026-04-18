@@ -5,18 +5,12 @@ from typing import Optional
 
 RUNTIME_MODE_AUTO = 'auto'
 RUNTIME_MODE_HOST_ONLY = 'host_only'
-RUNTIME_MODE_PROTOTYPE_ONLY = 'prototype_only'
-RUNTIME_MODE_FUSED_EXTERNAL = 'fused_external'
 RUNTIME_MODE_JOINT_TRAINING = 'joint_training'
-RUNTIME_MODE_CALIBRATION_ONLY = 'calibration_only'
 
 RUNTIME_MODES = (
     RUNTIME_MODE_AUTO,
     RUNTIME_MODE_HOST_ONLY,
-    RUNTIME_MODE_PROTOTYPE_ONLY,
-    RUNTIME_MODE_FUSED_EXTERNAL,
     RUNTIME_MODE_JOINT_TRAINING,
-    RUNTIME_MODE_CALIBRATION_ONLY,
 )
 
 
@@ -39,14 +33,9 @@ def resolve_runtime_mode_from_args(args, *, for_training: bool) -> str:
         return RUNTIME_MODE_HOST_ONLY
     if for_training:
         return RUNTIME_MODE_JOINT_TRAINING
-    return RUNTIME_MODE_FUSED_EXTERNAL
+    return RUNTIME_MODE_HOST_ONLY
 
 
 def runtime_mode_uses_prototype(mode: str) -> bool:
     normalized = normalize_runtime_mode(mode)
-    return normalized in {
-        RUNTIME_MODE_PROTOTYPE_ONLY,
-        RUNTIME_MODE_FUSED_EXTERNAL,
-        RUNTIME_MODE_JOINT_TRAINING,
-        RUNTIME_MODE_CALIBRATION_ONLY,
-    }
+    return normalized == RUNTIME_MODE_JOINT_TRAINING

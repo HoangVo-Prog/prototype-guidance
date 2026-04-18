@@ -37,7 +37,6 @@ DEFAULT_CHECKPOINTING_CONFIG = {
         'host': {'enabled': True},
         'prototype_bank': {'enabled': True},
         'prototype_projector': {'enabled': True},
-        'fusion': {'enabled': True},
     },
     'save': {
         'dir': None,
@@ -60,11 +59,6 @@ DEFAULT_CHECKPOINTING_CONFIG = {
                 'filename_latest': 'checkpoint_prototype_projector_latest.pth',
                 'filename_best': 'checkpoint_prototype_projector_best.pth',
             },
-            'fusion': {
-                'enabled': True,
-                'filename_latest': 'checkpoint_fusion_latest.pth',
-                'filename_best': 'checkpoint_fusion_best.pth',
-            },
         },
     },
     'load': {
@@ -74,7 +68,6 @@ DEFAULT_CHECKPOINTING_CONFIG = {
             'host': {'enabled': False, 'path': None},
             'prototype_bank': {'enabled': False, 'path': None},
             'prototype_projector': {'enabled': False, 'path': None},
-            'fusion': {'enabled': False, 'path': None},
         },
     },
     'authority_validation': {
@@ -159,7 +152,7 @@ def _prepare_state_dict_for_group_compatibility(group_name: str, state_dict: dic
                 stats['legacy_renamed'] += 1
 
             if (
-                not key.startswith(('host_head.', 'base_model.', 'prototype_head.', 'host_core.', 'prototype_plugin.', 'composer.'))
+                not key.startswith(('host_head.', 'base_model.', 'prototype_head.', 'host_core.', 'prototype_plugin.'))
                 and ('host_head.' + key) in model_keys
             ):
                 key = 'host_head.' + key
@@ -172,16 +165,14 @@ def _prepare_state_dict_for_group_compatibility(group_name: str, state_dict: dic
 
 GROUP_AUTHORITY_BUCKET = {
     'host': 'host',
-    'prototype_bank': 'prototype',
-    'prototype_projector': 'prototype',
-    'fusion': 'fused',
+    'prototype_bank': 'host',
+    'prototype_projector': 'host',
 }
 
 GROUP_COMPONENT_NAME = {
     'host': 'HostCore',
     'prototype_bank': 'PrototypePlugin',
     'prototype_projector': 'PrototypePlugin',
-    'fusion': 'Composer',
 }
 
 
@@ -229,12 +220,6 @@ class MetricAuthorityPolicy:
             return None
         if re.match(r'^host(?:[-_\s]*only)?(?:[-_\s]*t2i)?(?:\b|[-_\s].*)?$', label):
             return 'host'
-        if re.match(r'^prototype(?:[-_\s]*t2i)?(?:\b|[-_\s].*)?$', label):
-            return 'prototype'
-        if re.match(r'^pas[-_\s]*t2i(?:\b|[-_\s].*)?$', label):
-            return 'fused'
-        if 'prototype' in label and 'host' in label:
-            return 'fused'
         return None
 
     def classify_row(self, row_name: Optional[str], row_roles: Optional[Dict[str, str]] = None) -> Optional[str]:
@@ -243,7 +228,7 @@ class MetricAuthorityPolicy:
             return None
         if isinstance(row_roles, dict):
             role = str(row_roles.get(normalized, '')).strip().lower()
-            if role in {'host', 'prototype', 'fused'}:
+            if role in {'host'}:
                 return role
         if self.allow_fallback_row_name_classification:
             fallback_role = self._classify_row_name_fallback(normalized)
@@ -360,7 +345,6 @@ class ModularCheckpointManager:
             'host_export_interface_version',
             'accepted_host_interface_versions',
             'expected_host_score_schema_version',
-            'expected_prototype_score_schema_version',
             'compatible_runtime_modes',
         ):
             if key in metadata and key not in normalized:
@@ -471,29 +455,6 @@ class ModularCheckpointManager:
                     ),
                 )
 
-        if group_name == 'fusion':
-            payload_host_schema = checkpoint_compat.get('expected_host_score_schema_version')
-            model_host_schema = model_compat.get('expected_host_score_schema_version')
-            if payload_host_schema and model_host_schema and str(payload_host_schema) != str(model_host_schema):
-                self._strict_or_warn(
-                    strict=strict,
-                    logger=self.logger,
-                    message=(
-                        f'Checkpoint host score schema mismatch for group=fusion: '
-                        f'checkpoint={payload_host_schema!r}, model={model_host_schema!r}.'
-                    ),
-                )
-            payload_proto_schema = checkpoint_compat.get('expected_prototype_score_schema_version')
-            model_proto_schema = model_compat.get('expected_prototype_score_schema_version')
-            if payload_proto_schema and model_proto_schema and str(payload_proto_schema) != str(model_proto_schema):
-                self._strict_or_warn(
-                    strict=strict,
-                    logger=self.logger,
-                    message=(
-                        f'Checkpoint prototype score schema mismatch for group=fusion: '
-                        f'checkpoint={payload_proto_schema!r}, model={model_proto_schema!r}.'
-                    ),
-                )
 
     def _checkpoint_output_dir(self):
         configured = self.config.get('save', {}).get('dir')
@@ -631,7 +592,6 @@ class ModularCheckpointManager:
         host_export_interface_version = compatibility.get('host_export_interface_version')
         accepted_host_interface_versions = compatibility.get('accepted_host_interface_versions')
         expected_host_score_schema_version = compatibility.get('expected_host_score_schema_version')
-        expected_prototype_score_schema_version = compatibility.get('expected_prototype_score_schema_version')
         compatible_runtime_modes = compatibility.get('compatible_runtime_modes')
         return {
             'group_name': group_name,
@@ -663,9 +623,6 @@ class ModularCheckpointManager:
                 'expected_host_score_schema_version': None
                 if expected_host_score_schema_version is None
                 else str(expected_host_score_schema_version),
-                'expected_prototype_score_schema_version': None
-                if expected_prototype_score_schema_version is None
-                else str(expected_prototype_score_schema_version),
                 'compatible_runtime_modes': None
                 if not isinstance(compatible_runtime_modes, (list, tuple, set))
                 else [str(item) for item in compatible_runtime_modes],

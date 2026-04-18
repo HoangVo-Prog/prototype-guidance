@@ -340,14 +340,14 @@ class DirectImageConditionedTextHead(nn.Module):
         del args, kwargs
         raise RuntimeError(
             'Approximate prototype basis construction is unavailable when model.use_prototype_bank=false. '
-            'Use evaluation.retrieval_scorer=exact for direct retrieval.'
+            'Retrieval scoring is host-only exact.'
         )
 
     def compute_approximate_pairwise_similarity(self, *args, **kwargs) -> torch.Tensor:
         del args, kwargs
         raise RuntimeError(
             'Approximate prototype retrieval similarity is unavailable when model.use_prototype_bank=false. '
-            'Use evaluation.retrieval_scorer=exact for direct retrieval.'
+            'Retrieval scoring is host-only exact.'
         )
 
     def _compute_pairwise_similarity_logits(

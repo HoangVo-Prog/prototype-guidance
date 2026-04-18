@@ -167,7 +167,6 @@ class ClipHostModel(nn.Module):
         self.return_debug_outputs = bool(getattr(args, 'return_debug_outputs', False))
         self.lambda_host = float(getattr(args, 'lambda_host', 1.0))
         self.prototype_head = None
-        self.fusion_coefficient = 0.0
 
         self._validate_config()
         self.base_model, base_cfg, self._convert_clip_weights = self._build_clip_backbone()
@@ -452,9 +451,6 @@ class ClipHostModel(nn.Module):
             'logit_scale': losses['logit_scale'].detach(),
             'host_retrieval_temperature': losses['retrieval_temperature'].detach(),
             'host_logit_scale': losses['logit_scale'].detach(),
-            'fusion_coefficient': host_loss_total.new_tensor(0.0),
-            'fusion_lambda_host': host_loss_total.new_tensor(1.0),
-            'fusion_lambda_prototype': host_loss_total.new_tensor(0.0),
             'alpha': image_projected.new_empty((image_projected.size(0), 0)),
             'z_v': image_projected,
             'z_t_hat_diag': text_projected,
@@ -466,8 +462,6 @@ class ClipHostModel(nn.Module):
                 'vanilla_clip_bidirectional': image_projected.new_tensor(float(self.losses.retrieval_mode == 'clip_bidirectional')),
                 'host_loss_total': host_loss_total.detach(),
                 'host_loss_ret': losses.get('host_loss', losses['loss_ret']).detach(),
-                'fusion_lambda_host': image_projected.new_tensor(1.0),
-                'fusion_lambda_prototype': image_projected.new_tensor(0.0),
             },
         }
         track_output_grads = bool(getattr(self.args, 'log_debug_metrics', True)) or should_return_debug

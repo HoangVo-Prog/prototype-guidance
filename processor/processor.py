@@ -5,11 +5,8 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from model.runtime_modes import (
-    RUNTIME_MODE_CALIBRATION_ONLY,
-    RUNTIME_MODE_FUSED_EXTERNAL,
     RUNTIME_MODE_HOST_ONLY,
     RUNTIME_MODE_JOINT_TRAINING,
-    RUNTIME_MODE_PROTOTYPE_ONLY,
     normalize_runtime_mode,
     resolve_runtime_mode_from_args,
 )
@@ -297,39 +294,14 @@ def _apply_runtime_mode_trainability(model, runtime_mode: str, logger) -> None:
         'prototype_head.',
         'prototype_plugin.prototype_head.',
     )
-    composer_prefixes = (
-        'fusion_module.',
-        'composer.fusion_module.',
-        'composer.host_log_scale',
-        'composer.prototype_log_scale',
-        'composer.log_temperature',
-    )
+    legacy_fusion_prefixes = ('fusion_module.',)
     if mode == RUNTIME_MODE_JOINT_TRAINING:
         return
     if mode == RUNTIME_MODE_HOST_ONLY:
-        frozen = _set_requires_grad_by_prefixes(model, prototype_prefixes + composer_prefixes, False)
-        logger.info('Runtime mode `%s`: froze prototype/composer tensors=%d.', mode, frozen)
+        frozen = _set_requires_grad_by_prefixes(model, prototype_prefixes + legacy_fusion_prefixes, False)
+        logger.info('Runtime mode `%s`: froze prototype tensors=%d.', mode, frozen)
         return
-    if mode in {RUNTIME_MODE_PROTOTYPE_ONLY, RUNTIME_MODE_FUSED_EXTERNAL}:
-        frozen_host = _set_requires_grad_by_prefixes(model, host_prefixes + composer_prefixes, False)
-        unfrozen_proto = _set_requires_grad_by_prefixes(model, prototype_prefixes, True)
-        logger.info(
-            'Runtime mode `%s`: froze host/composer tensors=%d, unfroze prototype tensors=%d.',
-            mode,
-            frozen_host,
-            unfrozen_proto,
-        )
-        return
-    if mode == RUNTIME_MODE_CALIBRATION_ONLY:
-        frozen_host = _set_requires_grad_by_prefixes(model, host_prefixes + prototype_prefixes, False)
-        unfrozen_composer = _set_requires_grad_by_prefixes(model, composer_prefixes, True)
-        logger.info(
-            'Runtime mode `%s`: froze host/prototype tensors=%d, unfroze composer tensors=%d.',
-            mode,
-            frozen_host,
-            unfrozen_composer,
-        )
-        return
+    raise ValueError(f'Unsupported runtime mode after refactor: {mode!r}')
 
 
 def _do_train_runtime(
@@ -504,7 +476,7 @@ def _do_train_runtime(
                     batch,
                     epoch=epoch,
                     current_step=current_steps,
-                    disable_proxy_losses=(resolved_runtime_mode == RUNTIME_MODE_CALIBRATION_ONLY),
+                    disable_proxy_losses=False,
                 )
                 total_loss = outputs['loss_total']
 
@@ -676,12 +648,7 @@ def train_host_core(*args, **kwargs):
 
 
 def train_prototype_external(*args, **kwargs):
-    kwargs['runtime_mode'] = RUNTIME_MODE_PROTOTYPE_ONLY
-    return _do_train_runtime(*args, **kwargs)
-
-
-def train_composer_calibration(*args, **kwargs):
-    kwargs['runtime_mode'] = RUNTIME_MODE_CALIBRATION_ONLY
+    kwargs['runtime_mode'] = RUNTIME_MODE_JOINT_TRAINING
     return _do_train_runtime(*args, **kwargs)
 
 
@@ -706,34 +673,6 @@ def do_train(
     resolved_runtime_mode = resolve_runtime_mode_from_args(args, for_training=True)
     if resolved_runtime_mode == RUNTIME_MODE_HOST_ONLY:
         return train_host_core(
-            start_epoch,
-            args,
-            model,
-            train_loader,
-            evaluator,
-            optimizer,
-            scheduler,
-            checkpointer,
-            experiment_tracker=experiment_tracker,
-            eval_loss_loader=eval_loss_loader,
-            modular_checkpoint_manager=modular_checkpoint_manager,
-        )
-    if resolved_runtime_mode in {RUNTIME_MODE_PROTOTYPE_ONLY, RUNTIME_MODE_FUSED_EXTERNAL}:
-        return train_prototype_external(
-            start_epoch,
-            args,
-            model,
-            train_loader,
-            evaluator,
-            optimizer,
-            scheduler,
-            checkpointer,
-            experiment_tracker=experiment_tracker,
-            eval_loss_loader=eval_loss_loader,
-            modular_checkpoint_manager=modular_checkpoint_manager,
-        )
-    if resolved_runtime_mode == RUNTIME_MODE_CALIBRATION_ONLY:
-        return train_composer_calibration(
             start_epoch,
             args,
             model,

@@ -22,7 +22,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'prototype_method_role'): 'prototype_method_role',
     ('model', 'prototype_semantic_enabled'): 'prototype_semantic_enabled',
     ('model', 'prototype_recompute_enabled'): 'prototype_recompute_enabled',
-    ('model', 'prototype_inference_mode'): 'prototype_inference_mode',
     ('model', 'pretrain_choice'): 'pretrain_choice',
     ('model', 'image_backbone'): 'image_backbone',
     ('model', 'text_backbone'): 'text_backbone',
@@ -108,12 +107,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('semantic_structure', 'ramp_loss_diag'): 'semantic_ramp_loss_diag',
     ('semantic_structure', 'ramp_loss_semantic_pbt'): 'semantic_ramp_loss_semantic_pbt',
 
-    ('fusion', 'enabled'): 'fusion_enabled',
-    ('fusion', 'lambda_host'): 'fusion_lambda_host',
-    ('fusion', 'lambda_prototype'): 'fusion_lambda_prototype',
-    ('fusion', 'eval_subsets'): 'fusion_eval_subsets',
-    ('fusion', 'coefficient_source'): 'fusion_coefficient_source',
-    ('fusion', 'composer_calibration_enabled'): 'composer_calibration_enabled',
 
     ('objectives', 'objectives', 'use_host_loss'): 'use_host_loss',
     ('objectives', 'objectives', 'use_loss_proxy_image'): 'use_loss_proxy_image',
@@ -251,7 +244,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('evaluation', 'batch_size'): 'test_batch_size',
     ('evaluation', 'prototype_image_chunk_size'): 'prototype_eval_image_chunk_size',
     ('evaluation', 'prototype_text_chunk_size'): 'prototype_eval_text_chunk_size',
-    ('evaluation', 'retrieval_scorer'): 'retrieval_scorer',
 }
 
 # Backward-compatible alias paths (accepted by parser/loader) that are intentionally
@@ -402,7 +394,6 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'freeze_host_projectors'): 'freeze_host_projectors',
     ('training', 'freeze_prototype_side'): 'freeze_prototype_side',
     ('training', 'val_dataset'): 'val_dataset',
-    ('fusion', 'coefficient'): 'fusion_coefficient',
 }
 
 SECTION_TEMPLATE = {
@@ -411,7 +402,6 @@ SECTION_TEMPLATE = {
     'host': {},
     'prototype': {},
     'semantic_structure': {},
-    'fusion': {},
     'objectives': {
         'objectives': {},
         'lambda': {},
@@ -474,6 +464,9 @@ UNSUPPORTED_CONFIG_PATHS = {
     ('training', 'clip_style_ret'): 'CLIP-style symmetric retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
     ('training', 'symmetric_ret'): 'Symmetric retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
     ('training', 't2i_ret'): 'Text-to-image retrieval over the surrogate score matrix is invalid because surrogate text embeddings depend on the image query.',
+    ('fusion',): 'fusion config section was removed. HostCore is the only retrieval scorer.',
+    ('evaluation', 'retrieval_scorer'): 'evaluation.retrieval_scorer was removed. Retrieval scoring is always exact host-only.',
+    ('model', 'prototype_inference_mode'): 'model.prototype_inference_mode was removed. Retrieval inference is always host_only.',
     ('model', 'learn_logit_scale'): 'model.learn_logit_scale was removed because the amortized PAS runtime always uses a fixed retrieval temperature.',
     ('model', 'logit_scale_init'): 'model.logit_scale_init is not exposed in minimal PAS v1.',
     ('model', 'logit_scale_max'): 'model.logit_scale_max is not exposed in minimal PAS v1.',
@@ -484,9 +477,8 @@ UNSUPPORTED_CONFIG_PATHS = {
 
 CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('model', 'training_mode'): ('pas', 'vanilla_clip'),
-    ('model', 'runtime_mode'): ('auto', 'host_only', 'prototype_only', 'fused_external', 'joint_training', 'calibration_only'),
-    ('model', 'prototype_method_role'): ('retrieval_branch', 'semantic_structure'),
-    ('model', 'prototype_inference_mode'): ('auto', 'host_only', 'legacy_fused', 'prototype_only', 'fused'),
+    ('model', 'runtime_mode'): ('auto', 'host_only', 'joint_training'),
+    ('model', 'prototype_method_role'): ('semantic_structure',),
     ('host', 'type'): ('clip', 'itself'),
     ('host', 'itself_topk_type'): ('mean', 'std', 'layer_index', 'custom'),
     ('model', 'projector_type'): ('mlp2', 'linear'),
@@ -519,14 +511,12 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('dataset', 'dataset_name'): ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
     ('dataset', 'val_dataset'): ('val', 'test'),
     ('evaluation', 'target_domain'): ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
-    ('evaluation', 'retrieval_scorer'): ('exact', 'approximate'),
 }
 
 RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'training_mode': ('pas', 'vanilla_clip'),
-    'runtime_mode': ('auto', 'host_only', 'prototype_only', 'fused_external', 'joint_training', 'calibration_only'),
-    'prototype_method_role': ('retrieval_branch', 'semantic_structure'),
-    'prototype_inference_mode': ('auto', 'host_only', 'legacy_fused', 'prototype_only', 'fused'),
+    'runtime_mode': ('auto', 'host_only', 'joint_training'),
+    'prototype_method_role': ('semantic_structure',),
     'host_type': ('clip', 'itself'),
     'itself_topk_type': ('mean', 'std', 'layer_index', 'custom'),
     'projector_type': ('mlp2', 'linear'),
@@ -558,7 +548,6 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'dataset_name': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
     'val_dataset': ('val', 'test'),
     'target_domain': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
-    'retrieval_scorer': ('exact', 'approximate'),
 }
 
 def _format_allowed_values(allowed_values: Tuple[str, ...]) -> str:
@@ -583,116 +572,37 @@ def _validate_retrieval_metrics_value(field_name: str, value: Any) -> None:
         )
 
 
-FUSION_WEIGHT_SUM_TOLERANCE = 1e-6
-
-
-def _coerce_float(field_name: str, value: Any) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f'{field_name} must be a float, got {value!r}.')
-
-
-def _validate_fusion_weight_value(field_name: str, value: Any) -> float:
-    scalar = _coerce_float(field_name, value)
-    if scalar < 0.0 or scalar > 1.0:
-        raise ValueError(f'{field_name} must be within [0, 1], got {scalar}.')
-    return scalar
-
-
-def _validate_fusion_weight_pair(
-    field_prefix: str,
-    lambda_host: Any,
-    lambda_prototype: Any,
-    require_unit_sum: bool = True,
-) -> Tuple[float, float]:
-    host_weight = _validate_fusion_weight_value(f'{field_prefix}.lambda_host', lambda_host)
-    prototype_weight = _validate_fusion_weight_value(f'{field_prefix}.lambda_prototype', lambda_prototype)
-    if require_unit_sum:
-        pair_sum = host_weight + prototype_weight
-        if abs(pair_sum - 1.0) > FUSION_WEIGHT_SUM_TOLERANCE:
-            raise ValueError(
-                f'{field_prefix}.lambda_host + {field_prefix}.lambda_prototype must equal 1.0 '
-                f'(tolerance={FUSION_WEIGHT_SUM_TOLERANCE}), got {pair_sum}.'
-            )
-    return host_weight, prototype_weight
-
-
-def _validate_fusion_eval_subsets(field_name: str, value: Any) -> None:
-    if value is None:
-        return
-    if not isinstance(value, list):
-        raise ValueError(f'{field_name} must be a list of subset mappings.')
-    for subset_index, subset in enumerate(value):
-        subset_prefix = f'{field_name}[{subset_index}]'
-        if not isinstance(subset, dict):
-            raise ValueError(f'{subset_prefix} must be a mapping.')
-        unknown_keys = sorted(set(subset.keys()) - {'name', 'lambda_host', 'lambda_prototype'})
-        if unknown_keys:
-            raise ValueError(
-                f'Unknown keys in {subset_prefix}: {unknown_keys}. '
-                'Allowed keys: ["name", "lambda_host", "lambda_prototype"]'
-            )
-        if 'name' in subset and subset['name'] is not None and not isinstance(subset['name'], str):
-            raise ValueError(f'{subset_prefix}.name must be a string when provided.')
-        if 'lambda_host' not in subset or 'lambda_prototype' not in subset:
-            raise ValueError(f'{subset_prefix} must include both lambda_host and lambda_prototype.')
-        _validate_fusion_weight_pair(
-            field_prefix=subset_prefix,
-            lambda_host=subset['lambda_host'],
-            lambda_prototype=subset['lambda_prototype'],
-            require_unit_sum=True,
-        )
-
-
 def _validate_fusion_config_data(config_data: Dict[str, Any]) -> None:
     fusion_cfg = config_data.get('fusion')
-    if not isinstance(fusion_cfg, dict):
-        return
-
-    has_lambda_host = 'lambda_host' in fusion_cfg
-    has_lambda_prototype = 'lambda_prototype' in fusion_cfg
-    has_legacy_coefficient = 'coefficient' in fusion_cfg
-
-    if has_lambda_host or has_lambda_prototype:
-        if not (has_lambda_host and has_lambda_prototype):
-            raise ValueError('fusion.lambda_host and fusion.lambda_prototype must be provided together.')
-        _validate_fusion_weight_pair(
-            field_prefix='fusion',
-            lambda_host=fusion_cfg.get('lambda_host'),
-            lambda_prototype=fusion_cfg.get('lambda_prototype'),
-            require_unit_sum=True,
+    if isinstance(fusion_cfg, dict) and fusion_cfg:
+        raise ValueError(
+            'fusion config section is removed. HostCore is the only retrieval scorer and prototype fusion is not supported.'
         )
-    elif has_legacy_coefficient:
-        _validate_fusion_weight_value('fusion.coefficient', fusion_cfg.get('coefficient'))
-
-    _validate_fusion_eval_subsets('fusion.eval_subsets', fusion_cfg.get('eval_subsets'))
 
 
 def _validate_runtime_fusion_args(args: Any) -> None:
-    if bool(getattr(args, 'fusion_legacy_coefficient_mode', False)):
-        if hasattr(args, 'fusion_coefficient') and getattr(args, 'fusion_coefficient') is not None:
-            _validate_fusion_weight_value('fusion_coefficient', getattr(args, 'fusion_coefficient'))
-        _validate_fusion_eval_subsets('fusion_eval_subsets', getattr(args, 'fusion_eval_subsets', None))
-        return
-
-    has_lambda_host = hasattr(args, 'fusion_lambda_host') and getattr(args, 'fusion_lambda_host') is not None
-    has_lambda_prototype = hasattr(args, 'fusion_lambda_prototype') and getattr(args, 'fusion_lambda_prototype') is not None
-    has_legacy_coefficient = hasattr(args, 'fusion_coefficient') and getattr(args, 'fusion_coefficient') is not None
-
-    if has_lambda_host or has_lambda_prototype:
-        if not (has_lambda_host and has_lambda_prototype):
-            raise ValueError('fusion_lambda_host and fusion_lambda_prototype must be provided together.')
-        _validate_fusion_weight_pair(
-            field_prefix='fusion',
-            lambda_host=getattr(args, 'fusion_lambda_host'),
-            lambda_prototype=getattr(args, 'fusion_lambda_prototype'),
-            require_unit_sum=True,
+    removed_fields = (
+        'fusion_enabled',
+        'fusion_lambda_host',
+        'fusion_lambda_prototype',
+        'fusion_coefficient',
+        'fusion_eval_subsets',
+        'fusion_coefficient_source',
+        'composer_calibration_enabled',
+        'prototype_inference_mode',
+        'retrieval_scorer',
+    )
+    for field_name in removed_fields:
+        if not hasattr(args, field_name):
+            continue
+        value = getattr(args, field_name)
+        if field_name == 'prototype_inference_mode' and str(value).lower() == 'host_only':
+            continue
+        if value in (None, False, '', 0, 0.0):
+            continue
+        raise ValueError(
+            f'{field_name} was removed. HostCore is the only retrieval scorer and prototype fusion/composer retrieval paths are disabled.'
         )
-    elif has_legacy_coefficient:
-        _validate_fusion_weight_value('fusion_coefficient', getattr(args, 'fusion_coefficient'))
-
-    _validate_fusion_eval_subsets('fusion_eval_subsets', getattr(args, 'fusion_eval_subsets', None))
 
 
 def _read_yaml(path: str) -> Dict[str, Any]:
@@ -897,10 +807,6 @@ def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
                             )
                 continue
 
-            if section_name == 'fusion' and key == 'eval_subsets':
-                _validate_fusion_eval_subsets('fusion.eval_subsets', value)
-                continue
-
             if isinstance(value, dict):
                 raise ValueError(f'Unsupported nested config mapping at `{section_name}.{key}`.')
             if path not in supported_leafs and path not in UNSUPPORTED_CONFIG_PATHS:
@@ -939,7 +845,7 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     use_image_conditioned_pooling = bool(flat.get('use_image_conditioned_pooling', use_prototype_branch))
     runtime_mode = str(flat.get('runtime_mode', 'auto')).lower()
     retrieval_mode = str(flat.get('retrieval_mode', 'surrogate_i2t')).lower()
-    prototype_method_role = str(flat.get('prototype_method_role', 'retrieval_branch')).lower()
+    prototype_method_role = str(flat.get('prototype_method_role', 'semantic_structure')).lower()
     semantic_target_temperature = float(flat.get('semantic_target_temperature', 0.01))
     semantic_pred_temperature = float(flat.get('semantic_pred_temperature', 0.07))
     semantic_recompute_interval = int(flat.get('semantic_recompute_interval', 1))
@@ -958,8 +864,6 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         if retrieval_mode != 'clip_bidirectional':
             raise ValueError('host.type=clip with model.use_prototype_branch=false requires objectives.objectives.retrieval_mode=clip_bidirectional.')
 
-        if str(flat.get('retrieval_scorer', 'exact')).lower() != 'exact':
-            raise ValueError('host.type=clip with model.use_prototype_branch=false requires evaluation.retrieval_scorer=exact.')
         incompatible_flags = {
             'objectives.objectives.use_loss_proxy_image': bool(flat.get('use_loss_proxy_image', False)),
             'objectives.objectives.use_loss_proxy_text': bool(flat.get('use_loss_proxy_text', False)),
@@ -1002,7 +906,7 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         raise ValueError(
             'loss.use_loss_semantic_pbt is incompatible with model.runtime_mode=host_only because '
             'host-only runtime disables prototype loss computation. '
-            'Use model.runtime_mode=joint_training or prototype_only.'
+            'Use model.runtime_mode=joint_training.'
         )
 
     training_config = config_data.get('training', {})
@@ -1049,7 +953,7 @@ def validate_runtime_args_namespace(args) -> None:
     use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', use_prototype_branch))
     runtime_mode = str(getattr(args, 'runtime_mode', 'auto')).lower()
     retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
-    prototype_method_role = str(getattr(args, 'prototype_method_role', 'retrieval_branch')).lower()
+    prototype_method_role = str(getattr(args, 'prototype_method_role', 'semantic_structure')).lower()
     semantic_target_temperature = float(getattr(args, 'semantic_target_temperature', 0.01))
     semantic_pred_temperature = float(getattr(args, 'semantic_pred_temperature', 0.07))
     semantic_recompute_interval = int(getattr(args, 'semantic_recompute_interval', 1))
@@ -1067,8 +971,6 @@ def validate_runtime_args_namespace(args) -> None:
             raise ValueError('host_type=clip with use_prototype_branch=false requires token_policy=eos_only.')
         if retrieval_mode != 'clip_bidirectional':
             raise ValueError('host_type=clip with use_prototype_branch=false requires retrieval_mode=clip_bidirectional.')
-        if str(getattr(args, 'retrieval_scorer', 'exact')).lower() != 'exact':
-            raise ValueError('host_type=clip with use_prototype_branch=false requires retrieval_scorer=exact.')
         incompatible_flags = {
             'use_loss_proxy_image': bool(getattr(args, 'use_loss_proxy_image', False)),
             'use_loss_proxy_text': bool(getattr(args, 'use_loss_proxy_text', False)),
@@ -1109,7 +1011,7 @@ def validate_runtime_args_namespace(args) -> None:
     if use_loss_semantic_pbt and runtime_mode == 'host_only':
         raise ValueError(
             'use_loss_semantic_pbt is incompatible with runtime_mode=host_only because host-only runtime disables '
-            'prototype loss computation. Use runtime_mode=joint_training or prototype_only.'
+            'prototype loss computation. Use runtime_mode=joint_training.'
         )
 
 
