@@ -618,13 +618,6 @@ Notes:
 - Primary Config Keys: `prototype.local_routing_normalize_inputs`
 - Alias Config Keys: -
 
-## `prototype_use_host_deflated_input`
-- Flags: `--prototype_use_host_deflated_input`, `--use_host_deflated_input`
-- Type/Action: type=_str2bool, nargs='?'
-- Default: `False`
-- Primary Config Keys: `prototype.use_host_deflated_input`
-- Alias Config Keys: -
-
 ## `prototype_contextualization_enabled`
 - Flags: `--prototype_contextualization_enabled`
 - Type/Action: type=_str2bool, nargs='?'

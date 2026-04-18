@@ -95,8 +95,6 @@ class PrototypeConditionedTextHead(nn.Module):
         contrastive_temperature_init: float = 0.07,
         learnable_contrastive_temperature: bool = False,
         dead_prototype_threshold: float = 0.005,
-        use_host_deflated_input: bool = False,
-        host_deflated_input_eps: float = 1e-8,
         collect_debug_metrics: bool = True,
     ):
         super().__init__()
@@ -107,10 +105,6 @@ class PrototypeConditionedTextHead(nn.Module):
         self.dead_prototype_threshold = float(dead_prototype_threshold)
         self.use_image_conditioned_pooling = bool(use_image_conditioned_pooling)
         self.collect_debug_metrics = bool(collect_debug_metrics)
-        self.use_host_deflated_input = bool(use_host_deflated_input)
-        self.host_deflated_input_eps = float(host_deflated_input_eps)
-        if self.host_deflated_input_eps <= 0:
-            raise ValueError('host_deflated_input_eps must be positive.')
         self.routing_source = str(routing_source).lower()
         if self.routing_source not in {'global', 'local_evidence'}:
             raise ValueError(
@@ -502,12 +496,7 @@ class PrototypeConditionedTextHead(nn.Module):
             if 'local_routing_effective_support' in router_debug:
                 metrics['local_routing_effective_support'] = router_debug['local_routing_effective_support']
             for metric_name in (
-                'host_deflated_input_enabled',
-                'host_deflated_input_applied',
-                'local_token_raw_norm_mean',
-                'local_token_residual_norm_mean',
-                'local_token_raw_host_cos_mean',
-                'local_token_residual_host_cos_mean',
+                'local_token_norm_mean',
             ):
                 if metric_name in router_debug:
                     metrics[metric_name] = router_debug[metric_name]
@@ -515,35 +504,6 @@ class PrototypeConditionedTextHead(nn.Module):
             metrics['token_pool_entropy'] = pooler_debug['token_pool_entropy']
             metrics['beta_max_prob'] = pooler_debug['beta_max_prob']
         return metrics
-
-    def compute_host_deflated_patch_tokens(
-        self,
-        patch_tokens: torch.Tensor,
-        img_global: torch.Tensor,
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        if patch_tokens.ndim != 3:
-            raise ValueError('patch_tokens must have shape [B, M, D].')
-        if img_global.ndim != 2:
-            raise ValueError('img_global must have shape [B, D].')
-        if patch_tokens.size(0) != img_global.size(0):
-            raise ValueError('patch_tokens and img_global must share the same batch size.')
-        if patch_tokens.size(-1) != img_global.size(-1):
-            raise ValueError('patch_tokens and img_global must share the same feature dimension.')
-
-        eps = self.host_deflated_input_eps
-        host_unit = F.normalize(img_global.detach(), dim=-1, eps=eps)
-        projection = (patch_tokens * host_unit.unsqueeze(1)).sum(dim=-1, keepdim=True) * host_unit.unsqueeze(1)
-        residual = patch_tokens - projection
-        residual_normalized = F.normalize(residual, dim=-1, eps=eps)
-
-        raw_unit = F.normalize(patch_tokens, dim=-1, eps=eps)
-        metrics = {
-            'local_token_raw_norm_mean': patch_tokens.norm(dim=-1).mean().detach(),
-            'local_token_residual_norm_mean': residual.norm(dim=-1).mean().detach(),
-            'local_token_raw_host_cos_mean': (raw_unit * host_unit.unsqueeze(1)).sum(dim=-1).mean().detach(),
-            'local_token_residual_host_cos_mean': (residual_normalized * host_unit.unsqueeze(1)).sum(dim=-1).mean().detach(),
-        }
-        return residual_normalized, metrics
 
     def get_prototype_context(self, return_debug: bool = False) -> Dict[str, object]:
         prototypes, bank_debug = self.prototype_bank(return_debug=True)
@@ -566,10 +526,7 @@ class PrototypeConditionedTextHead(nn.Module):
         image_embeddings: torch.Tensor,
         image_local_tokens: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        debug_metrics: Dict[str, torch.Tensor] = {
-            'host_deflated_input_enabled': image_embeddings.new_tensor(float(self.use_host_deflated_input)).detach(),
-            'host_deflated_input_applied': image_embeddings.new_zeros(()).detach(),
-        }
+        debug_metrics: Dict[str, torch.Tensor] = {}
         if image_local_tokens is None:
             fallback_tokens = image_embeddings.unsqueeze(1)
             return self.local_routing_adapter(self.image_adapter(fallback_tokens)), debug_metrics
@@ -583,13 +540,7 @@ class PrototypeConditionedTextHead(nn.Module):
         local_tokens = image_local_tokens[:, 1:, :] if image_local_tokens.size(1) > 1 else image_local_tokens
         if local_tokens.size(1) <= 0:
             local_tokens = image_local_tokens
-        if self.use_host_deflated_input:
-            local_tokens, host_deflated_debug = self.compute_host_deflated_patch_tokens(
-                patch_tokens=local_tokens,
-                img_global=image_embeddings,
-            )
-            debug_metrics.update(host_deflated_debug)
-            debug_metrics['host_deflated_input_applied'] = image_embeddings.new_tensor(1.0).detach()
+        debug_metrics['local_token_norm_mean'] = local_tokens.norm(dim=-1).mean().detach()
         local_tokens = self.image_adapter(local_tokens)
         local_tokens = self.local_routing_adapter(local_tokens)
         if local_tokens.size(-1) != self.prototype_dim:
@@ -665,8 +616,8 @@ class PrototypeConditionedTextHead(nn.Module):
         routing_weights = routing_outputs['routing_weights']
         routing_debug = routing_outputs['routing_debug']
         summary, aggregator_debug = self.aggregator(routing_weights, contextualized_prototypes, return_debug=True)
-        # Prototype score anchor uses visual global features plus a compact projection of query summary q_i.
-        image_proxy_features = image_features + self.proto_query_proj(summary)
+        # Residual summary injection is disabled; keep image path anchored to adapted host image features.
+        image_proxy_features = image_features
         image_projected, image_projector_debug = self.image_projector(image_proxy_features, return_debug=True)
 
         outputs = {

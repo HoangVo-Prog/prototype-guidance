@@ -70,7 +70,6 @@ prototype:
   local_routing_use_adapter: true
   local_routing_adapter_dim:
   local_routing_normalize_inputs: true
-  use_host_deflated_input: true
   contextualization_enabled: true
   contextualization_type: self_attention
   contextualization_residual: false

@@ -164,15 +164,6 @@ def build_parser():
     parser.add_argument('--prototype_local_routing_use_adapter', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--prototype_local_routing_adapter_dim', type=int, default=None)
     parser.add_argument('--prototype_local_routing_normalize_inputs', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument(
-        '--prototype_use_host_deflated_input',
-        '--use_host_deflated_input',
-        dest='prototype_use_host_deflated_input',
-        type=_str2bool,
-        nargs='?',
-        const=True,
-        default=False,
-    )
     parser.add_argument('--prototype_contextualization_enabled', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--prototype_contextualization_type', type=str, default='self_attention')
     parser.add_argument('--prototype_contextualization_residual', type=_str2bool, nargs='?', const=True, default=True)
@@ -487,7 +478,6 @@ def _finalize_args(args):
     else:
         args.prototype_local_routing_adapter_dim = int(local_adapter_dim)
     args.prototype_local_routing_normalize_inputs = bool(getattr(args, 'prototype_local_routing_normalize_inputs', True))
-    args.prototype_use_host_deflated_input = bool(getattr(args, 'prototype_use_host_deflated_input', False))
     args.use_loss_weight_ret = bool(getattr(args, 'use_loss_weight_ret', False))
     args.lambda_weight_ret = float(getattr(args, 'lambda_weight_ret', 0.0))
     args.weight_ret_margin_delta = float(getattr(args, 'weight_ret_margin_delta', 0.0))

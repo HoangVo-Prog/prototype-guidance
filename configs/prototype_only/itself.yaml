@@ -52,7 +52,6 @@ prototype:
   dead_prototype_threshold: 0.005
 
   routing_source: global
-  use_host_deflated_input: false
 
 fusion:
   enabled: true

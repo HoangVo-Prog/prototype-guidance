@@ -44,9 +44,6 @@ def build_prototype_head(
     local_routing_normalize_inputs = bool(
         getattr(args, 'prototype_local_routing_normalize_inputs', getattr(args, 'local_routing_normalize_inputs', True))
     )
-    use_host_deflated_input = bool(
-        getattr(args, 'prototype_use_host_deflated_input', getattr(args, 'use_host_deflated_input', False))
-    )
     use_loss_weight_ret = bool(getattr(args, 'use_loss_weight_ret', False))
     lambda_weight_ret = float(getattr(args, 'lambda_weight_ret', 0.0))
     weight_ret_margin_delta = float(getattr(args, 'weight_ret_margin_delta', 0.0))
@@ -145,7 +142,6 @@ def build_prototype_head(
         local_routing_use_adapter=local_routing_use_adapter,
         local_routing_adapter_dim=local_routing_adapter_dim,
         local_routing_normalize_inputs=local_routing_normalize_inputs,
-        use_host_deflated_input=use_host_deflated_input,
         token_scoring_type=token_scoring_type,
         token_temperature=token_temperature,
         token_policy=getattr(args, 'token_policy', 'content_only'),

@@ -74,7 +74,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'local_routing_use_adapter'): 'prototype_local_routing_use_adapter',
     ('prototype', 'local_routing_adapter_dim'): 'prototype_local_routing_adapter_dim',
     ('prototype', 'local_routing_normalize_inputs'): 'prototype_local_routing_normalize_inputs',
-    ('prototype', 'use_host_deflated_input'): 'prototype_use_host_deflated_input',
     ('prototype', 'contextualization_enabled'): 'prototype_contextualization_enabled',
     ('prototype', 'contextualization_type'): 'prototype_contextualization_type',
     ('prototype', 'contextualization_residual'): 'prototype_contextualization_residual',
