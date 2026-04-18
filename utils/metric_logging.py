@@ -21,6 +21,7 @@ TRAIN_LOSS_KEYS = (
     'loss_proxy_text',
     'loss_proxy_text_exact',
     'loss_ret',
+    'loss_semantic_pbt',
     'loss_weight_ret',
     'loss_align',
     'loss_diag',
@@ -33,6 +34,7 @@ TRAIN_LOSS_KEYS = (
     'loss_proxy_text_exact_weighted',
     'loss_proxy_weighted',
     'loss_ret_weighted',
+    'loss_semantic_pbt_weighted',
     'loss_weight_ret_weighted',
     'loss_align_weighted',
     'loss_gap_weighted',
@@ -211,6 +213,23 @@ DEBUG_METRIC_MAP = {
     'contextualized_prototype_pairwise_cosine_std': 'debug/contextualized_prototype_pairwise_cosine_std',
     'contextualized_prototype_pairwise_cosine_max': 'debug/contextualized_prototype_pairwise_cosine_max',
     'prototype_contextualization_entropy': 'debug/prototype_contextualization_entropy',
+    'prototype_method_role_semantic_structure': 'debug/prototype_method_role_semantic_structure',
+    'prototype_semantic_enabled': 'debug/prototype_semantic_enabled',
+    'semantic_structure_enabled': 'debug/semantic_structure_enabled',
+    'prototype_source_recomputed': 'debug/prototype_source_recomputed',
+    'semantic_recompute_count': 'debug/semantic_recompute_count',
+    'semantic_recompute_last_epoch': 'debug/semantic_recompute_last_epoch',
+    'semantic_recompute_last_step': 'debug/semantic_recompute_last_step',
+    'semantic_recompute_triggered': 'debug/semantic_recompute_triggered',
+    'semantic_recompute_skipped_no_features': 'debug/semantic_recompute_skipped_no_features',
+    'semantic_empty_cluster_reseed_events': 'debug/semantic_empty_cluster_reseed_events',
+    'semantic_active_cluster_count': 'debug/semantic_active_cluster_count',
+    'semantic_empty_cluster_count': 'debug/semantic_empty_cluster_count',
+    'semantic_assignment_entropy_image': 'debug/semantic_assignment_entropy_image',
+    'semantic_assignment_entropy_teacher': 'debug/semantic_assignment_entropy_teacher',
+    'semantic_target_entropy': 'debug/semantic_target_entropy',
+    'semantic_pbt_valid_cluster_count': 'debug/semantic_pbt_valid_cluster_count',
+    'semantic_pbt_empty_cluster_count': 'debug/semantic_pbt_empty_cluster_count',
     'q_norm': 'debug/q_norm',
     'surrogate_t_pool_norm': 'debug/surrogate_t_pool_norm',
     'exact_t_pool_norm': 'debug/exact_t_pool_norm',
@@ -313,6 +332,7 @@ _LOSS_BASE_SUFFIX_MAP = {
     'loss_proxy_text': 'proxy_text',
     'loss_proxy_text_exact': 'proxy_text_exact',
     'loss_ret': 'ret',
+    'loss_semantic_pbt': 'semantic_pbt',
     'loss_weight_ret': 'weight_ret',
     'loss_align': 'align',
     'loss_dir': 'dir',
@@ -331,6 +351,7 @@ _LOSS_WEIGHTED_SUFFIX_MAP = {
     'loss_proxy_text_exact_weighted': 'proxy_text_exact',
     'loss_proxy_weighted': 'proxy',
     'loss_ret_weighted': 'ret',
+    'loss_semantic_pbt_weighted': 'semantic_pbt',
     'loss_weight_ret_weighted': 'weight_ret',
     'loss_align_weighted': 'align',
     'loss_dir_weighted': 'dir',
@@ -469,6 +490,13 @@ def map_train_diagnostic_key(raw_key: str) -> str:
         return f'train/proxy/{raw_key}'
     if raw_key.startswith('prototype_pairwise_') or raw_key.startswith('contextualized_prototype_pairwise_') or raw_key == 'prototype_contextualization_entropy':
         return f'train/prototype_geometry/{raw_key}'
+    if raw_key.startswith('semantic_') or raw_key in {
+        'prototype_source_recomputed',
+        'prototype_semantic_enabled',
+        'semantic_structure_enabled',
+        'prototype_method_role_semantic_structure',
+    }:
+        return f'train/semantic/{raw_key}'
     if raw_key.startswith('grad_norm_') or raw_key == 'surrogate_retrieval_grad_norm':
         return f'train/grad/{raw_key}'
     return f'train/model/{raw_key}'

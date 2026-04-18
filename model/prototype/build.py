@@ -50,6 +50,38 @@ def build_prototype_head(
     weight_ret_tau = float(getattr(args, 'weight_ret_tau', 0.5))
     weight_ret_detach_host = bool(getattr(args, 'weight_ret_detach_host', True))
     weight_ret_normalize_mean_one = bool(getattr(args, 'weight_ret_normalize_mean_one', True))
+    prototype_method_role = str(getattr(args, 'prototype_method_role', 'retrieval_branch')).lower()
+    prototype_semantic_enabled = bool(getattr(args, 'prototype_semantic_enabled', prototype_method_role == 'semantic_structure'))
+    semantic_structure_enabled = bool(getattr(args, 'semantic_structure_enabled', prototype_semantic_enabled))
+    prototype_recompute_enabled = bool(
+        getattr(args, 'prototype_recompute_enabled', prototype_semantic_enabled and prototype_method_role == 'semantic_structure')
+    )
+    prototype_bank_source = str(getattr(args, 'prototype_bank_source', 'learnable_legacy')).lower()
+    prototype_contextualization_mode = str(getattr(args, 'prototype_contextualization_mode', 'legacy')).lower()
+    prototype_contextualization_residual_alpha = float(getattr(args, 'prototype_contextualization_residual_alpha', 1.0))
+    prototype_contextualization_detach_base = bool(getattr(args, 'prototype_contextualization_detach_base', False))
+    prototype_use_contextualized_for_routing = bool(getattr(args, 'prototype_use_contextualized_for_routing', True))
+    prototype_use_base_for_semantic_targets = bool(getattr(args, 'prototype_use_base_for_semantic_targets', True))
+    semantic_feature_space = str(getattr(args, 'semantic_feature_space', 'prototype_projected')).lower()
+    semantic_pbt_enabled = bool(getattr(args, 'semantic_pbt_enabled', True))
+    semantic_soft_target_enabled = bool(getattr(args, 'semantic_soft_target_enabled', True))
+    semantic_target_temperature = float(getattr(args, 'semantic_target_temperature', 0.01))
+    semantic_pred_temperature = float(getattr(args, 'semantic_pred_temperature', 0.07))
+    semantic_recompute_schedule = str(getattr(args, 'semantic_recompute_schedule', 'epoch')).lower()
+    semantic_recompute_interval = int(getattr(args, 'semantic_recompute_interval', 1))
+    semantic_min_cluster_count_for_pbt = float(getattr(args, 'semantic_min_cluster_count_for_pbt', 1.0))
+    semantic_empty_cluster_policy = str(getattr(args, 'semantic_empty_cluster_policy', 'skip')).lower()
+    semantic_text_teacher_source = str(getattr(args, 'semantic_text_teacher_source', 'exact_diagonal')).lower()
+    semantic_text_student_source = str(getattr(args, 'semantic_text_student_source', 'surrogate_diagonal')).lower()
+    semantic_image_student_source = str(getattr(args, 'semantic_image_student_source', 'image_semantic_feature')).lower()
+    semantic_recompute_start_epoch = max(int(getattr(args, 'semantic_recompute_start_epoch', 0)), 0)
+    semantic_recompute_start_step = max(int(getattr(args, 'semantic_recompute_start_step', 0)), 0)
+    semantic_loss_ramp_start_epoch = max(int(getattr(args, 'semantic_loss_ramp_start_epoch', 0)), 0)
+    semantic_loss_ramp_start_step = max(int(getattr(args, 'semantic_loss_ramp_start_step', 0)), 0)
+    semantic_loss_ramp_epochs = max(int(getattr(args, 'semantic_loss_ramp_epochs', 0)), 0)
+    semantic_loss_ramp_steps = max(int(getattr(args, 'semantic_loss_ramp_steps', 0)), 0)
+    use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
+    lambda_semantic_pbt = float(getattr(args, 'lambda_semantic_pbt', 0.0))
 
     common_kwargs = dict(
         input_dim=input_dim,
@@ -92,12 +124,24 @@ def build_prototype_head(
         diag_temperature=getattr(args, 'diag_temperature', 0.07),
         use_loss_ret=getattr(args, 'use_loss_ret', True),
         lambda_ret=getattr(args, 'lambda_ret', 1.0),
+        use_loss_semantic_pbt=use_loss_semantic_pbt,
+        lambda_semantic_pbt=lambda_semantic_pbt,
         use_loss_weight_ret=use_loss_weight_ret,
         lambda_weight_ret=lambda_weight_ret,
         weight_ret_margin_delta=weight_ret_margin_delta,
         weight_ret_tau=weight_ret_tau,
         weight_ret_detach_host=weight_ret_detach_host,
         weight_ret_normalize_mean_one=weight_ret_normalize_mean_one,
+        prototype_method_role=prototype_method_role,
+        prototype_semantic_enabled=prototype_semantic_enabled,
+        semantic_structure_enabled=semantic_structure_enabled,
+        semantic_feature_space=semantic_feature_space,
+        semantic_pbt_enabled=semantic_pbt_enabled,
+        semantic_soft_target_enabled=semantic_soft_target_enabled,
+        semantic_target_temperature=semantic_target_temperature,
+        semantic_pred_temperature=semantic_pred_temperature,
+        semantic_min_cluster_count_for_pbt=semantic_min_cluster_count_for_pbt,
+        semantic_empty_cluster_policy=semantic_empty_cluster_policy,
         contrastive_temperature_init=getattr(args, 'temperature', 0.07),
     )
 
@@ -142,6 +186,34 @@ def build_prototype_head(
         local_routing_use_adapter=local_routing_use_adapter,
         local_routing_adapter_dim=local_routing_adapter_dim,
         local_routing_normalize_inputs=local_routing_normalize_inputs,
+        prototype_method_role=prototype_method_role,
+        prototype_semantic_enabled=prototype_semantic_enabled,
+        prototype_recompute_enabled=prototype_recompute_enabled,
+        prototype_bank_source=prototype_bank_source,
+        prototype_contextualization_mode=prototype_contextualization_mode,
+        prototype_contextualization_residual_alpha=prototype_contextualization_residual_alpha,
+        prototype_contextualization_detach_base=prototype_contextualization_detach_base,
+        prototype_use_contextualized_for_routing=prototype_use_contextualized_for_routing,
+        prototype_use_base_for_semantic_targets=prototype_use_base_for_semantic_targets,
+        semantic_structure_enabled=semantic_structure_enabled,
+        semantic_feature_space=semantic_feature_space,
+        semantic_pbt_enabled=semantic_pbt_enabled,
+        semantic_soft_target_enabled=semantic_soft_target_enabled,
+        semantic_target_temperature=semantic_target_temperature,
+        semantic_pred_temperature=semantic_pred_temperature,
+        semantic_recompute_schedule=semantic_recompute_schedule,
+        semantic_recompute_interval=semantic_recompute_interval,
+        semantic_min_cluster_count_for_pbt=semantic_min_cluster_count_for_pbt,
+        semantic_empty_cluster_policy=semantic_empty_cluster_policy,
+        semantic_text_teacher_source=semantic_text_teacher_source,
+        semantic_text_student_source=semantic_text_student_source,
+        semantic_image_student_source=semantic_image_student_source,
+        semantic_recompute_start_epoch=semantic_recompute_start_epoch,
+        semantic_recompute_start_step=semantic_recompute_start_step,
+        semantic_loss_ramp_start_epoch=semantic_loss_ramp_start_epoch,
+        semantic_loss_ramp_start_step=semantic_loss_ramp_start_step,
+        semantic_loss_ramp_epochs=semantic_loss_ramp_epochs,
+        semantic_loss_ramp_steps=semantic_loss_ramp_steps,
         token_scoring_type=token_scoring_type,
         token_temperature=token_temperature,
         token_policy=getattr(args, 'token_policy', 'content_only'),
@@ -179,6 +251,8 @@ def build_prototype_head(
         diag_temperature=getattr(args, 'diag_temperature', 0.07),
         use_loss_ret=getattr(args, 'use_loss_ret', True),
         lambda_ret=getattr(args, 'lambda_ret', 1.0),
+        use_loss_semantic_pbt=use_loss_semantic_pbt,
+        lambda_semantic_pbt=lambda_semantic_pbt,
         use_loss_weight_ret=use_loss_weight_ret,
         lambda_weight_ret=lambda_weight_ret,
         weight_ret_margin_delta=weight_ret_margin_delta,

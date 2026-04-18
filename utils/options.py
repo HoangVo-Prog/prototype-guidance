@@ -59,6 +59,10 @@ def build_parser():
     parser.add_argument('--model_variant', default='pas_v1')
     parser.add_argument('--training_mode', type=str, default='pas')
     parser.add_argument('--runtime_mode', type=str, default='auto')
+    parser.add_argument('--prototype_method_role', type=str, default='retrieval_branch')
+    parser.add_argument('--prototype_semantic_enabled', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--prototype_recompute_enabled', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--prototype_inference_mode', type=str, default='auto')
     parser.add_argument('--pretrain_choice', default='ViT-B/16')
     parser.add_argument('--image_backbone', default='clip_visual')
     parser.add_argument('--text_backbone', default='clip_text_transformer')
@@ -123,6 +127,8 @@ def build_parser():
     parser.add_argument('--use_loss_ret', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--retrieval_mode', type=str, default='surrogate_i2t')
     parser.add_argument('--lambda_ret', type=float, default=0.5)
+    parser.add_argument('--use_loss_semantic_pbt', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--lambda_semantic_pbt', type=float, default=0.0)
     parser.add_argument('--use_loss_weight_ret', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_weight_ret', type=float, default=0.0)
     parser.add_argument('--weight_ret_margin_delta', type=float, default=0.0)
@@ -167,8 +173,33 @@ def build_parser():
     parser.add_argument('--prototype_contextualization_enabled', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--prototype_contextualization_type', type=str, default='self_attention')
     parser.add_argument('--prototype_contextualization_residual', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--prototype_bank_source', type=str, default='learnable_legacy')
+    parser.add_argument('--prototype_contextualization_mode', type=str, default='legacy')
+    parser.add_argument('--prototype_contextualization_residual_alpha', type=float, default=1.0)
+    parser.add_argument('--prototype_contextualization_detach_base', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--prototype_use_contextualized_for_routing', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--prototype_use_base_for_semantic_targets', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--normalize_for_self_interaction', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--normalize_for_routing', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--semantic_structure_enabled', type=_str2bool, nargs='?', const=True, default=None)
+    parser.add_argument('--semantic_feature_space', type=str, default='prototype_projected')
+    parser.add_argument('--semantic_pbt_enabled', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--semantic_soft_target_enabled', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--semantic_target_temperature', type=float, default=0.01)
+    parser.add_argument('--semantic_pred_temperature', type=float, default=0.07)
+    parser.add_argument('--semantic_recompute_schedule', type=str, default='epoch')
+    parser.add_argument('--semantic_recompute_interval', type=int, default=1)
+    parser.add_argument('--semantic_min_cluster_count_for_pbt', type=float, default=1.0)
+    parser.add_argument('--semantic_empty_cluster_policy', type=str, default='skip')
+    parser.add_argument('--semantic_text_teacher_source', type=str, default='exact_diagonal')
+    parser.add_argument('--semantic_text_student_source', type=str, default='surrogate_diagonal')
+    parser.add_argument('--semantic_image_student_source', type=str, default='image_semantic_feature')
+    parser.add_argument('--semantic_recompute_start_epoch', type=int, default=0)
+    parser.add_argument('--semantic_recompute_start_step', type=int, default=0)
+    parser.add_argument('--semantic_loss_ramp_start_epoch', type=int, default=0)
+    parser.add_argument('--semantic_loss_ramp_start_step', type=int, default=0)
+    parser.add_argument('--semantic_loss_ramp_epochs', type=int, default=0)
+    parser.add_argument('--semantic_loss_ramp_steps', type=int, default=0)
     parser.add_argument('--use_balancing_loss', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_bal', '--prototype_balance_loss_weight', dest='prototype_balance_loss_weight', type=float, default=0.0)
     parser.add_argument('--prototype_dead_threshold', type=float, default=0.005)
@@ -386,6 +417,11 @@ def _finalize_args(args):
     args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
     args.runtime_mode = str(getattr(args, 'runtime_mode', 'auto')).lower()
     args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
+    args.prototype_method_role = str(getattr(args, 'prototype_method_role', 'retrieval_branch')).lower()
+    if args.prototype_method_role not in {'retrieval_branch', 'semantic_structure'}:
+        raise ValueError(
+            f'prototype_method_role must be one of [\"retrieval_branch\", \"semantic_structure\"], got {args.prototype_method_role!r}.'
+        )
     config_data = getattr(args, 'config_data', {}) or {}
     training_config = config_data.get('training', {}) if isinstance(config_data.get('training', {}), dict) else {}
     checkpointing_config = config_data.get('checkpointing', {}) if isinstance(config_data.get('checkpointing', {}), dict) else {}
@@ -401,6 +437,92 @@ def _finalize_args(args):
             selection_metric = str(selection_metric).strip()
             args.prototype_selection_metric = selection_metric if selection_metric else None
     args.retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
+
+    def _has_override_path(section_name, key_name):
+        section = override_config_data.get(section_name, {})
+        return isinstance(section, dict) and key_name in section
+
+    def _has_nested_override_path(section_name, nested_name, key_name):
+        section = override_config_data.get(section_name, {})
+        if not isinstance(section, dict):
+            return False
+        nested = section.get(nested_name, {})
+        return isinstance(nested, dict) and key_name in nested
+
+    def _is_explicit_bool(dest_name, section_name, key_name, default_value):
+        if dest_name in cli_dests:
+            return bool(getattr(args, dest_name))
+        if _has_override_path(section_name, key_name):
+            return bool(getattr(args, dest_name))
+        value = getattr(args, dest_name)
+        if value is None:
+            return bool(default_value)
+        return bool(value)
+
+    semantic_mode_selected = args.prototype_method_role == 'semantic_structure'
+    args.prototype_semantic_enabled = _is_explicit_bool(
+        'prototype_semantic_enabled',
+        'model',
+        'prototype_semantic_enabled',
+        default_value=semantic_mode_selected,
+    )
+    args.semantic_structure_enabled = _is_explicit_bool(
+        'semantic_structure_enabled',
+        'semantic_structure',
+        'enabled',
+        default_value=args.prototype_semantic_enabled,
+    )
+    args.prototype_recompute_enabled = _is_explicit_bool(
+        'prototype_recompute_enabled',
+        'model',
+        'prototype_recompute_enabled',
+        default_value=(semantic_mode_selected and args.semantic_structure_enabled),
+    )
+    args.prototype_bank_source = str(getattr(args, 'prototype_bank_source', 'learnable_legacy')).lower()
+    if args.prototype_bank_source in {'', 'auto'}:
+        args.prototype_bank_source = 'recomputed_kmeans' if semantic_mode_selected else 'learnable_legacy'
+    args.prototype_contextualization_mode = str(getattr(args, 'prototype_contextualization_mode', 'legacy')).lower()
+    contextualization_mode_explicit = (
+        ('prototype_contextualization_mode' in cli_dests)
+        or _has_override_path('prototype', 'contextualization_mode')
+    )
+    if semantic_mode_selected and not contextualization_mode_explicit and args.prototype_contextualization_mode in {'legacy', ''}:
+        args.prototype_contextualization_mode = 'residual_attention'
+    args.prototype_contextualization_residual_alpha = float(
+        getattr(args, 'prototype_contextualization_residual_alpha', 1.0)
+    )
+    args.prototype_contextualization_detach_base = bool(
+        getattr(args, 'prototype_contextualization_detach_base', False)
+    )
+    args.prototype_use_contextualized_for_routing = bool(
+        getattr(args, 'prototype_use_contextualized_for_routing', True)
+    )
+    args.prototype_use_base_for_semantic_targets = bool(
+        getattr(args, 'prototype_use_base_for_semantic_targets', True)
+    )
+    args.semantic_feature_space = str(getattr(args, 'semantic_feature_space', 'prototype_projected')).lower()
+    args.semantic_pbt_enabled = bool(getattr(args, 'semantic_pbt_enabled', True))
+    args.semantic_soft_target_enabled = bool(getattr(args, 'semantic_soft_target_enabled', True))
+    args.semantic_target_temperature = float(getattr(args, 'semantic_target_temperature', 0.01))
+    args.semantic_pred_temperature = float(getattr(args, 'semantic_pred_temperature', 0.07))
+    args.semantic_recompute_schedule = str(getattr(args, 'semantic_recompute_schedule', 'epoch')).lower()
+    args.semantic_recompute_interval = int(getattr(args, 'semantic_recompute_interval', 1))
+    args.semantic_min_cluster_count_for_pbt = float(getattr(args, 'semantic_min_cluster_count_for_pbt', 1.0))
+    args.semantic_empty_cluster_policy = str(getattr(args, 'semantic_empty_cluster_policy', 'skip')).lower()
+    args.semantic_text_teacher_source = str(getattr(args, 'semantic_text_teacher_source', 'exact_diagonal')).lower()
+    args.semantic_text_student_source = str(getattr(args, 'semantic_text_student_source', 'surrogate_diagonal')).lower()
+    args.semantic_image_student_source = str(getattr(args, 'semantic_image_student_source', 'image_semantic_feature')).lower()
+    args.semantic_recompute_start_epoch = max(int(getattr(args, 'semantic_recompute_start_epoch', 0)), 0)
+    args.semantic_recompute_start_step = max(int(getattr(args, 'semantic_recompute_start_step', 0)), 0)
+    args.semantic_loss_ramp_start_epoch = max(int(getattr(args, 'semantic_loss_ramp_start_epoch', 0)), 0)
+    args.semantic_loss_ramp_start_step = max(int(getattr(args, 'semantic_loss_ramp_start_step', 0)), 0)
+    args.semantic_loss_ramp_epochs = max(int(getattr(args, 'semantic_loss_ramp_epochs', 0)), 0)
+    args.semantic_loss_ramp_steps = max(int(getattr(args, 'semantic_loss_ramp_steps', 0)), 0)
+    args.prototype_inference_mode = str(getattr(args, 'prototype_inference_mode', 'auto')).lower()
+    if args.prototype_inference_mode in {'', 'auto'}:
+        args.prototype_inference_mode = 'host_only' if semantic_mode_selected else 'legacy_fused'
+    if args.prototype_inference_mode == 'fused':
+        args.prototype_inference_mode = 'legacy_fused'
     if args.fusion_enabled is None:
         args.fusion_enabled = args.use_prototype_branch
     args.fusion_enabled = bool(args.fusion_enabled) and args.use_prototype_branch
@@ -464,6 +586,64 @@ def _finalize_args(args):
     args.support_min = float(args.prototype_support_target)
     args.use_loss_ret = bool(args.use_loss_ret)
     args.lambda_ret = float(args.lambda_ret)
+    args.use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
+    args.lambda_semantic_pbt = float(getattr(args, 'lambda_semantic_pbt', 0.0))
+    semantic_loss_explicit = (
+        ('use_loss_semantic_pbt' in cli_dests)
+        or _has_override_path('loss', 'use_loss_semantic_pbt')
+        or _has_nested_override_path('objectives', 'objectives', 'use_loss_semantic_pbt')
+    )
+    semantic_lambda_explicit = (
+        ('lambda_semantic_pbt' in cli_dests)
+        or _has_override_path('loss', 'lambda_semantic_pbt')
+        or _has_nested_override_path('objectives', 'lambda', 'semantic_pbt')
+    )
+    if semantic_mode_selected and not semantic_loss_explicit:
+        args.use_loss_semantic_pbt = bool(args.semantic_structure_enabled and args.semantic_pbt_enabled)
+    if semantic_mode_selected and not semantic_lambda_explicit:
+        args.lambda_semantic_pbt = 1.0 if args.use_loss_semantic_pbt else 0.0
+    if not args.use_loss_semantic_pbt:
+        args.lambda_semantic_pbt = 0.0
+
+    # In semantic-structure mode, legacy retrieval-side losses stay available but default to off
+    # unless the user explicitly enables them.
+    ret_loss_explicit = (
+        ('use_loss_ret' in cli_dests)
+        or _has_override_path('loss', 'use_loss_ret')
+        or _has_nested_override_path('objectives', 'objectives', 'use_loss_ret')
+    )
+    ret_lambda_explicit = (
+        ('lambda_ret' in cli_dests)
+        or _has_override_path('loss', 'lambda_ret')
+        or _has_nested_override_path('objectives', 'lambda', 'ret')
+    )
+    support_loss_explicit = (
+        ('use_loss_support' in cli_dests)
+        or ('use_loss_sup' in cli_dests)
+        or _has_override_path('loss', 'use_loss_support')
+        or _has_override_path('loss', 'use_loss_sup')
+        or _has_nested_override_path('objectives', 'objectives', 'use_loss_support')
+        or _has_nested_override_path('objectives', 'objectives', 'use_loss_sup')
+    )
+    support_lambda_explicit = (
+        ('lambda_support' in cli_dests)
+        or ('lambda_sup' in cli_dests)
+        or _has_override_path('loss', 'lambda_support')
+        or _has_override_path('loss', 'lambda_sup')
+        or _has_nested_override_path('objectives', 'lambda', 'support')
+        or _has_nested_override_path('objectives', 'lambda', 'sup')
+    )
+    if semantic_mode_selected and not ret_loss_explicit:
+        args.use_loss_ret = False
+    if semantic_mode_selected and not ret_lambda_explicit:
+        args.lambda_ret = 0.0
+    if semantic_mode_selected and not support_loss_explicit:
+        args.use_loss_sup = False
+        args.use_loss_support = False
+    if semantic_mode_selected and not support_lambda_explicit:
+        args.lambda_sup = 0.0
+        args.lambda_support = 0.0
+
     args.prototype_routing_source = str(getattr(args, 'prototype_routing_source', 'global')).lower()
     args.prototype_local_routing_temperature = getattr(args, 'prototype_local_routing_temperature', None)
     if args.prototype_local_routing_temperature in ('', None):

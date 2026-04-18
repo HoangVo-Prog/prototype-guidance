@@ -502,6 +502,7 @@ def _do_train_runtime(
             with build_autocast_context(args, device):
                 outputs = model(
                     batch,
+                    epoch=epoch,
                     current_step=current_steps,
                     disable_proxy_losses=(resolved_runtime_mode == RUNTIME_MODE_CALIBRATION_ONLY),
                 )

@@ -13,6 +13,14 @@ experiment:
 model:
   name: ITSELF
   variant: itself_base
+  # Method-role split:
+  # - retrieval_branch: legacy prototype retrieval scorer path
+  # - semantic_structure: prototype as semantic regularizer
+  prototype_method_role: retrieval_branch
+  prototype_semantic_enabled: false
+  prototype_recompute_enabled: false
+  # auto -> legacy_fused (retrieval_branch), host_only (semantic_structure)
+  prototype_inference_mode: auto
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
   text_backbone: clip_text_transformer
@@ -73,9 +81,36 @@ prototype:
   contextualization_enabled: false
   contextualization_type: none
   contextualization_residual: false
+  bank_source: learnable_legacy
+  contextualization_mode: legacy
+  contextualization_residual_alpha: 1.0
+  contextualization_detach_base: false
+  use_contextualized_for_routing: true
+  use_base_for_semantic_targets: true
   normalize_for_self_interaction: true
   normalize_for_routing: true
   dead_prototype_threshold: 0.005
+
+semantic_structure:
+  enabled: false
+  feature_space: prototype_projected
+  pbt_enabled: true
+  soft_target_enabled: true
+  target_temperature: 0.01
+  pred_temperature: 0.07
+  recompute_schedule: epoch
+  recompute_interval: 1
+  min_cluster_count_for_pbt: 1.0
+  empty_cluster_policy: skip
+  text_teacher_source: exact_diagonal
+  text_student_source: surrogate_diagonal
+  image_student_source: image_semantic_feature
+  recompute_start_epoch: 0
+  recompute_start_step: 0
+  loss_ramp_start_epoch: 0
+  loss_ramp_start_step: 0
+  loss_ramp_epochs: 0
+  loss_ramp_steps: 0
 
 fusion:
   enabled: true

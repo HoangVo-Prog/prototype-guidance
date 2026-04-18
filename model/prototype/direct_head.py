@@ -53,12 +53,24 @@ class DirectImageConditionedTextHead(nn.Module):
         diag_temperature: float = 0.07,
         use_loss_ret: bool = True,
         lambda_ret: float = 1.0,
+        use_loss_semantic_pbt: bool = False,
+        lambda_semantic_pbt: float = 0.0,
         use_loss_weight_ret: bool = False,
         lambda_weight_ret: float = 0.0,
         weight_ret_margin_delta: float = 0.0,
         weight_ret_tau: float = 0.5,
         weight_ret_detach_host: bool = True,
         weight_ret_normalize_mean_one: bool = True,
+        prototype_method_role: str = 'retrieval_branch',
+        prototype_semantic_enabled: bool = False,
+        semantic_structure_enabled: bool = False,
+        semantic_feature_space: str = 'prototype_projected',
+        semantic_pbt_enabled: bool = True,
+        semantic_soft_target_enabled: bool = True,
+        semantic_target_temperature: float = 0.01,
+        semantic_pred_temperature: float = 0.07,
+        semantic_min_cluster_count_for_pbt: float = 1.0,
+        semantic_empty_cluster_policy: str = 'skip',
         contrastive_temperature_init: float = 0.07,
     ):
         super().__init__()
@@ -68,6 +80,11 @@ class DirectImageConditionedTextHead(nn.Module):
         self.projector_output_dim = int(projector_output_dim)
         self.use_image_conditioned_pooling = bool(use_image_conditioned_pooling)
         self.uses_prototype_bank = False
+        self.prototype_method_role = str(prototype_method_role).lower()
+        self.prototype_semantic_enabled = bool(prototype_semantic_enabled)
+        self.semantic_structure_enabled = bool(semantic_structure_enabled)
+        self.semantic_feature_space = str(semantic_feature_space).lower()
+        self.semantic_pbt_enabled = bool(semantic_pbt_enabled)
 
         self.image_adapter = image_adapter if image_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
         self.text_adapter = text_adapter if text_adapter is not None else (nn.Identity() if self.input_dim == self.prototype_dim else nn.Linear(self.input_dim, self.prototype_dim))
@@ -133,12 +150,24 @@ class DirectImageConditionedTextHead(nn.Module):
             diag_temperature=diag_temperature,
             use_loss_ret=use_loss_ret,
             lambda_ret=lambda_ret,
+            use_loss_semantic_pbt=use_loss_semantic_pbt,
+            lambda_semantic_pbt=lambda_semantic_pbt,
             use_loss_weight_ret=use_loss_weight_ret,
             lambda_weight_ret=lambda_weight_ret,
             weight_ret_margin_delta=weight_ret_margin_delta,
             weight_ret_tau=weight_ret_tau,
             weight_ret_detach_host=weight_ret_detach_host,
             weight_ret_normalize_mean_one=weight_ret_normalize_mean_one,
+            prototype_method_role=prototype_method_role,
+            prototype_semantic_enabled=prototype_semantic_enabled,
+            semantic_structure_enabled=semantic_structure_enabled,
+            semantic_feature_space=semantic_feature_space,
+            semantic_pbt_enabled=semantic_pbt_enabled,
+            semantic_soft_target_enabled=semantic_soft_target_enabled,
+            semantic_target_temperature=semantic_target_temperature,
+            semantic_pred_temperature=semantic_pred_temperature,
+            semantic_min_cluster_count_for_pbt=semantic_min_cluster_count_for_pbt,
+            semantic_empty_cluster_policy=semantic_empty_cluster_policy,
             use_loss_support=resolved_use_loss_sup,
             support_loss_weight=resolved_lambda_sup,
             support_min=resolved_support_target,
@@ -420,6 +449,11 @@ class DirectImageConditionedTextHead(nn.Module):
         text_embed_norms = text_projector_debug['projected_features_raw'].norm(dim=-1)
         text_embed_unit_norms = text_projector_debug['projected_features'].norm(dim=-1)
         metrics = {
+            'prototype_method_role_semantic_structure': image_outputs['summary'].new_tensor(
+                float(self.prototype_method_role == 'semantic_structure')
+            ).detach(),
+            'prototype_semantic_enabled': image_outputs['summary'].new_tensor(float(self.prototype_semantic_enabled)).detach(),
+            'semantic_structure_enabled': image_outputs['summary'].new_tensor(float(self.semantic_structure_enabled)).detach(),
             'q_norm': image_outputs['summary'].norm(dim=-1).mean().detach(),
             't_pool_norm': exact_outputs['pooled_text'].norm(dim=-1).mean().detach(),
             'surrogate_t_pool_norm': exact_outputs['pooled_text'].norm(dim=-1).mean().detach(),
@@ -468,9 +502,12 @@ class DirectImageConditionedTextHead(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         host_pairwise_logits: Optional[torch.Tensor] = None,
+        epoch: Optional[int] = None,
+        current_step: Optional[int] = None,
         return_debug: bool = False,
         disable_proxy_losses: bool = False,
     ) -> Dict[str, object]:
+        del epoch, current_step
         image_outputs = self.encode_image_branch(
             image_embeddings,
             image_local_tokens=image_local_tokens,
@@ -510,6 +547,11 @@ class DirectImageConditionedTextHead(nn.Module):
             routing_weights=None,
             surrogate_pairwise_logits=surrogate_pairwise_logits,
             host_pairwise_logits=host_pairwise_logits,
+            semantic_image_student_embeddings=image_outputs['image_projected'],
+            semantic_text_student_embeddings=exact_outputs['text_projected'],
+            semantic_text_teacher_embeddings=exact_outputs['text_projected'],
+            semantic_base_prototypes=None,
+            semantic_loss_scale=None,
             return_debug=return_debug,
             disable_proxy_losses=disable_proxy_losses,
         )

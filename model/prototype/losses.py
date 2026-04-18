@@ -36,12 +36,24 @@ class PrototypeLosses(nn.Module):
         diag_temperature: float = 0.07,
         use_loss_ret: bool = True,
         lambda_ret: float = 1.0,
+        use_loss_semantic_pbt: bool = False,
+        lambda_semantic_pbt: float = 0.0,
         use_loss_weight_ret: bool = False,
         lambda_weight_ret: float = 0.0,
         weight_ret_margin_delta: float = 0.0,
         weight_ret_tau: float = 0.5,
         weight_ret_detach_host: bool = True,
         weight_ret_normalize_mean_one: bool = True,
+        prototype_method_role: str = 'retrieval_branch',
+        prototype_semantic_enabled: bool = False,
+        semantic_structure_enabled: bool = False,
+        semantic_feature_space: str = 'prototype_projected',
+        semantic_pbt_enabled: bool = True,
+        semantic_soft_target_enabled: bool = True,
+        semantic_target_temperature: float = 0.01,
+        semantic_pred_temperature: float = 0.07,
+        semantic_min_cluster_count_for_pbt: float = 1.0,
+        semantic_empty_cluster_policy: str = 'skip',
         use_loss_support: bool = False,
         support_loss_weight: float = 0.0,
         support_min: float = 2.0,
@@ -93,12 +105,24 @@ class PrototypeLosses(nn.Module):
         self.fidelity_gap_margin = float(fidelity_gap_margin)
         self.use_loss_ret = bool(use_loss_ret)
         self.lambda_ret = float(lambda_ret)
+        self.use_loss_semantic_pbt = bool(use_loss_semantic_pbt)
+        self.lambda_semantic_pbt = float(lambda_semantic_pbt)
         self.use_loss_weight_ret = bool(use_loss_weight_ret)
         self.lambda_weight_ret = float(lambda_weight_ret)
         self.weight_ret_margin_delta = float(weight_ret_margin_delta)
         self.weight_ret_tau = float(weight_ret_tau)
         self.weight_ret_detach_host = bool(weight_ret_detach_host)
         self.weight_ret_normalize_mean_one = bool(weight_ret_normalize_mean_one)
+        self.prototype_method_role = str(prototype_method_role).lower()
+        self.prototype_semantic_enabled = bool(prototype_semantic_enabled)
+        self.semantic_structure_enabled = bool(semantic_structure_enabled)
+        self.semantic_feature_space = str(semantic_feature_space).lower()
+        self.semantic_pbt_enabled = bool(semantic_pbt_enabled)
+        self.semantic_soft_target_enabled = bool(semantic_soft_target_enabled)
+        self.semantic_target_temperature = float(semantic_target_temperature)
+        self.semantic_pred_temperature = float(semantic_pred_temperature)
+        self.semantic_min_cluster_count_for_pbt = float(semantic_min_cluster_count_for_pbt)
+        self.semantic_empty_cluster_policy = str(semantic_empty_cluster_policy).lower()
         self.use_loss_sup = resolved_use_loss_sup
         self.lambda_sup = resolved_lambda_sup
         self.support_target = resolved_support_target
@@ -119,6 +143,17 @@ class PrototypeLosses(nn.Module):
             raise ValueError('fidelity_gap_margin must be non-negative.')
         if self.weight_ret_tau <= 0.0:
             raise ValueError('weight_ret_tau must be positive.')
+        if self.semantic_target_temperature <= 0.0:
+            raise ValueError('semantic_target_temperature must be positive.')
+        if self.semantic_pred_temperature <= 0.0:
+            raise ValueError('semantic_pred_temperature must be positive.')
+        if self.semantic_min_cluster_count_for_pbt <= 0.0:
+            raise ValueError('semantic_min_cluster_count_for_pbt must be positive.')
+        if self.semantic_empty_cluster_policy not in {'skip', 'reseed'}:
+            raise ValueError(
+                f'Unsupported semantic_empty_cluster_policy={self.semantic_empty_cluster_policy!r}. '
+                'Allowed values: ["skip", "reseed"].'
+            )
 
 
         initial_logit_scale = torch.log(torch.tensor(1.0 / temperature_init, dtype=torch.float32))
@@ -493,6 +528,138 @@ class PrototypeLosses(nn.Module):
             return lhs_flat.new_zeros(())
         return (lhs_centered * rhs_centered).mean() / denom
 
+    def _semantic_mode_enabled(self) -> bool:
+        return bool(
+            self.prototype_method_role == 'semantic_structure'
+            and self.prototype_semantic_enabled
+            and self.semantic_structure_enabled
+            and self.semantic_pbt_enabled
+        )
+
+    def _soft_cross_entropy(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        log_probs = F.log_softmax(logits, dim=-1)
+        return (-(targets * log_probs).sum(dim=-1)).mean()
+
+    def _semantic_pbt_loss(
+        self,
+        *,
+        image_student: Optional[torch.Tensor],
+        text_student: Optional[torch.Tensor],
+        text_teacher: Optional[torch.Tensor],
+        base_prototypes: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        reference = image_student
+        if not isinstance(reference, torch.Tensor):
+            for candidate in (text_student, text_teacher, base_prototypes):
+                if isinstance(candidate, torch.Tensor):
+                    reference = candidate
+                    break
+        if not isinstance(reference, torch.Tensor):
+            device = self.logit_scale.device
+            reference = torch.zeros(1, self.embedding_dim, device=device, dtype=torch.float32)
+        zero = reference.new_zeros(())
+        outputs = {
+            'loss': zero,
+            'assignment_entropy_image': zero.detach(),
+            'assignment_entropy_teacher': zero.detach(),
+            'valid_cluster_count': zero.detach(),
+            'empty_cluster_count': zero.detach(),
+            'target_entropy': zero.detach(),
+        }
+        if not self._semantic_mode_enabled():
+            return outputs
+        if not (
+            isinstance(image_student, torch.Tensor)
+            and isinstance(text_student, torch.Tensor)
+            and isinstance(text_teacher, torch.Tensor)
+            and isinstance(base_prototypes, torch.Tensor)
+        ):
+            return outputs
+        if image_student.ndim != 2 or text_student.ndim != 2 or text_teacher.ndim != 2 or base_prototypes.ndim != 2:
+            return outputs
+        if image_student.size(0) == 0 or base_prototypes.size(0) == 0:
+            return outputs
+
+        anchors = F.normalize(base_prototypes.detach().float(), dim=-1)
+        image_student_norm = F.normalize(image_student.float(), dim=-1)
+        text_student_norm = F.normalize(text_student.float(), dim=-1)
+        text_teacher_norm = F.normalize(text_teacher.detach().float(), dim=-1)
+
+        teacher_assignment_logits = text_teacher_norm @ anchors.t()
+        image_assignment_logits = image_student_norm.detach() @ anchors.t()
+        teacher_assignment = torch.softmax(teacher_assignment_logits / self.semantic_target_temperature, dim=-1)
+        image_assignment = torch.softmax(image_assignment_logits / self.semantic_target_temperature, dim=-1)
+
+        anchor_similarity = anchors @ anchors.t()
+        proto_rel_targets = torch.softmax(anchor_similarity / self.semantic_target_temperature, dim=-1)
+        teacher_targets = teacher_assignment @ proto_rel_targets
+        image_targets = image_assignment @ proto_rel_targets
+        if not self.semantic_soft_target_enabled:
+            teacher_targets = F.one_hot(teacher_targets.argmax(dim=-1), num_classes=teacher_targets.size(-1)).to(dtype=teacher_targets.dtype)
+            image_targets = F.one_hot(image_targets.argmax(dim=-1), num_classes=image_targets.size(-1)).to(dtype=image_targets.dtype)
+
+        teacher_counts = teacher_assignment.sum(dim=0)
+        image_counts = image_assignment.sum(dim=0)
+        valid_mask = torch.logical_and(
+            teacher_counts >= float(self.semantic_min_cluster_count_for_pbt),
+            image_counts >= float(self.semantic_min_cluster_count_for_pbt),
+        )
+        if not valid_mask.any():
+            outputs['empty_cluster_count'] = teacher_counts.new_tensor(float(teacher_counts.numel())).detach()
+            return outputs
+
+        if self.semantic_empty_cluster_policy == 'reseed':
+            # Lightweight reseed: borrow teacher anchors for invalid clusters so logits remain finite.
+            invalid_mask = ~valid_mask
+            if invalid_mask.any():
+                teacher_counts = teacher_counts.clone()
+                image_counts = image_counts.clone()
+                teacher_counts[invalid_mask] = 1.0
+                image_counts[invalid_mask] = 1.0
+                teacher_assignment = teacher_assignment.clone()
+                image_assignment = image_assignment.clone()
+                teacher_assignment[:, invalid_mask] = teacher_assignment[:, valid_mask].mean(dim=-1, keepdim=True)
+                image_assignment[:, invalid_mask] = image_assignment[:, valid_mask].mean(dim=-1, keepdim=True)
+
+        teacher_centroids = (teacher_assignment.detach().t() @ text_student_norm.detach()) / teacher_counts.clamp_min(1e-12).unsqueeze(-1)
+        image_centroids = (image_assignment.detach().t() @ image_student_norm.detach()) / image_counts.clamp_min(1e-12).unsqueeze(-1)
+        teacher_centroids = F.normalize(teacher_centroids, dim=-1)
+        image_centroids = F.normalize(image_centroids, dim=-1)
+
+        valid_indices = valid_mask.nonzero(as_tuple=False).squeeze(-1)
+        teacher_targets_valid = teacher_targets[:, valid_indices].detach()
+        image_targets_valid = image_targets[:, valid_indices].detach()
+        teacher_centroids_valid = teacher_centroids[valid_indices].detach()
+        image_centroids_valid = image_centroids[valid_indices].detach()
+
+        teacher_logits = (text_student_norm @ teacher_centroids_valid.t()) / self.semantic_pred_temperature
+        image_logits = (image_student_norm @ image_centroids_valid.t()) / self.semantic_pred_temperature
+        teacher_targets_valid = teacher_targets_valid / teacher_targets_valid.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+        image_targets_valid = image_targets_valid / image_targets_valid.sum(dim=-1, keepdim=True).clamp_min(1e-12)
+
+        loss_teacher = self._soft_cross_entropy(teacher_logits, teacher_targets_valid)
+        loss_image = self._soft_cross_entropy(image_logits, image_targets_valid)
+        loss_semantic = 0.5 * (loss_teacher + loss_image)
+
+        teacher_entropy = -(teacher_assignment * teacher_assignment.clamp_min(1e-12).log()).sum(dim=-1).mean()
+        image_entropy = -(image_assignment * image_assignment.clamp_min(1e-12).log()).sum(dim=-1).mean()
+        target_entropy = -(
+            0.5 * (teacher_targets_valid + image_targets_valid)
+            * (0.5 * (teacher_targets_valid + image_targets_valid)).clamp_min(1e-12).log()
+        ).sum(dim=-1).mean()
+
+        outputs.update(
+            {
+                'loss': loss_semantic,
+                'assignment_entropy_image': image_entropy.detach(),
+                'assignment_entropy_teacher': teacher_entropy.detach(),
+                'valid_cluster_count': valid_mask.sum().to(dtype=loss_semantic.dtype).detach(),
+                'empty_cluster_count': (~valid_mask).sum().to(dtype=loss_semantic.dtype).detach(),
+                'target_entropy': target_entropy.detach(),
+            }
+        )
+        return outputs
+
     def forward(
         self,
         image_embeddings: torch.Tensor,
@@ -503,6 +670,11 @@ class PrototypeLosses(nn.Module):
         routing_weights: Optional[torch.Tensor] = None,
         surrogate_pairwise_logits: Optional[torch.Tensor] = None,
         host_pairwise_logits: Optional[torch.Tensor] = None,
+        semantic_image_student_embeddings: Optional[torch.Tensor] = None,
+        semantic_text_student_embeddings: Optional[torch.Tensor] = None,
+        semantic_text_teacher_embeddings: Optional[torch.Tensor] = None,
+        semantic_base_prototypes: Optional[torch.Tensor] = None,
+        semantic_loss_scale: Optional[float] = None,
         return_debug: bool = False,
         disable_proxy_losses: bool = False,
     ) -> Dict[str, torch.Tensor]:
@@ -586,6 +758,17 @@ class PrototypeLosses(nn.Module):
         loss_ret_weighted = self.lambda_ret * loss_ret
         loss_weight_ret = loss_weight_ret_info['loss'] if self.use_loss_weight_ret else zero
         loss_weight_ret_weighted = self.lambda_weight_ret * loss_weight_ret
+        semantic_info = self._semantic_pbt_loss(
+            image_student=semantic_image_student_embeddings,
+            text_student=semantic_text_student_embeddings,
+            text_teacher=semantic_text_teacher_embeddings,
+            base_prototypes=semantic_base_prototypes,
+        )
+        loss_semantic_pbt = semantic_info['loss'] if self.use_loss_semantic_pbt else zero
+        semantic_scale = 1.0 if semantic_loss_scale is None else float(semantic_loss_scale)
+        if semantic_scale < 0.0:
+            semantic_scale = 0.0
+        loss_semantic_pbt_weighted = self.lambda_semantic_pbt * semantic_scale * loss_semantic_pbt
         loss_sup = self.support_loss(routing_weights)
         loss_diversity = zero
         loss_balance = zero
@@ -595,6 +778,7 @@ class PrototypeLosses(nn.Module):
         loss_total = (
             loss_ret_weighted
             + loss_weight_ret_weighted
+            + loss_semantic_pbt_weighted
             + loss_dir_weighted
             + loss_gap_weighted
             + loss_sup_weighted
@@ -643,6 +827,7 @@ class PrototypeLosses(nn.Module):
             'loss_proxy_text': loss_proxy_text,
             'loss_proxy_text_exact': loss_proxy_text_exact,
             'loss_ret': loss_ret,
+            'loss_semantic_pbt': loss_semantic_pbt,
             'loss_weight_ret': loss_weight_ret,
             'loss_align': loss_align,
             'loss_dir': loss_dir,
@@ -658,6 +843,7 @@ class PrototypeLosses(nn.Module):
             'loss_proxy_text_exact_weighted': loss_proxy_text_exact_weighted,
             'loss_proxy_weighted': loss_proxy_weighted,
             'loss_ret_weighted': loss_ret_weighted,
+            'loss_semantic_pbt_weighted': loss_semantic_pbt_weighted,
             'loss_weight_ret_weighted': loss_weight_ret_weighted,
             'loss_align_weighted': zero,
             'loss_dir_weighted': loss_dir_weighted,
@@ -676,6 +862,9 @@ class PrototypeLosses(nn.Module):
             'use_loss_proxy_text_exact': torch.tensor(float(self.use_loss_proxy_text_exact), device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_ret': torch.tensor(float(self.use_loss_ret), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_ret': torch.tensor(self.lambda_ret, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_semantic_pbt': torch.tensor(float(self.use_loss_semantic_pbt), device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_semantic_pbt': torch.tensor(self.lambda_semantic_pbt, device=loss_total.device, dtype=loss_total.dtype),
+            'semantic_loss_scale': torch.tensor(semantic_scale, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_weight_ret': torch.tensor(float(self.use_loss_weight_ret), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_weight_ret': torch.tensor(self.lambda_weight_ret, device=loss_total.device, dtype=loss_total.dtype),
             'weight_ret_margin_delta': torch.tensor(self.weight_ret_margin_delta, device=loss_total.device, dtype=loss_total.dtype),
@@ -721,6 +910,11 @@ class PrototypeLosses(nn.Module):
                 'proto_score_mean': proto_score_mean,
                 'proto_diag_mean': proto_diag_mean,
                 'proto_host_score_corr': proto_host_score_corr,
+                'semantic_assignment_entropy_image': semantic_info['assignment_entropy_image'],
+                'semantic_assignment_entropy_teacher': semantic_info['assignment_entropy_teacher'],
+                'semantic_target_entropy': semantic_info['target_entropy'],
+                'semantic_pbt_valid_cluster_count': semantic_info['valid_cluster_count'],
+                'semantic_pbt_empty_cluster_count': semantic_info['empty_cluster_count'],
                 **self._proxy_debug_metrics('image', loss_proxy_image_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
                 **self._proxy_debug_metrics('text', loss_proxy_text_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
                 **self._proxy_debug_metrics('text_exact', loss_proxy_text_exact_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),

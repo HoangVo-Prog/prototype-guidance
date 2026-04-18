@@ -19,6 +19,10 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'variant'): 'model_variant',
     ('model', 'training_mode'): 'training_mode',
     ('model', 'runtime_mode'): 'runtime_mode',
+    ('model', 'prototype_method_role'): 'prototype_method_role',
+    ('model', 'prototype_semantic_enabled'): 'prototype_semantic_enabled',
+    ('model', 'prototype_recompute_enabled'): 'prototype_recompute_enabled',
+    ('model', 'prototype_inference_mode'): 'prototype_inference_mode',
     ('model', 'pretrain_choice'): 'pretrain_choice',
     ('model', 'image_backbone'): 'image_backbone',
     ('model', 'text_backbone'): 'text_backbone',
@@ -77,9 +81,35 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'contextualization_enabled'): 'prototype_contextualization_enabled',
     ('prototype', 'contextualization_type'): 'prototype_contextualization_type',
     ('prototype', 'contextualization_residual'): 'prototype_contextualization_residual',
+    ('prototype', 'bank_source'): 'prototype_bank_source',
+    ('prototype', 'contextualization_mode'): 'prototype_contextualization_mode',
+    ('prototype', 'contextualization_residual_alpha'): 'prototype_contextualization_residual_alpha',
+    ('prototype', 'contextualization_detach_base'): 'prototype_contextualization_detach_base',
+    ('prototype', 'use_contextualized_for_routing'): 'prototype_use_contextualized_for_routing',
+    ('prototype', 'use_base_for_semantic_targets'): 'prototype_use_base_for_semantic_targets',
     ('prototype', 'normalize_for_self_interaction'): 'normalize_for_self_interaction',
     ('prototype', 'normalize_for_routing'): 'normalize_for_routing',
     ('prototype', 'dead_prototype_threshold'): 'prototype_dead_threshold',
+
+    ('semantic_structure', 'enabled'): 'semantic_structure_enabled',
+    ('semantic_structure', 'feature_space'): 'semantic_feature_space',
+    ('semantic_structure', 'pbt_enabled'): 'semantic_pbt_enabled',
+    ('semantic_structure', 'soft_target_enabled'): 'semantic_soft_target_enabled',
+    ('semantic_structure', 'target_temperature'): 'semantic_target_temperature',
+    ('semantic_structure', 'pred_temperature'): 'semantic_pred_temperature',
+    ('semantic_structure', 'recompute_schedule'): 'semantic_recompute_schedule',
+    ('semantic_structure', 'recompute_interval'): 'semantic_recompute_interval',
+    ('semantic_structure', 'min_cluster_count_for_pbt'): 'semantic_min_cluster_count_for_pbt',
+    ('semantic_structure', 'empty_cluster_policy'): 'semantic_empty_cluster_policy',
+    ('semantic_structure', 'text_teacher_source'): 'semantic_text_teacher_source',
+    ('semantic_structure', 'text_student_source'): 'semantic_text_student_source',
+    ('semantic_structure', 'image_student_source'): 'semantic_image_student_source',
+    ('semantic_structure', 'recompute_start_epoch'): 'semantic_recompute_start_epoch',
+    ('semantic_structure', 'recompute_start_step'): 'semantic_recompute_start_step',
+    ('semantic_structure', 'loss_ramp_start_epoch'): 'semantic_loss_ramp_start_epoch',
+    ('semantic_structure', 'loss_ramp_start_step'): 'semantic_loss_ramp_start_step',
+    ('semantic_structure', 'loss_ramp_epochs'): 'semantic_loss_ramp_epochs',
+    ('semantic_structure', 'loss_ramp_steps'): 'semantic_loss_ramp_steps',
 
     ('fusion', 'enabled'): 'fusion_enabled',
     ('fusion', 'lambda_host'): 'fusion_lambda_host',
@@ -99,6 +129,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('objectives', 'objectives', 'prototype_gap_margin'): 'prototype_gap_margin',
     ('objectives', 'objectives', 'prototype_support_target'): 'prototype_support_target',
     ('objectives', 'objectives', 'use_loss_ret'): 'use_loss_ret',
+    ('objectives', 'objectives', 'use_loss_semantic_pbt'): 'use_loss_semantic_pbt',
     ('objectives', 'objectives', 'use_loss_weight_ret'): 'use_loss_weight_ret',
     ('objectives', 'objectives', 'retrieval_mode'): 'retrieval_mode',
     ('objectives', 'objectives', 'weight_ret_margin_delta'): 'weight_ret_margin_delta',
@@ -118,6 +149,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('objectives', 'lambda', 'gap'): 'lambda_gap',
     ('objectives', 'lambda', 'support'): 'lambda_sup',
     ('objectives', 'lambda', 'ret'): 'lambda_ret',
+    ('objectives', 'lambda', 'semantic_pbt'): 'lambda_semantic_pbt',
     ('objectives', 'lambda', 'weight_ret'): 'lambda_weight_ret',
     ('objectives', 'lambda', 'balance'): 'prototype_balance_loss_weight',
     ('objectives', 'lambda', 'diversity'): 'diversity_loss_weight',
@@ -230,6 +262,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'training_stage'): 'training_stage',
     ('training', 'runtime_mode'): 'runtime_mode',
+    ('training', 'prototype_method_role'): 'prototype_method_role',
     ('training', 'num_epoch'): 'num_epoch',
     ('training', 'eval_period'): 'eval_period',
     ('optimizer', 'optimizer'): 'optimizer',
@@ -246,6 +279,12 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'local_routing_use_adapter'): 'prototype_local_routing_use_adapter',
     ('prototype', 'local_routing_adapter_dim'): 'prototype_local_routing_adapter_dim',
     ('prototype', 'local_routing_normalize_inputs'): 'prototype_local_routing_normalize_inputs',
+    ('prototype', 'bank_source'): 'prototype_bank_source',
+    ('prototype', 'contextualization_mode'): 'prototype_contextualization_mode',
+    ('prototype', 'contextualization_residual_alpha'): 'prototype_contextualization_residual_alpha',
+    ('prototype', 'contextualization_detach_base'): 'prototype_contextualization_detach_base',
+    ('prototype', 'use_contextualized_for_routing'): 'prototype_use_contextualized_for_routing',
+    ('prototype', 'use_base_for_semantic_targets'): 'prototype_use_base_for_semantic_targets',
     ('prototype', 'use_balancing_loss'): 'use_balancing_loss',
     ('prototype', 'balance_loss_weight'): 'prototype_balance_loss_weight',
     ('prototype', 'use_diversity_loss'): 'use_diversity_loss',
@@ -297,9 +336,11 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('loss', 'lambda_diag'): 'lambda_dir',
     ('loss', 'diag_temperature'): 'diag_temperature',
     ('loss', 'use_loss_ret'): 'use_loss_ret',
+    ('loss', 'use_loss_semantic_pbt'): 'use_loss_semantic_pbt',
     ('loss', 'use_loss_weight_ret'): 'use_loss_weight_ret',
     ('loss', 'retrieval_mode'): 'retrieval_mode',
     ('loss', 'lambda_ret'): 'lambda_ret',
+    ('loss', 'lambda_semantic_pbt'): 'lambda_semantic_pbt',
     ('loss', 'lambda_weight_ret'): 'lambda_weight_ret',
     ('loss', 'weight_ret_margin_delta'): 'weight_ret_margin_delta',
     ('loss', 'weight_ret_tau'): 'weight_ret_tau',
@@ -334,7 +375,9 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'lambda_diag'): 'lambda_dir',
     ('training', 'diag_temperature'): 'diag_temperature',
     ('training', 'use_loss_ret'): 'use_loss_ret',
+    ('training', 'use_loss_semantic_pbt'): 'use_loss_semantic_pbt',
     ('training', 'lambda_ret'): 'lambda_ret',
+    ('training', 'lambda_semantic_pbt'): 'lambda_semantic_pbt',
     ('training', 'use_loss_weight_ret'): 'use_loss_weight_ret',
     ('training', 'lambda_weight_ret'): 'lambda_weight_ret',
     ('training', 'weight_ret_margin_delta'): 'weight_ret_margin_delta',
@@ -373,6 +416,7 @@ SECTION_TEMPLATE = {
     'model': {},
     'host': {},
     'prototype': {},
+    'semantic_structure': {},
     'fusion': {},
     'objectives': {
         'objectives': {},
@@ -447,6 +491,8 @@ UNSUPPORTED_CONFIG_PATHS = {
 CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('model', 'training_mode'): ('pas', 'vanilla_clip'),
     ('model', 'runtime_mode'): ('auto', 'host_only', 'prototype_only', 'fused_external', 'joint_training', 'calibration_only'),
+    ('model', 'prototype_method_role'): ('retrieval_branch', 'semantic_structure'),
+    ('model', 'prototype_inference_mode'): ('auto', 'host_only', 'legacy_fused', 'prototype_only', 'fused'),
     ('host', 'type'): ('clip', 'itself'),
     ('host', 'itself_topk_type'): ('mean', 'std', 'layer_index', 'custom'),
     ('model', 'projector_type'): ('mlp2', 'linear'),
@@ -462,10 +508,17 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ),
     ('prototype', 'routing_type'): ('cosine', 'dot'),
     ('prototype', 'contextualization_type'): ('self_attention', 'dense_self_attention', 'none'),
+    ('prototype', 'bank_source'): ('learnable_legacy', 'recomputed_kmeans', 'auto'),
+    ('prototype', 'contextualization_mode'): ('legacy', 'none', 'residual_attention'),
     ('text_pooling', 'token_policy'): ('content_only', 'content_plus_special', 'eos_only'),
     ('text_pooling', 'scoring_type'): ('cosine', 'dot'),
     ('objectives', 'objectives', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
     ('loss', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
+    ('semantic_structure', 'recompute_schedule'): ('epoch', 'steps', 'stage'),
+    ('semantic_structure', 'empty_cluster_policy'): ('skip', 'reseed'),
+    ('semantic_structure', 'text_teacher_source'): ('exact_diagonal',),
+    ('semantic_structure', 'text_student_source'): ('surrogate_diagonal',),
+    ('semantic_structure', 'image_student_source'): ('image_semantic_feature',),
     ('training', 'amp_dtype'): tuple(AMP_DTYPE_ALIASES.keys()),
     ('training', 'stage'): ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     ('optimizer', 'type'): ('SGD', 'Adam', 'AdamW'),
@@ -479,6 +532,8 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
 RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'training_mode': ('pas', 'vanilla_clip'),
     'runtime_mode': ('auto', 'host_only', 'prototype_only', 'fused_external', 'joint_training', 'calibration_only'),
+    'prototype_method_role': ('retrieval_branch', 'semantic_structure'),
+    'prototype_inference_mode': ('auto', 'host_only', 'legacy_fused', 'prototype_only', 'fused'),
     'host_type': ('clip', 'itself'),
     'itself_topk_type': ('mean', 'std', 'layer_index', 'custom'),
     'projector_type': ('mlp2', 'linear'),
@@ -494,9 +549,16 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     ),
     'prototype_routing_type': ('cosine', 'dot'),
     'prototype_contextualization_type': ('self_attention', 'dense_self_attention', 'none'),
+    'prototype_bank_source': ('learnable_legacy', 'recomputed_kmeans', 'auto'),
+    'prototype_contextualization_mode': ('legacy', 'none', 'residual_attention'),
     'token_policy': ('content_only', 'content_plus_special', 'eos_only'),
     'token_scoring_type': ('cosine', 'dot'),
     'retrieval_mode': ('surrogate_i2t', 'clip_bidirectional'),
+    'semantic_recompute_schedule': ('epoch', 'steps', 'stage'),
+    'semantic_empty_cluster_policy': ('skip', 'reseed'),
+    'semantic_text_teacher_source': ('exact_diagonal',),
+    'semantic_text_student_source': ('surrogate_diagonal',),
+    'semantic_image_student_source': ('image_semantic_feature',),
     'amp_dtype': tuple(AMP_DTYPE_ALIASES.keys()),
     'training_stage': ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     'optimizer': ('SGD', 'Adam', 'AdamW'),
@@ -884,6 +946,12 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     use_prototype_bank = bool(flat.get('use_prototype_bank', use_prototype_branch))
     use_image_conditioned_pooling = bool(flat.get('use_image_conditioned_pooling', use_prototype_branch))
     retrieval_mode = str(flat.get('retrieval_mode', 'surrogate_i2t')).lower()
+    prototype_method_role = str(flat.get('prototype_method_role', 'retrieval_branch')).lower()
+    semantic_target_temperature = float(flat.get('semantic_target_temperature', 0.01))
+    semantic_pred_temperature = float(flat.get('semantic_pred_temperature', 0.07))
+    semantic_recompute_interval = int(flat.get('semantic_recompute_interval', 1))
+    semantic_min_cluster_count_for_pbt = float(flat.get('semantic_min_cluster_count_for_pbt', 1.0))
+    use_loss_semantic_pbt = bool(flat.get('use_loss_semantic_pbt', False))
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -923,6 +991,20 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
             'model.use_prototype_bank=true requires model.use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'
         )
+    if prototype_method_role == 'semantic_structure' and not use_prototype_branch:
+        raise ValueError(
+            'model.prototype_method_role=semantic_structure requires model.use_prototype_branch=true.'
+        )
+    if semantic_target_temperature <= 0.0:
+        raise ValueError('semantic_structure.target_temperature must be positive.')
+    if semantic_pred_temperature <= 0.0:
+        raise ValueError('semantic_structure.pred_temperature must be positive.')
+    if semantic_recompute_interval <= 0:
+        raise ValueError('semantic_structure.recompute_interval must be a positive integer.')
+    if semantic_min_cluster_count_for_pbt <= 0.0:
+        raise ValueError('semantic_structure.min_cluster_count_for_pbt must be positive.')
+    if use_loss_semantic_pbt and not use_prototype_branch:
+        raise ValueError('loss.use_loss_semantic_pbt requires model.use_prototype_branch=true.')
 
     training_config = config_data.get('training', {})
     if isinstance(training_config, dict) and 'freeze_schedule' in training_config:
@@ -967,6 +1049,12 @@ def validate_runtime_args_namespace(args) -> None:
     use_prototype_bank = bool(getattr(args, 'use_prototype_bank', use_prototype_branch))
     use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', use_prototype_branch))
     retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
+    prototype_method_role = str(getattr(args, 'prototype_method_role', 'retrieval_branch')).lower()
+    semantic_target_temperature = float(getattr(args, 'semantic_target_temperature', 0.01))
+    semantic_pred_temperature = float(getattr(args, 'semantic_pred_temperature', 0.07))
+    semantic_recompute_interval = int(getattr(args, 'semantic_recompute_interval', 1))
+    semantic_min_cluster_count_for_pbt = float(getattr(args, 'semantic_min_cluster_count_for_pbt', 1.0))
+    use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -1006,6 +1094,18 @@ def validate_runtime_args_namespace(args) -> None:
             'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'
         )
+    if prototype_method_role == 'semantic_structure' and not use_prototype_branch:
+        raise ValueError('prototype_method_role=semantic_structure requires use_prototype_branch=true.')
+    if semantic_target_temperature <= 0.0:
+        raise ValueError('semantic_target_temperature must be positive.')
+    if semantic_pred_temperature <= 0.0:
+        raise ValueError('semantic_pred_temperature must be positive.')
+    if semantic_recompute_interval <= 0:
+        raise ValueError('semantic_recompute_interval must be a positive integer.')
+    if semantic_min_cluster_count_for_pbt <= 0.0:
+        raise ValueError('semantic_min_cluster_count_for_pbt must be positive.')
+    if use_loss_semantic_pbt and not use_prototype_branch:
+        raise ValueError('use_loss_semantic_pbt requires use_prototype_branch=true.')
 
 
 

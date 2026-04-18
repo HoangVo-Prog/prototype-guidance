@@ -314,6 +314,8 @@ class PrototypePlugin(nn.Module):
         *,
         interface: HostPluginInterface,
         pids: Optional[torch.Tensor],
+        epoch: Optional[int],
+        current_step: Optional[int],
         return_debug: bool,
         disable_proxy_losses: bool,
     ) -> Dict[str, object]:
@@ -332,6 +334,8 @@ class PrototypePlugin(nn.Module):
             attention_mask=interface.attention_mask,
             special_token_positions=interface.special_token_positions,
             host_pairwise_logits=interface.host_pairwise_logits,
+            epoch=epoch,
+            current_step=current_step,
             return_debug=return_debug,
             disable_proxy_losses=disable_proxy_losses,
         )
@@ -355,7 +359,7 @@ class PrototypePlugin(nn.Module):
         return self.prototype_head.build_text_basis_bank(
             text_token_states=self.cast(text_token_states),
             token_ids=token_ids.long(),
-            contextualized_prototypes=self.cast(context['contextualized_prototypes']),
+            contextualized_prototypes=self.cast(context.get('routing_prototypes', context['contextualized_prototypes'])),
             attention_mask=attention_mask,
             special_token_positions=special_token_positions,
             return_debug=False,
@@ -515,6 +519,20 @@ class PASRuntimeModel(nn.Module):
         self.fusion_lambda_prototype = float(getattr(legacy_model, 'fusion_lambda_prototype', getattr(args, 'fusion_lambda_prototype', 0.0)))
         self.fusion_coefficient = float(getattr(legacy_model, 'fusion_coefficient', self.fusion_lambda_prototype))
         self.prototype_dim = int(getattr(legacy_model, 'prototype_dim', getattr(args, 'prototype_dim', 0) or 0))
+        self.prototype_method_role = str(getattr(args, 'prototype_method_role', getattr(legacy_model, 'prototype_method_role', 'retrieval_branch'))).lower()
+        self.prototype_semantic_enabled = bool(
+            getattr(args, 'prototype_semantic_enabled', getattr(legacy_model, 'prototype_semantic_enabled', self.prototype_method_role == 'semantic_structure'))
+        )
+        self.semantic_structure_enabled = bool(
+            getattr(args, 'semantic_structure_enabled', getattr(legacy_model, 'semantic_structure_enabled', self.prototype_semantic_enabled))
+        )
+        self.prototype_inference_mode = str(
+            getattr(args, 'prototype_inference_mode', getattr(legacy_model, 'prototype_inference_mode', 'auto'))
+        ).lower()
+        if self.prototype_inference_mode in {'', 'auto'}:
+            self.prototype_inference_mode = 'host_only' if self.prototype_method_role == 'semantic_structure' else 'legacy_fused'
+        if self.prototype_inference_mode == 'fused':
+            self.prototype_inference_mode = 'legacy_fused'
         self.host_export_interface_version = HOST_EXPORT_INTERFACE_VERSION
         self.host_score_schema_version = HOST_SCORE_SCHEMA_VERSION
         self.prototype_score_schema_version = PROTOTYPE_SCORE_SCHEMA_VERSION
@@ -710,6 +728,7 @@ class PASRuntimeModel(nn.Module):
             'loss_proxy_text': zero,
             'loss_proxy_text_exact': zero,
             'loss_ret': zero,
+            'loss_semantic_pbt': zero,
             'loss_align': zero,
             'loss_dir': zero,
             'loss_gap': zero,
@@ -723,6 +742,7 @@ class PASRuntimeModel(nn.Module):
             'loss_proxy_text_exact_weighted': zero,
             'loss_proxy_weighted': zero,
             'loss_ret_weighted': zero,
+            'loss_semantic_pbt_weighted': zero,
             'loss_weight_ret': zero,
             'loss_weight_ret_weighted': zero,
             'loss_align_weighted': zero,
@@ -742,6 +762,9 @@ class PASRuntimeModel(nn.Module):
             'use_loss_proxy_text_exact': zero,
             'use_loss_ret': zero,
             'lambda_ret': zero,
+            'use_loss_semantic_pbt': zero,
+            'lambda_semantic_pbt': zero,
+            'semantic_loss_scale': zero,
             'use_loss_weight_ret': zero,
             'lambda_weight_ret': zero,
             'weight_ret_margin_delta': zero,
@@ -899,9 +922,39 @@ class PASRuntimeModel(nn.Module):
             )
         return host_similarity.float(), prototype_similarity.float() if isinstance(prototype_similarity, torch.Tensor) else None
 
+    def _semantic_inference_active(self) -> bool:
+        return bool(
+            self.prototype_method_role == 'semantic_structure'
+            and self.prototype_semantic_enabled
+            and self.semantic_structure_enabled
+        )
+
+    def _resolve_inference_similarity(
+        self,
+        *,
+        host_similarity: torch.Tensor,
+        prototype_similarity: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        mode = str(self.prototype_inference_mode).lower()
+        if self._semantic_inference_active() and mode in {'host_only', 'legacy_fused'}:
+            # Semantic-structure mode defaults to host-authoritative retrieval scoring.
+            if mode == 'host_only':
+                return host_similarity.float()
+            # legacy_fused remains available for explicit ablation parity.
+        if mode == 'host_only':
+            return host_similarity.float()
+        if mode == 'prototype_only':
+            if not isinstance(prototype_similarity, torch.Tensor):
+                raise RuntimeError('prototype_inference_mode=prototype_only requires prototype similarity to be available.')
+            return prototype_similarity.float()
+        return self.fuse_retrieval_similarity(host_similarity, prototype_similarity)
+
     def compute_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
         host_similarity, prototype_similarity = self.compute_retrieval_similarity_components(image_features, text_features)
-        return self.fuse_retrieval_similarity(host_similarity, prototype_similarity)
+        return self._resolve_inference_similarity(
+            host_similarity=host_similarity,
+            prototype_similarity=prototype_similarity,
+        )
 
     def compute_approximate_retrieval_similarity_components(
         self,
@@ -932,7 +985,10 @@ class PASRuntimeModel(nn.Module):
             image_features=image_features,
             text_basis_features=text_basis_features,
         )
-        return self.fuse_retrieval_similarity(host_similarity, prototype_similarity)
+        return self._resolve_inference_similarity(
+            host_similarity=host_similarity,
+            prototype_similarity=prototype_similarity,
+        )
 
     def named_optimizer_groups(self) -> OrderedDict:
         groups = OrderedDict(
@@ -1001,7 +1057,6 @@ class PASRuntimeModel(nn.Module):
         return_debug: Optional[bool] = None,
         disable_proxy_losses: bool = False,
     ):
-        del epoch
         mode = self._current_runtime_mode()
         pids = batch.get('pids')
         should_return_debug = self.return_debug_outputs if return_debug is None else bool(return_debug)
@@ -1036,6 +1091,8 @@ class PASRuntimeModel(nn.Module):
             prototype_outputs = self.prototype_plugin.forward_from_interface(
                 interface=interface,
                 pids=pids,
+                epoch=epoch,
+                current_step=current_step,
                 return_debug=should_return_debug,
                 disable_proxy_losses=disable_proxy_losses,
             )
@@ -1090,6 +1147,7 @@ class PASRuntimeModel(nn.Module):
             'loss_proxy_text': prototype_losses['loss_proxy_text'],
             'loss_proxy_text_exact': prototype_losses['loss_proxy_text_exact'],
             'loss_ret': prototype_losses['loss_ret'],
+            'loss_semantic_pbt': prototype_losses.get('loss_semantic_pbt', metric_zero),
             'loss_align': prototype_losses['loss_align'],
             'loss_dir': prototype_losses['loss_dir'],
             'loss_gap': prototype_losses['loss_gap'],
@@ -1103,6 +1161,7 @@ class PASRuntimeModel(nn.Module):
             'loss_proxy_text_exact_weighted': prototype_losses['loss_proxy_text_exact_weighted'],
             'loss_proxy_weighted': prototype_losses['loss_proxy_weighted'],
             'loss_ret_weighted': prototype_losses['loss_ret_weighted'],
+            'loss_semantic_pbt_weighted': prototype_losses.get('loss_semantic_pbt_weighted', metric_zero),
             'loss_composer_calibration': calibration_loss,
             'loss_weight_ret': prototype_losses['loss_weight_ret'],
             'loss_weight_ret_weighted': prototype_losses['loss_weight_ret_weighted'],
@@ -1123,6 +1182,9 @@ class PASRuntimeModel(nn.Module):
             'use_loss_proxy_text_exact': prototype_losses['use_loss_proxy_text_exact'],
             'use_loss_ret': metric_use_loss_ret,
             'lambda_ret': metric_lambda_ret,
+            'use_loss_semantic_pbt': prototype_losses.get('use_loss_semantic_pbt', metric_zero),
+            'lambda_semantic_pbt': prototype_losses.get('lambda_semantic_pbt', metric_zero),
+            'semantic_loss_scale': prototype_losses.get('semantic_loss_scale', metric_zero),
             'use_loss_weight_ret': prototype_losses['use_loss_weight_ret'],
             'lambda_weight_ret': prototype_losses['lambda_weight_ret'],
             'weight_ret_margin_delta': prototype_losses['weight_ret_margin_delta'],
@@ -1166,6 +1228,11 @@ class PASRuntimeModel(nn.Module):
         outputs['debug']['fusion_lambda_host'] = self.fusion_lambda_host
         outputs['debug']['fusion_lambda_prototype'] = self.fusion_lambda_prototype
         outputs['debug']['runtime_mode'] = mode
+        outputs['debug']['prototype_method_role_semantic_structure'] = float(self.prototype_method_role == 'semantic_structure')
+        outputs['debug']['prototype_semantic_enabled'] = float(self.prototype_semantic_enabled)
+        outputs['debug']['semantic_structure_enabled'] = float(self.semantic_structure_enabled)
+        outputs['debug']['prototype_inference_host_only'] = float(self.prototype_inference_mode == 'host_only')
+        outputs['debug']['prototype_inference_legacy_fused'] = float(self.prototype_inference_mode == 'legacy_fused')
         outputs['debug']['loss_composer_calibration'] = calibration_loss.detach()
         outputs['debug']['host_loss_total'] = host_losses['loss_total'].detach()
         outputs['debug']['host_loss_ret'] = host_losses['loss_ret'].detach()
