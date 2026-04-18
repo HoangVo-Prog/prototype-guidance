@@ -764,6 +764,7 @@ class PASRuntimeModel(nn.Module):
             'lambda_ret': zero,
             'use_loss_semantic_pbt': zero,
             'lambda_semantic_pbt': zero,
+            'prototype_loss_scale': zero,
             'semantic_loss_scale': zero,
             'use_loss_weight_ret': zero,
             'lambda_weight_ret': zero,
@@ -1184,6 +1185,10 @@ class PASRuntimeModel(nn.Module):
             'lambda_ret': metric_lambda_ret,
             'use_loss_semantic_pbt': prototype_losses.get('use_loss_semantic_pbt', metric_zero),
             'lambda_semantic_pbt': prototype_losses.get('lambda_semantic_pbt', metric_zero),
+            'prototype_loss_scale': prototype_losses.get(
+                'prototype_loss_scale',
+                prototype_losses.get('semantic_loss_scale', metric_zero),
+            ),
             'semantic_loss_scale': prototype_losses.get('semantic_loss_scale', metric_zero),
             'use_loss_weight_ret': prototype_losses['use_loss_weight_ret'],
             'lambda_weight_ret': prototype_losses['lambda_weight_ret'],

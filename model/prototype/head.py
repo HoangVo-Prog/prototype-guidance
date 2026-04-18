@@ -548,9 +548,11 @@ class PrototypeConditionedTextHead(nn.Module):
             return False
         return True
 
-    def _semantic_loss_scale(self, *, epoch: Optional[int], current_step: Optional[int]) -> float:
+    def _prototype_loss_scale(self, *, epoch: Optional[int], current_step: Optional[int]) -> float:
         if not self._semantic_mode_enabled():
-            return 0.0
+            # Ramp controls are semantic-mode scheduling knobs; keep legacy retrieval
+            # behavior unaffected when semantic mode is not active.
+            return 1.0
         if not self._semantic_schedule_started(epoch=epoch, current_step=current_step):
             return 0.0
         scale = 1.0
@@ -561,6 +563,10 @@ class PrototypeConditionedTextHead(nn.Module):
             step_progress = (float(current_step) - float(self.semantic_loss_ramp_start_step) + 1.0) / float(self.semantic_loss_ramp_steps)
             scale = min(scale, max(0.0, min(step_progress, 1.0)))
         return float(max(scale, 0.0))
+
+    # Backward-compatible alias kept while downstream references migrate.
+    def _semantic_loss_scale(self, *, epoch: Optional[int], current_step: Optional[int]) -> float:
+        return self._prototype_loss_scale(epoch=epoch, current_step=current_step)
 
     def _should_recompute_semantic_anchors(self, *, epoch: Optional[int], current_step: Optional[int]) -> bool:
         if not self._semantic_mode_enabled():
@@ -1385,7 +1391,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 ).detach(),
             }
         )
-        semantic_loss_scale = self._semantic_loss_scale(epoch=epoch, current_step=current_step)
+        prototype_loss_scale = self._prototype_loss_scale(epoch=epoch, current_step=current_step)
         loss_outputs = self.losses(
             image_outputs['image_projected'],
             surrogate_text_projected,
@@ -1399,7 +1405,7 @@ class PrototypeConditionedTextHead(nn.Module):
             semantic_text_student_embeddings=surrogate_text_projected,
             semantic_text_teacher_embeddings=exact_outputs['text_projected'],
             semantic_base_prototypes=semantic_target_features,
-            semantic_loss_scale=semantic_loss_scale,
+            prototype_loss_scale=prototype_loss_scale,
             return_debug=return_debug,
             disable_proxy_losses=disable_proxy_losses,
         )
@@ -1452,7 +1458,9 @@ class PrototypeConditionedTextHead(nn.Module):
             'surrogate_pairwise_logits': surrogate_pairwise_logits,
             'prototype_source_type': context.get('prototype_source_type', 'learnable_legacy'),
             'semantic_cluster_counts': context.get('semantic_cluster_counts'),
-            'semantic_loss_scale': image_outputs['image_projected'].new_tensor(float(semantic_loss_scale)),
+            'prototype_loss_scale': image_outputs['image_projected'].new_tensor(float(prototype_loss_scale)),
+            # Backward-compatible alias for existing logs/consumers.
+            'semantic_loss_scale': image_outputs['image_projected'].new_tensor(float(prototype_loss_scale)),
             'losses': loss_outputs,
             'metrics': scalar_metrics,
         }

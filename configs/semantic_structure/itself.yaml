@@ -95,6 +95,7 @@ semantic_structure:
   text_teacher_source: exact_diagonal
   text_student_source: surrogate_diagonal
   image_student_source: image_semantic_feature
+  
   recompute_start_epoch: 3
   recompute_start_step: 0
   loss_ramp_start_epoch: 3
