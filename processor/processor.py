@@ -387,6 +387,7 @@ def _do_train_runtime(
             f'{phase.name}[{phase.epoch_start}-{phase.epoch_end}]' for phase in freeze_schedule_phases
         )
         logger.info('Using training.freeze_schedule phases: %s', schedule_preview)
+    total_training_steps = max(int(num_epoch) * max(len(train_loader), 1), 1)
 
     def _run_validation(eval_epoch: int) -> float:
         logger.info('Validation Results - Epoch: {}'.format(eval_epoch))
@@ -544,6 +545,7 @@ def _do_train_runtime(
                     batch,
                     epoch=epoch,
                     current_step=current_steps,
+                    total_steps=total_training_steps,
                     disable_proxy_losses=False,
                 )
                 total_loss = outputs['loss_total']

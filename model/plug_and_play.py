@@ -232,6 +232,7 @@ class HostCore(nn.Module):
         *,
         batch: Dict[str, torch.Tensor],
         current_step: Optional[int],
+        total_steps: Optional[int],
         return_debug: bool,
     ) -> Tuple[Dict[str, object], EncoderOutput, EncoderOutput]:
         images = batch['images']
@@ -246,6 +247,7 @@ class HostCore(nn.Module):
             pids=pids,
             return_debug=return_debug,
             current_step=current_step,
+            total_steps=total_steps,
         )
         return host_outputs, image_output, text_output
 
@@ -805,6 +807,7 @@ class PASRuntimeModel(nn.Module):
         batch,
         epoch=None,
         current_step=None,
+        total_steps=None,
         return_debug: Optional[bool] = None,
         disable_proxy_losses: bool = False,
     ):
@@ -814,6 +817,7 @@ class PASRuntimeModel(nn.Module):
         host_outputs, image_output, text_output = self.host_core.forward_host(
             batch=batch,
             current_step=current_step,
+            total_steps=total_steps,
             return_debug=should_return_debug,
         )
         host_losses = host_outputs['losses']
