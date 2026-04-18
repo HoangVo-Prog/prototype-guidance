@@ -76,6 +76,8 @@ def build_prototype_head(
     semantic_loss_ramp_start_step = max(int(getattr(args, 'semantic_loss_ramp_start_step', 0)), 0)
     semantic_loss_ramp_epochs = max(int(getattr(args, 'semantic_loss_ramp_epochs', 0)), 0)
     semantic_loss_ramp_steps = max(int(getattr(args, 'semantic_loss_ramp_steps', 0)), 0)
+    semantic_ramp_loss_diag = bool(getattr(args, 'semantic_ramp_loss_diag', False))
+    semantic_ramp_loss_semantic_pbt = bool(getattr(args, 'semantic_ramp_loss_semantic_pbt', True))
     use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
     lambda_semantic_pbt = float(getattr(args, 'lambda_semantic_pbt', 0.0))
 
@@ -206,6 +208,8 @@ def build_prototype_head(
         semantic_loss_ramp_start_step=semantic_loss_ramp_start_step,
         semantic_loss_ramp_epochs=semantic_loss_ramp_epochs,
         semantic_loss_ramp_steps=semantic_loss_ramp_steps,
+        semantic_ramp_loss_diag=semantic_ramp_loss_diag,
+        semantic_ramp_loss_semantic_pbt=semantic_ramp_loss_semantic_pbt,
         token_scoring_type=token_scoring_type,
         token_temperature=token_temperature,
         token_policy=getattr(args, 'token_policy', 'content_only'),

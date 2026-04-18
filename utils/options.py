@@ -196,6 +196,8 @@ def build_parser():
     parser.add_argument('--semantic_loss_ramp_start_step', type=int, default=0)
     parser.add_argument('--semantic_loss_ramp_epochs', type=int, default=0)
     parser.add_argument('--semantic_loss_ramp_steps', type=int, default=0)
+    parser.add_argument('--semantic_ramp_loss_diag', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--semantic_ramp_loss_semantic_pbt', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_balancing_loss', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_bal', '--prototype_balance_loss_weight', dest='prototype_balance_loss_weight', type=float, default=0.0)
     parser.add_argument('--prototype_dead_threshold', type=float, default=0.005)
@@ -498,6 +500,8 @@ def _finalize_args(args):
     args.semantic_loss_ramp_start_step = max(int(getattr(args, 'semantic_loss_ramp_start_step', 0)), 0)
     args.semantic_loss_ramp_epochs = max(int(getattr(args, 'semantic_loss_ramp_epochs', 0)), 0)
     args.semantic_loss_ramp_steps = max(int(getattr(args, 'semantic_loss_ramp_steps', 0)), 0)
+    args.semantic_ramp_loss_diag = bool(getattr(args, 'semantic_ramp_loss_diag', False))
+    args.semantic_ramp_loss_semantic_pbt = bool(getattr(args, 'semantic_ramp_loss_semantic_pbt', True))
     args.prototype_inference_mode = str(getattr(args, 'prototype_inference_mode', 'auto')).lower()
     if args.prototype_inference_mode in {'', 'auto'}:
         args.prototype_inference_mode = 'host_only' if semantic_mode_selected else 'legacy_fused'

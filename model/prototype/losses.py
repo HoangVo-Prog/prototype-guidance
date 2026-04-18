@@ -674,8 +674,10 @@ class PrototypeLosses(nn.Module):
         semantic_text_student_embeddings: Optional[torch.Tensor] = None,
         semantic_text_teacher_embeddings: Optional[torch.Tensor] = None,
         semantic_base_prototypes: Optional[torch.Tensor] = None,
+        diag_loss_scale: Optional[float] = None,
+        semantic_pbt_loss_scale: Optional[float] = None,
+        # Backward-compatible aliases for older call sites.
         prototype_loss_scale: Optional[float] = None,
-        # Backward-compatible alias for older call sites.
         semantic_loss_scale: Optional[float] = None,
         return_debug: bool = False,
         disable_proxy_losses: bool = False,
@@ -742,7 +744,26 @@ class PrototypeLosses(nn.Module):
         loss_proxy_text_exact_weighted = self.lambda_proxy_text_exact * loss_proxy_text_exact
         loss_proxy_weighted = loss_proxy_image_weighted + loss_proxy_text_weighted + loss_proxy_text_exact_weighted
         loss_align = zero
-        if self.use_loss_dir:
+        if diag_loss_scale is not None:
+            resolved_diag_scale = float(diag_loss_scale)
+        else:
+            resolved_diag_scale = 1.0
+        if resolved_diag_scale < 0.0:
+            resolved_diag_scale = 0.0
+
+        if semantic_pbt_loss_scale is not None:
+            resolved_semantic_pbt_scale = float(semantic_pbt_loss_scale)
+        elif prototype_loss_scale is not None:
+            resolved_semantic_pbt_scale = float(prototype_loss_scale)
+        elif semantic_loss_scale is not None:
+            resolved_semantic_pbt_scale = float(semantic_loss_scale)
+        else:
+            resolved_semantic_pbt_scale = 1.0
+        if resolved_semantic_pbt_scale < 0.0:
+            resolved_semantic_pbt_scale = 0.0
+
+        should_compute_diag = self.use_loss_dir and resolved_diag_scale > 0.0
+        if should_compute_diag:
             dir_info = self.symmetric_relative_diagonal_loss(surrogate_text_embeddings, exact_text_embeddings)
             loss_dir = dir_info['loss']
         else:
@@ -758,30 +779,33 @@ class PrototypeLosses(nn.Module):
         loss_gap = gap_info['loss'] if self.use_loss_gap else zero
         loss_ret = loss_ret_info['loss'] if self.use_loss_ret else zero
         loss_weight_ret = loss_weight_ret_info['loss'] if self.use_loss_weight_ret else zero
-        semantic_info = self._semantic_pbt_loss(
-            image_student=semantic_image_student_embeddings,
-            text_student=semantic_text_student_embeddings,
-            text_teacher=semantic_text_teacher_embeddings,
-            base_prototypes=semantic_base_prototypes,
-        )
-        loss_semantic_pbt = semantic_info['loss'] if self.use_loss_semantic_pbt else zero
-        if prototype_loss_scale is not None:
-            loss_scale = float(prototype_loss_scale)
-        elif semantic_loss_scale is not None:
-            loss_scale = float(semantic_loss_scale)
+        should_compute_semantic_pbt = self.use_loss_semantic_pbt and resolved_semantic_pbt_scale > 0.0
+        if should_compute_semantic_pbt:
+            semantic_info = self._semantic_pbt_loss(
+                image_student=semantic_image_student_embeddings,
+                text_student=semantic_text_student_embeddings,
+                text_teacher=semantic_text_teacher_embeddings,
+                base_prototypes=semantic_base_prototypes,
+            )
+            loss_semantic_pbt = semantic_info['loss']
         else:
-            loss_scale = 1.0
-        if loss_scale < 0.0:
-            loss_scale = 0.0
-        loss_semantic_pbt_weighted = self.lambda_semantic_pbt * loss_scale * loss_semantic_pbt
+            semantic_info = self._semantic_pbt_loss(
+                image_student=None,
+                text_student=None,
+                text_teacher=None,
+                base_prototypes=None,
+            )
+            loss_semantic_pbt = zero
+
+        loss_semantic_pbt_weighted = self.lambda_semantic_pbt * resolved_semantic_pbt_scale * loss_semantic_pbt
         loss_sup = self.support_loss(routing_weights)
         loss_diversity = zero
         loss_balance = zero
-        loss_ret_weighted = loss_scale * self.lambda_ret * loss_ret
-        loss_weight_ret_weighted = loss_scale * self.lambda_weight_ret * loss_weight_ret
-        loss_dir_weighted = loss_scale * self.lambda_dir * loss_dir
-        loss_gap_weighted = loss_scale * self.lambda_gap * loss_gap
-        loss_sup_weighted = loss_scale * self.lambda_sup * loss_sup
+        loss_ret_weighted = self.lambda_ret * loss_ret
+        loss_weight_ret_weighted = self.lambda_weight_ret * loss_weight_ret
+        loss_dir_weighted = resolved_diag_scale * self.lambda_dir * loss_dir
+        loss_gap_weighted = self.lambda_gap * loss_gap
+        loss_sup_weighted = self.lambda_sup * loss_sup
         loss_total = (
             loss_ret_weighted
             + loss_weight_ret_weighted
@@ -871,9 +895,12 @@ class PrototypeLosses(nn.Module):
             'lambda_ret': torch.tensor(self.lambda_ret, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_semantic_pbt': torch.tensor(float(self.use_loss_semantic_pbt), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_semantic_pbt': torch.tensor(self.lambda_semantic_pbt, device=loss_total.device, dtype=loss_total.dtype),
-            'prototype_loss_scale': torch.tensor(loss_scale, device=loss_total.device, dtype=loss_total.dtype),
+            'prototype_loss_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
+            'prototype_loss_ramp_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
+            'loss_diag_scale': torch.tensor(resolved_diag_scale, device=loss_total.device, dtype=loss_total.dtype),
+            'loss_semantic_pbt_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             # Backward-compatible alias for existing logs/consumers.
-            'semantic_loss_scale': torch.tensor(loss_scale, device=loss_total.device, dtype=loss_total.dtype),
+            'semantic_loss_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_weight_ret': torch.tensor(float(self.use_loss_weight_ret), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_weight_ret': torch.tensor(self.lambda_weight_ret, device=loss_total.device, dtype=loss_total.dtype),
             'weight_ret_margin_delta': torch.tensor(self.weight_ret_margin_delta, device=loss_total.device, dtype=loss_total.dtype),

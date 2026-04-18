@@ -551,7 +551,8 @@ class DirectImageConditionedTextHead(nn.Module):
             semantic_text_student_embeddings=exact_outputs['text_projected'],
             semantic_text_teacher_embeddings=exact_outputs['text_projected'],
             semantic_base_prototypes=None,
-            prototype_loss_scale=None,
+            diag_loss_scale=None,
+            semantic_pbt_loss_scale=None,
             return_debug=return_debug,
             disable_proxy_losses=disable_proxy_losses,
         )

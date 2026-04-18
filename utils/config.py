@@ -105,6 +105,8 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('semantic_structure', 'loss_ramp_start_step'): 'semantic_loss_ramp_start_step',
     ('semantic_structure', 'loss_ramp_epochs'): 'semantic_loss_ramp_epochs',
     ('semantic_structure', 'loss_ramp_steps'): 'semantic_loss_ramp_steps',
+    ('semantic_structure', 'ramp_loss_diag'): 'semantic_ramp_loss_diag',
+    ('semantic_structure', 'ramp_loss_semantic_pbt'): 'semantic_ramp_loss_semantic_pbt',
 
     ('fusion', 'enabled'): 'fusion_enabled',
     ('fusion', 'lambda_host'): 'fusion_lambda_host',

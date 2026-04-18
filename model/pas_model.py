@@ -759,6 +759,9 @@ class PASModel(nn.Module):
             'use_loss_semantic_pbt': zero,
             'lambda_semantic_pbt': zero,
             'prototype_loss_scale': zero,
+            'prototype_loss_ramp_scale': zero,
+            'loss_diag_scale': zero,
+            'loss_semantic_pbt_scale': zero,
             'semantic_loss_scale': zero,
             'use_loss_weight_ret': zero,
             'lambda_weight_ret': zero,
@@ -1283,6 +1286,15 @@ class PASModel(nn.Module):
             'prototype_loss_scale': prototype_losses.get(
                 'prototype_loss_scale',
                 prototype_losses.get('semantic_loss_scale', host_losses['loss_total'].new_zeros(())),
+            ),
+            'prototype_loss_ramp_scale': prototype_losses.get(
+                'prototype_loss_ramp_scale',
+                prototype_losses.get('prototype_loss_scale', host_losses['loss_total'].new_zeros(())),
+            ),
+            'loss_diag_scale': prototype_losses.get('loss_diag_scale', host_losses['loss_total'].new_ones(())),
+            'loss_semantic_pbt_scale': prototype_losses.get(
+                'loss_semantic_pbt_scale',
+                prototype_losses.get('semantic_loss_scale', host_losses['loss_total'].new_ones(())),
             ),
             'semantic_loss_scale': prototype_losses.get('semantic_loss_scale', host_losses['loss_total'].new_zeros(())),
             'use_loss_weight_ret': prototype_losses['use_loss_weight_ret'],
