@@ -202,21 +202,21 @@ optimizer:
   weight_decay_image_backbone: 4.0e-5
   weight_decay_text_backbone: 4.0e-5
 
-  momentum: 0.9
-  alpha: 0.9
-  beta: 0.999
-  lr_factor: 5.0
-  bias_lr_factor: 2.0
-  weight_decay_bias: 0.0
-  optimizer_eps: 1.0e-3
-  milestones: [45, 50]
-  gamma: 0.1
-  warmup_factor: 0.1
-  warmup_epochs: 5
-  warmup_method: linear
-  scheduler: cosine
-  target_lr: 0.0
-  power: 0.9
+  # momentum: 0.9
+  # alpha: 0.9
+  # beta: 0.999
+  # lr_factor: 5.0
+  # bias_lr_factor: 2.0
+  # weight_decay_bias: 0.0
+  # optimizer_eps: 1.0e-3
+  # milestones: [45, 50]
+  # gamma: 0.1
+  # warmup_factor: 0.1
+  # warmup_epochs: 5
+  # warmup_method: linear
+  # scheduler: cosine
+  # target_lr: 0.0
+  # power: 0.9
 
 dataset:
   dataset_name: RSTPReid

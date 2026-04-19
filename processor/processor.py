@@ -78,6 +78,30 @@ def _summarize_effective_lrs_by_logical_group(optimizer_group_summaries, logical
     return ', '.join(formatted) if formatted else 'none'
 
 
+def _resolve_display_lr(optimizer, scheduler) -> float:
+    """Return a stable, host-relevant LR for logging dashboards and console output.
+
+    `scheduler.get_lr()[0]` is tied to optimizer group order, which can start with
+    prototype groups in joint training. For comparability with host-only runs, prefer
+    host/backbone group LR when available, then fall back to group-0 LR.
+    """
+    lrs = list(scheduler.get_lr())
+    if not lrs:
+        return 0.0
+    preferred_group_names = ('image_backbone', 'text_backbone', 'host_projectors', 'other')
+    named_lrs = []
+    for index, group in enumerate(optimizer.param_groups):
+        if index >= len(lrs):
+            break
+        group_name = str(group.get('name', ''))
+        named_lrs.append((group_name, float(lrs[index])))
+    for preferred_name in preferred_group_names:
+        for group_name, lr_value in named_lrs:
+            if group_name == preferred_name:
+                return lr_value
+    return float(lrs[0])
+
+
 def _compute_eval_loss_metrics(model, val_loss_loader, args):
     if val_loss_loader is None:
         return {}
@@ -589,12 +613,13 @@ def _do_train_runtime(
 
             if experiment_tracker is not None and get_rank() == 0 and current_steps % max(getattr(args, 'wandb_log_interval', log_period), 1) == 0:
                 averaged_metrics = _meter_averages(wandb_interval_meters)
+                display_lr = _resolve_display_lr(optimizer, scheduler)
                 experiment_tracker.log(
                     build_train_metrics_from_scalars(
                         epoch=epoch,
                         step=current_steps,
                         scalar_metrics=averaged_metrics,
-                        lr=scheduler.get_lr()[0],
+                        lr=display_lr,
                     )
                 )
                 for meter in wandb_interval_meters.values():
@@ -606,10 +631,12 @@ def _do_train_runtime(
                     meter = meters[key]
                     if meter.count > 0:
                         info.append(f'{key}: {meter.avg:.4f}')
-                info.append(f'Base Lr: {scheduler.get_lr()[0]:.2e}')
+                display_lr = _resolve_display_lr(optimizer, scheduler)
+                info.append(f'Base Lr: {display_lr:.2e}')
                 logger.info(', '.join(info))
 
-        tb_writer.add_scalar('lr', scheduler.get_lr()[0], epoch)
+        display_lr = _resolve_display_lr(optimizer, scheduler)
+        tb_writer.add_scalar('lr', display_lr, epoch)
         for key, meter in meters.items():
             if meter.count > 0:
                 tb_writer.add_scalar(key, meter.avg, epoch)
@@ -621,7 +648,7 @@ def _do_train_runtime(
                     epoch=epoch,
                     step=current_steps,
                     scalar_metrics=averaged_metrics,
-                    lr=scheduler.get_lr()[0],
+                    lr=display_lr,
                 )
             )
         if coverage_tracker is not None:
