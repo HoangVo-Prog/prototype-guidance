@@ -911,10 +911,7 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
             'model.use_prototype_bank=true requires model.use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'
         )
-    if prototype_method_role == 'semantic_structure' and not use_prototype_branch:
-        raise ValueError(
-            'model.prototype_method_role=semantic_structure requires model.use_prototype_branch=true.'
-        )
+    
     if semantic_target_temperature <= 0.0:
         raise ValueError('semantic_structure.target_temperature must be positive.')
     if semantic_pred_temperature <= 0.0:
