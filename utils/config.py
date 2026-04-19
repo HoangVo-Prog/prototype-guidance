@@ -1020,8 +1020,6 @@ def validate_runtime_args_namespace(args) -> None:
             'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'
         )
-    if prototype_method_role == 'semantic_structure' and not use_prototype_branch:
-        raise ValueError('prototype_method_role=semantic_structure requires use_prototype_branch=true.')
     if semantic_target_temperature <= 0.0:
         raise ValueError('semantic_target_temperature must be positive.')
     if semantic_pred_temperature <= 0.0:
