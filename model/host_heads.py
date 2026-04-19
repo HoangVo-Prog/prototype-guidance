@@ -7,6 +7,27 @@ import torch.nn.functional as F
 from .vanilla_clip import VanillaCLIPHead
 
 
+def _module_compute_dtype(module: nn.Module, fallback: torch.dtype) -> torch.dtype:
+    """Resolve the module parameter dtype used for explicit input casting."""
+    weight = getattr(module, 'weight', None)
+    if isinstance(weight, torch.Tensor):
+        return weight.dtype
+    for parameter in module.parameters():
+        return parameter.dtype
+    return fallback
+
+
+def _adapter_aligned_input_dtype(tensor: torch.Tensor, module: nn.Module) -> torch.dtype:
+    """
+    Mirror original ITSELF adapter behavior:
+    - prefer fp16 compute under CUDA autocast;
+    - otherwise match module parameter dtype.
+    """
+    if tensor.is_cuda and torch.is_autocast_enabled():
+        return torch.float16
+    return _module_compute_dtype(module, fallback=tensor.dtype)
+
+
 def l2norm(x: torch.Tensor, dim: int = -1, eps: float = 1e-8) -> torch.Tensor:
     norm = torch.pow(x, 2).sum(dim=dim, keepdim=True).sqrt() + eps
     return torch.div(x, norm)
@@ -94,8 +115,14 @@ class TextualEmbeddingLayer(nn.Module):
             device=selected.device,
             dtype=selected.dtype,
         )
-        base = self.linear(selected)
-        refined = self.mlp(selected) + base
+        # Keep adapter-like fp16 input behavior when autocast is active.
+        linear_dtype = _adapter_aligned_input_dtype(selected, self.linear)
+        mlp_dtype = _adapter_aligned_input_dtype(selected, self.mlp)
+        base = self.linear(selected.to(dtype=linear_dtype))
+        refined = self.mlp(selected.to(dtype=mlp_dtype))
+        if base.dtype != refined.dtype:
+            base = base.to(dtype=refined.dtype)
+        refined = refined + base
         return maxk_pool1d_var(refined, 1, 1, lengths).float()
 
 
@@ -135,7 +162,14 @@ class VisualEmbeddingLayer(nn.Module):
         selected = torch.gather(input=features, dim=1, index=indices)
         selected = l2norm(selected, dim=-1)
         feat_lengths = torch.full((batch_size,), float(selected.size(1)), device=selected.device, dtype=selected.dtype)
-        refined = self.mlp(selected) + self.fc(selected)
+        # Keep adapter-like fp16 input behavior when autocast is active.
+        fc_dtype = _adapter_aligned_input_dtype(selected, self.fc)
+        mlp_dtype = _adapter_aligned_input_dtype(selected, self.mlp)
+        base = self.fc(selected.to(dtype=fc_dtype))
+        refined = self.mlp(selected.to(dtype=mlp_dtype))
+        if base.dtype != refined.dtype:
+            base = base.to(dtype=refined.dtype)
+        refined = refined + base
         return maxk_pool1d_var(refined, 1, 1, feat_lengths).float()
 
 
@@ -605,8 +639,9 @@ class ITSELFHostHead(nn.Module):
             nlabels.to(cross_modal_logits1.device),
         )
 
-        image_logits = classifier_id(image_features.float())
-        text_logits = classifier_id(text_features.float())
+        classifier_id_dtype = _adapter_aligned_input_dtype(image_features, classifier_id)
+        image_logits = classifier_id(image_features.to(dtype=classifier_id_dtype)).float()
+        text_logits = classifier_id(text_features.to(dtype=classifier_id_dtype)).float()
 
         cid_id_image = compute_id(image_logits, pids)
         cid_id_text = compute_id(text_logits, pids)
