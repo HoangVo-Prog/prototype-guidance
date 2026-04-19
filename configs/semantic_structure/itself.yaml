@@ -222,6 +222,7 @@ dataset:
   dataset_name: RSTPReid
   root_dir: data
   val_dataset: test
+  num_workers: 4
 
 logging:
   use_wandb: true

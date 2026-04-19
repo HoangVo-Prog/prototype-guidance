@@ -447,9 +447,6 @@ if __name__ == '__main__':
 
     try:
         if use_original_itself:
-            logger.info(
-                'Entering original ITSELF training loop. Note: it performs a full validation pass before Epoch 1; this can take several minutes with no per-batch logs.'
-            )
             do_train_fn(
                 start_epoch,
                 args,

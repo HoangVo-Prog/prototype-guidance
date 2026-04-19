@@ -4,10 +4,25 @@ experiment:
   seed: 1
 
 model:
-  runtime_mode: host_only
-  variant: runtime_clip_only_realistic
+  name: CLIP
+  variant: clip_original
+  pretrain_choice: ViT-B/16
+  image_backbone: clip_visual
+  text_backbone: clip_text_transformer
+  embedding_dim: 512
+  projection_dim: 256
+  projector_hidden_dim: 512
+  projector_dropout: 0.0
+  projector_type: mlp2
+  normalize_projector_outputs: true
+  use_custom_projector: true
+  backbone_precision: fp32
+  prototype_precision: fp32
   temperature: 0.07
-  use_custom_projector: false
+  img_size: [384, 128]
+  stride_size: 16
+  text_length: 77
+  vocab_size: 49408
   use_prototype_branch: false
   use_prototype_bank: false
   use_image_conditioned_pooling: false
@@ -15,9 +30,6 @@ model:
 
 host:
   type: clip
-
-fusion:
-  enabled: false
 
 objectives:
   objectives:
