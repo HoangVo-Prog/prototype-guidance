@@ -34,6 +34,14 @@ GROUP_TO_WD_ATTR = {
     'other': 'weight_decay',
 }
 
+ITSELF_LEGACY_PARAMWISE_GROUPS = frozenset(
+    {
+        'host_projectors',
+        'image_backbone',
+        'text_backbone',
+    }
+)
+
 
 def _coerce_optional_float(value, attr_name: str):
     if value is None:
@@ -106,14 +114,14 @@ def _itself_stage0_group_spec(
     return label, lr, weight_decay
 
 
-def _should_apply_itself_host_projector_lr_policy(args, group_name: str) -> bool:
+def _should_apply_itself_legacy_paramwise_lr_policy(args, group_name: str) -> bool:
     return (
-        str(group_name) == 'host_projectors'
+        str(group_name) in ITSELF_LEGACY_PARAMWISE_GROUPS
         and str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
     )
 
 
-def _build_itself_host_projector_param_groups(args, group_name: str, named_params):
+def _build_itself_legacy_paramwise_groups(args, group_name: str, named_params):
     base_lr = _group_lr(args, group_name)
     base_weight_decay = _group_weight_decay(args, group_name)
     lr_factor = float(getattr(args, 'lr_factor', 5.0))
@@ -232,9 +240,9 @@ def build_optimizer(args, model):
     for group_name, named_params in named_groups.items():
         if not named_params:
             continue
-        if _should_apply_itself_host_projector_lr_policy(args, group_name):
+        if _should_apply_itself_legacy_paramwise_lr_policy(args, group_name):
             param_groups.extend(
-                _build_itself_host_projector_param_groups(
+                _build_itself_legacy_paramwise_groups(
                     args=args,
                     group_name=group_name,
                     named_params=named_params,
