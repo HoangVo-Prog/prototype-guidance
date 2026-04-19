@@ -746,6 +746,7 @@ class ITSELFHostHead(nn.Module):
         compute_tal = compute_host_losses and ("tal" in self.loss_names)
         compute_cid = (
             compute_host_losses
+            and self.training
             and ("cid" in self.loss_names)
             and (self.classifier_global is not None)
         )
