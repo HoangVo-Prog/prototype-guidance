@@ -10,7 +10,12 @@ from model.runtime_modes import (
     normalize_runtime_mode,
     resolve_runtime_mode_from_args,
 )
-from solver import build_lr_scheduler, build_optimizer, summarize_optimizer_param_groups
+from solver import (
+    build_lr_scheduler,
+    build_optimizer,
+    summarize_optimizer_param_groups,
+    summarize_scheduler_effective_lrs,
+)
 from utils.comm import get_rank, synchronize
 from utils.experiment import ExperimentTracker
 from utils.freeze_schedule import (
@@ -104,6 +109,24 @@ def _resolve_display_lr(optimizer, scheduler) -> float:
             if group_name == preferred_name:
                 return lr_value
     return float(lrs[0])
+
+
+def _log_scheduler_section_c(logger, optimizer, scheduler, epoch_label):
+    logger.info('=== Section C: Scheduler-effective LR Snapshot (epoch=%s) ===', epoch_label)
+    logger.info(
+        'Display Lr selection policy: host-preferred scheduler-selected view (image_backbone -> text_backbone -> '
+        'host_projectors -> other -> group_00 fallback).'
+    )
+    logger.info('display_lr=%.6g', _resolve_display_lr(optimizer, scheduler))
+    for row in summarize_scheduler_effective_lrs(optimizer=optimizer, scheduler=scheduler):
+        logger.info(
+            '%s logical=%s scheduler_effective_lr=%.6g optimizer_initial_lr=%.6g optimizer_current_lr=%.6g',
+            row.get('group_id'),
+            row.get('name'),
+            float(row.get('scheduler_effective_lr', 0.0)),
+            float(row.get('optimizer_initial_lr', 0.0)),
+            float(row.get('optimizer_current_lr', 0.0)),
+        )
 
 
 def _optimizer_has_fp16_trainable_params(optimizer) -> bool:
@@ -395,6 +418,7 @@ def _do_train_runtime(
             'Rebuilt optimizer/scheduler for runtime_mode=%s to enforce explicit trainable boundary.',
             resolved_runtime_mode,
         )
+    _log_scheduler_section_c(logger, optimizer, scheduler, epoch_label='train_start')
     if getattr(args, 'prototype_selection_metric', None):
         logger.warning(
             'training.prototype_selection_metric is deprecated by checkpointing.metric/checkpointing.save.*. '
@@ -511,6 +535,7 @@ def _do_train_runtime(
             arguments['epoch'] = 0
 
     for epoch in range(start_epoch, num_epoch + 1):
+        _log_scheduler_section_c(logger, optimizer, scheduler, epoch_label=f'epoch_start_{epoch}')
         active_phase = get_active_phase(freeze_schedule_phases, epoch)
         if active_phase is not None and active_phase.name != active_freeze_phase_name:
             runtime_model = _unwrap_model(model)
@@ -525,6 +550,7 @@ def _do_train_runtime(
 
             scheduler = build_lr_scheduler(args, optimizer)
             _rewind_scheduler_to_epoch(scheduler, epoch - 1)
+            _log_scheduler_section_c(logger, optimizer, scheduler, epoch_label=f'phase_activate_{epoch}')
 
             optimizer_groups = summarize_optimizer_param_groups(optimizer)
             logger.info('Activated freeze phase `%s` at epoch %d.', active_phase.name, epoch)
@@ -738,7 +764,7 @@ def _do_train_runtime(
                     if meter.count > 0:
                         info.append(f'{key}: {meter.avg:.4f}')
                 display_lr = _resolve_display_lr(optimizer, scheduler)
-                info.append(f'Base Lr: {display_lr:.2e}')
+                info.append(f'Display Lr: {display_lr:.2e}')
                 logger.info(', '.join(info))
 
         display_lr = _resolve_display_lr(optimizer, scheduler)

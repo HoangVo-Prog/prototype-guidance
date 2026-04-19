@@ -18,7 +18,14 @@ from model.hosts import (
 )
 from model.prototype import init_mode_requires_data
 from processor.processor import do_train as do_train_pas
-from solver import build_lr_scheduler, build_optimizer, summarize_optimizer_param_groups
+from solver import (
+    build_lr_scheduler,
+    build_optimizer,
+    summarize_optimizer_param_groups,
+    summarize_optimizer_param_groups_observability,
+    summarize_scheduler_effective_lrs,
+    summarize_config_declared_optimizer_settings,
+)
 from utils.checkpoint import Checkpointer
 from utils.comm import get_rank, synchronize
 from utils.env import load_runtime_environment
@@ -84,6 +91,97 @@ def _summarize_optimizer_lrs(optimizer_group_summaries):
             continue
         lr_parts.append(f"{group_summary['name']}={group_summary['lr']:.2e}")
     return ', '.join(lr_parts) if lr_parts else 'none'
+
+
+def _log_config_declared_optimizer_summary(logger, args):
+    summary = summarize_config_declared_optimizer_settings(args)
+    logger.info('=== Section A: Config-declared LR/Optimizer Summary ===')
+    logger.info(
+        'optimizer.type=%s optimizer_eps=%s lr_factor=%s bias_lr_factor=%s',
+        summary.get('optimizer_type'),
+        summary.get('optimizer_eps'),
+        summary.get('lr_factor'),
+        summary.get('bias_lr_factor'),
+    )
+    lr_parts = ', '.join(f'{key}={value}' for key, value in summary.get('declared_lrs', {}).items())
+    wd_parts = ', '.join(f'{key}={value}' for key, value in summary.get('declared_weight_decays', {}).items())
+    logger.info('declared_lrs={%s}', lr_parts if lr_parts else 'none')
+    logger.info('declared_weight_decays={%s}', wd_parts if wd_parts else 'none')
+    schedule_overrides = summary.get('freeze_schedule_lr_overrides', [])
+    if schedule_overrides:
+        override_parts = []
+        for item in schedule_overrides:
+            phase = item.get('phase')
+            overrides = item.get('lr_overrides', {})
+            override_parts.append(f'{phase}:{overrides}')
+        logger.info('freeze_schedule.lr_overrides={%s}', '; '.join(override_parts))
+    else:
+        logger.info('freeze_schedule.lr_overrides={none}')
+
+
+def _log_optimizer_observability_ground_truth(logger, args, model, optimizer):
+    logger.info('=== Section B: Optimizer Param-group Ground Truth ===')
+    rows = summarize_optimizer_param_groups_observability(args=args, model=model, optimizer=optimizer)
+    if not rows:
+        logger.info('No observability rows reconstructed (model has no named_optimizer_groups).')
+        return
+    for row in rows:
+        logger.info(
+            (
+                '%s logical=%s bucket=%s ownership=%s lr_source=%s base_lr_declared=%s '
+                'multiplier_chain=%s final_optimizer_initial_lr=%.6g weight_decay=%.6g tensors=%d params=%d '
+                'prefixes=%s samples=%s'
+            ),
+            row.get('group_id'),
+            row.get('logical_group_name', row.get('name')),
+            row.get('derived_bucket_label', 'direct'),
+            row.get('ownership_tag', 'mixed_or_ambiguous'),
+            row.get('lr_source_key', 'unknown'),
+            row.get('base_lr_declared'),
+            row.get('multiplier_chain'),
+            float(row.get('lr', 0.0)),
+            float(row.get('weight_decay', 0.0)),
+            int(row.get('tensor_count', 0)),
+            int(row.get('parameter_count', 0)),
+            row.get('prefix_summary', []),
+            row.get('parameter_name_samples', []),
+        )
+
+
+def _log_scheduler_effective_lr_snapshot(logger, optimizer, scheduler, epoch_label):
+    logger.info('=== Section C: Scheduler-effective LR Snapshot (epoch=%s) ===', epoch_label)
+    logger.info(
+        'Display Lr selection policy: host-preferred scheduler-selected view (image_backbone -> text_backbone -> '
+        'host_projectors -> other -> group_00 fallback).'
+    )
+    lrs = list(scheduler.get_lr())
+    preferred_group_names = ('image_backbone', 'text_backbone', 'host_projectors', 'other')
+    named_lrs = []
+    for index, group in enumerate(optimizer.param_groups):
+        if index >= len(lrs):
+            break
+        group_name = str(group.get('name', ''))
+        named_lrs.append((group_name, float(lrs[index])))
+    display_lr = float(lrs[0]) if lrs else 0.0
+    for preferred_name in preferred_group_names:
+        matched = False
+        for group_name, lr_value in named_lrs:
+            if group_name == preferred_name:
+                display_lr = lr_value
+                matched = True
+                break
+        if matched:
+            break
+    logger.info('display_lr=%.6g', display_lr)
+    for row in summarize_scheduler_effective_lrs(optimizer=optimizer, scheduler=scheduler):
+        logger.info(
+            '%s logical=%s scheduler_effective_lr=%.6g optimizer_initial_lr=%.6g optimizer_current_lr=%.6g',
+            row.get('group_id'),
+            row.get('name'),
+            float(row.get('scheduler_effective_lr', 0.0)),
+            float(row.get('optimizer_initial_lr', 0.0)),
+            float(row.get('optimizer_current_lr', 0.0)),
+        )
 
 
 def _bridge_original_itself_loggers(base_logger):
@@ -372,8 +470,10 @@ if __name__ == '__main__':
     logger.info('Total params: %2.fM', sum(p.numel() for p in model.parameters()) / 1000000.0)
     log_parameter_trainability(logger, model, args)
     model.to(device)
+    _log_config_declared_optimizer_summary(logger, args)
     optimizer = build_optimizer(args, model)
     optimizer_group_summaries = summarize_optimizer_param_groups(optimizer)
+    _log_optimizer_observability_ground_truth(logger, args, model, optimizer)
     debug_mode = bool(getattr(args, 'log_debug_metrics', False))
     if use_original_itself:
         total_groups = len(optimizer_group_summaries)
@@ -421,6 +521,7 @@ if __name__ == '__main__':
                     group_summary['parameter_count'],
                 )
     scheduler = build_lr_scheduler(args, optimizer)
+    _log_scheduler_effective_lr_snapshot(logger, optimizer, scheduler, epoch_label='init')
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(
@@ -474,9 +575,6 @@ if __name__ == '__main__':
     finally:
         if experiment_tracker is not None:
             experiment_tracker.finish()
-
-
-
 
 
 
