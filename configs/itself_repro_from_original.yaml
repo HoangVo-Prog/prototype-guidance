@@ -77,11 +77,6 @@ prototype:
   normalize_for_routing: true
   dead_prototype_threshold: 0.005
 
-fusion:
-  enabled: true
-  coefficient_source: fixed
-  eval_subsets:
-
 objectives:
   objectives:
     use_host_loss: true
@@ -128,7 +123,7 @@ text_pooling:
   error_on_empty_kept_tokens: true
 
 training:
-  batch_size: 128
+  batch_size: 256
   epochs: 15
   log_period: 50
   eval_frequency: 1
@@ -234,16 +229,8 @@ evaluation:
   cross_domain_generalization: false
   target_domain: CUHK-PEDES
   retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
+  itself_lambda_ablation_enabled: true
+  itself_lambda_ablation_alphas: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32]
   batch_size: 512
   prototype_image_chunk_size: 32
   prototype_text_chunk_size: 128
-  retrieval_scorer: exact
-
-
-  coefficient_source: fixed
-  eval_subsets:
-    - { name: "host_only", lambda_host: 1.00, lambda_prototype: 0.00 }
-    - { name: "proto_010", lambda_host: 0.90, lambda_prototype: 0.10 }
-    - { name: "proto_020", lambda_host: 0.80, lambda_prototype: 0.20 }
-    - { name: "proto_030", lambda_host: 0.70, lambda_prototype: 0.30 }
-    - { name: "proto_100", lambda_host: 0.00, lambda_prototype: 1.00 }
