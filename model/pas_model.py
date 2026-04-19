@@ -1187,16 +1187,26 @@ Model = PASModel
 
 def build_model(args, num_classes, train_loader=None):
     model = PASModel(args, num_classes=num_classes, train_loader=train_loader)
-    if model.backbone_precision == 'fp16':
+    use_original_itself_host_impl = (
+        str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
+        and bool(getattr(args, 'itself_use_original_impl', True))
+    )
+    if model.backbone_precision == 'fp16' or use_original_itself_host_impl:
         convert_weights(model.base_model)
     else:
         model.base_model.float()
-    if model.prototype_precision == 'fp16':
-        model.host_head.half()
-        if model.prototype_head is not None:
-            model.prototype_head.half()
+
+    if use_original_itself_host_impl:
+        convert_weights(model.host_head)
     else:
-        model.host_head.float()
-        if model.prototype_head is not None:
+        if model.prototype_precision == 'fp16':
+            model.host_head.half()
+        else:
+            model.host_head.float()
+
+    if model.prototype_head is not None:
+        if model.prototype_precision == 'fp16':
+            model.prototype_head.half()
+        else:
             model.prototype_head.float()
     return model
