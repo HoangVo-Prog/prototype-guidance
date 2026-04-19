@@ -468,12 +468,20 @@ class ITSELFHostHead(nn.Module):
                 device=image_output.projected_tokens.device,
                 dtype=image_output.projected_tokens.dtype,
             )
-            outputs['grab_image_embedding'] = self.visual_embedding_layer(
-                image_output.projected_tokens.float(),
-                attention.float(),
-                current_step=current_step if self.modify_k else None,
-                total_steps=total_steps if self.modify_k else None,
-            )
+            visual_current_step = current_step if self.modify_k else None
+            if self.use_original_itself_impl:
+                outputs['grab_image_embedding'] = self.visual_embedding_layer(
+                    image_output.projected_tokens.float(),
+                    attention.float(),
+                    current_step=visual_current_step,
+                )
+            else:
+                outputs['grab_image_embedding'] = self.visual_embedding_layer(
+                    image_output.projected_tokens.float(),
+                    attention.float(),
+                    current_step=visual_current_step,
+                    total_steps=total_steps if self.modify_k else None,
+                )
         if return_debug:
             outputs['debug'] = {
                 'itself_host_type': global_embedding.new_tensor(1.0),
@@ -498,13 +506,22 @@ class ITSELFHostHead(nn.Module):
                 device=text_output.projected_tokens.device,
                 dtype=text_output.projected_tokens.dtype,
             )
-            outputs['grab_text_embedding'] = self.textual_embedding_layer(
-                text_output.projected_tokens.float(),
-                token_ids.long(),
-                attention.float(),
-                current_step=current_step if self.modify_k else None,
-                total_steps=total_steps if self.modify_k else None,
-            )
+            textual_current_step = current_step if self.modify_k else None
+            if self.use_original_itself_impl:
+                outputs['grab_text_embedding'] = self.textual_embedding_layer(
+                    text_output.projected_tokens.float(),
+                    token_ids.long(),
+                    attention.float(),
+                    current_step=textual_current_step,
+                )
+            else:
+                outputs['grab_text_embedding'] = self.textual_embedding_layer(
+                    text_output.projected_tokens.float(),
+                    token_ids.long(),
+                    attention.float(),
+                    current_step=textual_current_step,
+                    total_steps=total_steps if self.modify_k else None,
+                )
         if return_debug:
             outputs['debug'] = {
                 'itself_host_type': global_embedding.new_tensor(1.0),
