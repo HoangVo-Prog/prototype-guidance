@@ -7,27 +7,6 @@ import torch.nn.functional as F
 from .vanilla_clip import VanillaCLIPHead
 
 
-def _module_compute_dtype(module: nn.Module, fallback: torch.dtype) -> torch.dtype:
-    """Resolve the module parameter dtype used for explicit input casting."""
-    weight = getattr(module, 'weight', None)
-    if isinstance(weight, torch.Tensor):
-        return weight.dtype
-    for parameter in module.parameters():
-        return parameter.dtype
-    return fallback
-
-
-def _adapter_aligned_input_dtype(tensor: torch.Tensor, module: nn.Module) -> torch.dtype:
-    """
-    Mirror original ITSELF adapter behavior:
-    - prefer fp16 compute under CUDA autocast;
-    - otherwise match module parameter dtype.
-    """
-    if tensor.is_cuda and torch.is_autocast_enabled():
-        return torch.float16
-    return _module_compute_dtype(module, fallback=tensor.dtype)
-
-
 def l2norm(x: torch.Tensor, dim: int = -1, eps: float = 1e-8) -> torch.Tensor:
     norm = torch.pow(x, 2).sum(dim=dim, keepdim=True).sqrt() + eps
     return torch.div(x, norm)
@@ -39,11 +18,13 @@ def maxk(x: torch.Tensor, dim: int, k: int) -> torch.Tensor:
 
 
 def maxk_pool1d_var(x: torch.Tensor, dim: int, k: int, lengths: torch.Tensor) -> torch.Tensor:
+    # Keep the original ITSELF adapter pooling semantics as-is.
     results = []
-    lengths_list = [int(value) for value in lengths.detach().cpu().tolist()]
+    lengths_list = list(lengths.detach().cpu().numpy())
+    lengths_list = [int(value) for value in lengths_list]
     for idx, length in enumerate(lengths_list):
-        effective_k = min(k, max(length, 1))
-        max_k_i = maxk(x[idx, :max(length, 1), :], dim - 1, effective_k).mean(dim - 1)
+        k = min(k, length)
+        max_k_i = maxk(x[idx, :length, :], dim - 1, k).mean(dim - 1)
         results.append(max_k_i)
     return torch.stack(results, dim=0)
 
@@ -83,46 +64,32 @@ class TextualEmbeddingLayer(nn.Module):
         current_step: Optional[int] = None,
         total_steps: Optional[int] = None,
     ) -> torch.Tensor:
-        mask = (text != 0).to(dtype=features.dtype)
-        lengths = mask.sum(dim=1) - 2
+        del total_steps
+        mask = ((text != 0) + 0)
+        lengths = mask.sum(1).view(-1) - 2
         sequence_length = attention.size(1)
         if current_step is not None:
             ratio_start = 0.65
             ratio_end = 0.5
-            effective_total_steps = total_steps if total_steps is not None else (10 * 145)
+            effective_total_steps = 10 * 145
             current_step = min(max(int(current_step), 1), effective_total_steps)
-            ratio = current_step / float(effective_total_steps)
+            ratio = current_step / effective_total_steps
             k = int((sequence_length - 2) * ratio_start * ((ratio_end / ratio_start) ** ratio))
         else:
             k = int((sequence_length - 2) * self.ratio)
-        k = max(k, 1)
-
         batch_size = features.size(0)
         eos_positions = text.argmax(dim=-1)
-        attention = attention.clone()
         attention[torch.arange(batch_size, device=attention.device), :, eos_positions] = -1
         attention[torch.arange(batch_size, device=attention.device), :, 0] = -1
         attention = attention[torch.arange(batch_size, device=attention.device), eos_positions, :]
         attention = attention * mask
 
-        effective_k = min(k, attention.size(-1))
-        topk_indices = attention.topk(dim=-1, k=effective_k)[1].unsqueeze(-1).expand(batch_size, effective_k, features.size(2))
+        topk_indices = attention.topk(dim=-1, k=k)[1].unsqueeze(-1).expand(batch_size, k, features.size(2))
         selected = torch.gather(input=features, dim=1, index=topk_indices)
         selected = l2norm(selected, dim=-1)
-
-        lengths = torch.tensor(
-            [max(min(int(lengths[i].item()), selected.size(1)), 1) for i in range(batch_size)],
-            device=selected.device,
-            dtype=selected.dtype,
-        )
-        # Keep adapter-like fp16 input behavior when autocast is active.
-        linear_dtype = _adapter_aligned_input_dtype(selected, self.linear)
-        mlp_dtype = _adapter_aligned_input_dtype(selected, self.mlp)
-        base = self.linear(selected.to(dtype=linear_dtype))
-        refined = self.mlp(selected.to(dtype=mlp_dtype))
-        if base.dtype != refined.dtype:
-            base = base.to(dtype=refined.dtype)
-        refined = refined + base
+        lengths = torch.Tensor([lengths[i] if lengths[i] < k else k for i in range(batch_size)])
+        base = self.linear(selected.half())
+        refined = self.mlp(selected) + base
         return maxk_pool1d_var(refined, 1, 1, lengths).float()
 
 
@@ -141,35 +108,28 @@ class VisualEmbeddingLayer(nn.Module):
         current_step: Optional[int] = None,
         total_steps: Optional[int] = None,
     ) -> torch.Tensor:
+        del total_steps
         sequence_length = attention.size(1)
         if current_step is not None:
             ratio_start = 0.65
             ratio_end = 0.5
-            effective_total_steps = total_steps if total_steps is not None else (10 * 145)
+            effective_total_steps = 10 * 145
             current_step = min(max(int(current_step), 1), effective_total_steps)
-            ratio = current_step / float(effective_total_steps)
+            ratio = current_step / effective_total_steps
             k = int((sequence_length - 1) * ratio_start * ((ratio_end / ratio_start) ** ratio))
         else:
             k = int((sequence_length - 1) * self.ratio)
-        k = max(k, 1)
 
         batch_size = features.size(0)
-        attention = attention.clone()
         attention[torch.arange(batch_size, device=attention.device), :, 0] = -1
-        effective_k = min(k, attention.size(-1))
-        indices = attention[:, 0].topk(dim=-1, k=effective_k)[1]
-        indices = indices.unsqueeze(-1).expand(batch_size, effective_k, features.size(2))
+        indices = attention[:, 0].topk(dim=-1, k=k)[1]
+        indices = indices.unsqueeze(-1).expand(batch_size, k, features.size(2))
         selected = torch.gather(input=features, dim=1, index=indices)
         selected = l2norm(selected, dim=-1)
-        feat_lengths = torch.full((batch_size,), float(selected.size(1)), device=selected.device, dtype=selected.dtype)
-        # Keep adapter-like fp16 input behavior when autocast is active.
-        fc_dtype = _adapter_aligned_input_dtype(selected, self.fc)
-        mlp_dtype = _adapter_aligned_input_dtype(selected, self.mlp)
-        base = self.fc(selected.to(dtype=fc_dtype))
-        refined = self.mlp(selected.to(dtype=mlp_dtype))
-        if base.dtype != refined.dtype:
-            base = base.to(dtype=refined.dtype)
-        refined = refined + base
+        selected = selected.half()
+        feat_lengths = torch.zeros(selected.size(0), device=selected.device).half()
+        feat_lengths[:] = selected.size(1)
+        refined = self.mlp(selected) + self.fc(selected)
         return maxk_pool1d_var(refined, 1, 1, feat_lengths).float()
 
 
@@ -217,30 +177,20 @@ def cosine_similarity_matrix(image_features: torch.Tensor, text_features: torch.
 
 
 def sample_hard_negatives(similarity: torch.Tensor, labels: torch.Tensor) -> Dict[str, list]:
-    similarity_cpu = similarity.detach().float().cpu()
-    labels_cpu = labels.detach().view(-1).cpu()
-    num_samples = similarity_cpu.size(0)
+    num_samples = similarity.size(0)
     hard_negatives = {'visual_negatives': [], 'text_negatives': []}
     for i in range(num_samples):
-        sorted_text_idx = torch.argsort(similarity_cpu[i], descending=True)
-        text_negative = None
-        for j in sorted_text_idx.tolist():
-            if int(labels_cpu[i].item()) != int(labels_cpu[j].item()):
-                text_negative = int(j)
+        sorted_text_idx = torch.argsort(similarity[i], descending=True)
+        for j in sorted_text_idx:
+            if labels[i] != labels[j]:
+                hard_negatives['text_negatives'].append(int(j.item()))
                 break
-        if text_negative is None:
-            text_negative = int(i)
-        hard_negatives['text_negatives'].append(text_negative)
 
-        sorted_visual_idx = torch.argsort(similarity_cpu[:, i], descending=True)
-        visual_negative = None
-        for j in sorted_visual_idx.tolist():
-            if int(labels_cpu[i].item()) != int(labels_cpu[j].item()):
-                visual_negative = int(j)
+        sorted_visual_idx = torch.argsort(similarity[:, i], descending=True)
+        for j in sorted_visual_idx:
+            if labels[i] != labels[j]:
+                hard_negatives['visual_negatives'].append(int(j.item()))
                 break
-        if visual_negative is None:
-            visual_negative = int(i)
-        hard_negatives['visual_negatives'].append(visual_negative)
     return hard_negatives
 
 
@@ -270,7 +220,7 @@ def create_sample_pairs(image_features: torch.Tensor, text_features: torch.Tenso
         visual_feats.append(image_features[i])
         textual_feats.append(text_features[neg_idx])
         all_labels.append(new_labels[neg_idx])
-    return torch.stack(visual_feats), torch.stack(textual_feats), torch.stack(all_labels)
+    return torch.stack(visual_feats), torch.stack(textual_feats), torch.tensor(all_labels)
 
 
 def compute_cid(logits_1: torch.Tensor, logits_2: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -639,9 +589,8 @@ class ITSELFHostHead(nn.Module):
             nlabels.to(cross_modal_logits1.device),
         )
 
-        classifier_id_dtype = _adapter_aligned_input_dtype(image_features, classifier_id)
-        image_logits = classifier_id(image_features.to(dtype=classifier_id_dtype)).float()
-        text_logits = classifier_id(text_features.to(dtype=classifier_id_dtype)).float()
+        image_logits = classifier_id(image_features.half()).float()
+        text_logits = classifier_id(text_features.half()).float()
 
         cid_id_image = compute_id(image_logits, pids)
         cid_id_text = compute_id(text_logits, pids)
