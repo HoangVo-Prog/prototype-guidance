@@ -379,6 +379,14 @@ class ITSELFHostHead(nn.Module):
         for parameter in self.parameters():
             parameter.requires_grad = False
 
+    @staticmethod
+    def _module_compute_dtype(module: nn.Module, fallback: torch.dtype) -> torch.dtype:
+        for parameter in module.parameters():
+            return parameter.dtype
+        for buffer in module.buffers():
+            return buffer.dtype
+        return fallback
+
     def _normalize_attention(self, attention: Optional[torch.Tensor], batch_size: int, num_tokens: int, device, dtype) -> torch.Tensor:
         if attention is None:
             return torch.ones(batch_size, num_tokens, num_tokens, device=device, dtype=dtype)
@@ -470,9 +478,13 @@ class ITSELFHostHead(nn.Module):
             )
             visual_current_step = current_step if self.modify_k else None
             if self.use_original_itself_impl:
+                grab_dtype = self._module_compute_dtype(
+                    self.visual_embedding_layer,
+                    fallback=image_output.projected_tokens.dtype,
+                )
                 outputs['grab_image_embedding'] = self.visual_embedding_layer(
-                    image_output.projected_tokens.float(),
-                    attention.float(),
+                    image_output.projected_tokens.to(dtype=grab_dtype),
+                    attention.to(dtype=grab_dtype),
                     current_step=visual_current_step,
                 )
             else:
@@ -508,10 +520,14 @@ class ITSELFHostHead(nn.Module):
             )
             textual_current_step = current_step if self.modify_k else None
             if self.use_original_itself_impl:
+                grab_dtype = self._module_compute_dtype(
+                    self.textual_embedding_layer,
+                    fallback=text_output.projected_tokens.dtype,
+                )
                 outputs['grab_text_embedding'] = self.textual_embedding_layer(
-                    text_output.projected_tokens.float(),
+                    text_output.projected_tokens.to(dtype=grab_dtype),
                     token_ids.long(),
-                    attention.float(),
+                    attention.to(dtype=grab_dtype),
                     current_step=textual_current_step,
                 )
             else:
