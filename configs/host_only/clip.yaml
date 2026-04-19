@@ -66,7 +66,7 @@ objectives:
     diversity: 0.0
 
 text_pooling:
-  token_policy: content_only
+  token_policy: eos_only
   scoring_type: cosine
   normalize_for_token_scoring: true
   token_temperature: 0.07
