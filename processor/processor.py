@@ -102,6 +102,30 @@ def _resolve_display_lr(optimizer, scheduler) -> float:
     return float(lrs[0])
 
 
+def _optimizer_has_fp16_trainable_params(optimizer) -> bool:
+    for group in optimizer.param_groups:
+        for parameter in group.get('params', []):
+            if not isinstance(parameter, torch.Tensor):
+                continue
+            if not bool(parameter.requires_grad):
+                continue
+            if parameter.dtype == torch.float16:
+                return True
+    return False
+
+
+def _maybe_disable_grad_scaler_for_fp16_params(scaler, optimizer, logger):
+    if not scaler.is_enabled():
+        return scaler
+    if not _optimizer_has_fp16_trainable_params(optimizer):
+        return scaler
+    logger.warning(
+        'Detected FP16 trainable optimizer parameters while AMP GradScaler is enabled. '
+        'Disabling GradScaler to avoid "Attempting to unscale FP16 gradients".'
+    )
+    return torch.cuda.amp.GradScaler(enabled=False)
+
+
 def _compute_eval_loss_metrics(model, val_loss_loader, args):
     if val_loss_loader is None:
         return {}
@@ -375,6 +399,7 @@ def _do_train_runtime(
     if bool(getattr(args, 'amp', False)) and not is_cuda_device(device):
         raise ValueError('training.amp=true requires a CUDA device.')
     scaler = build_grad_scaler(args, device)
+    scaler = _maybe_disable_grad_scaler_for_fp16_params(scaler, optimizer, logger)
     logger.info(
         'Precision config: backbone_precision=%s, prototype_precision=%s, amp=%s, amp_dtype=%s',
         getattr(args, 'backbone_precision', 'fp16'),
@@ -492,6 +517,7 @@ def _do_train_runtime(
             optimizer = build_optimizer(args, runtime_model)
             _copy_optimizer_state(previous_optimizer, optimizer)
             lr_override_summary = apply_optimizer_lr_overrides(optimizer, active_phase.lr_overrides)
+            scaler = _maybe_disable_grad_scaler_for_fp16_params(scaler, optimizer, logger)
 
             scheduler = build_lr_scheduler(args, optimizer)
             _rewind_scheduler_to_epoch(scheduler, epoch - 1)
