@@ -211,9 +211,18 @@ DEBUG_METRIC_MAP = {
     'contextualized_prototype_pairwise_cosine_std': 'debug/contextualized_prototype_pairwise_cosine_std',
     'contextualized_prototype_pairwise_cosine_max': 'debug/contextualized_prototype_pairwise_cosine_max',
     'prototype_contextualization_entropy': 'debug/prototype_contextualization_entropy',
+    'prototype_cosine_offdiag_min': 'debug/prototype_cosine_offdiag_min',
+    'prototype_cosine_offdiag_mean': 'debug/prototype_cosine_offdiag_mean',
     'prototype_cosine_offdiag_max': 'debug/prototype_cosine_offdiag_max',
-    'prototype_high_similarity_pair_ratio': 'debug/prototype_high_similarity_pair_ratio',
-    'prototype_assignment_overlap_mean': 'debug/prototype_assignment_overlap_mean',
+    'prototype_high_similarity_pair_ratio_07': 'debug/prototype_high_similarity_pair_ratio_07',
+    'prototype_high_similarity_pair_ratio_08': 'debug/prototype_high_similarity_pair_ratio_08',
+    'prototype_high_similarity_pair_ratio_09': 'debug/prototype_high_similarity_pair_ratio_09',
+    'prototype_activation_corr_mean': 'debug/prototype_activation_corr_mean',
+    'prototype_activation_corr_max': 'debug/prototype_activation_corr_max',
+    'debug_proto_unique_count_in_batch': 'debug/debug_proto_unique_count_in_batch',
+    'debug_label_unique_count_in_batch': 'debug/debug_label_unique_count_in_batch',
+    'debug_prototype_norm_mean': 'debug/debug_prototype_norm_mean',
+    'debug_routing_prob_row_sum_mean': 'debug/debug_routing_prob_row_sum_mean',
     'prototype_method_role_semantic_structure': 'debug/prototype_method_role_semantic_structure',
     'prototype_semantic_enabled': 'debug/prototype_semantic_enabled',
     'semantic_structure_enabled': 'debug/semantic_structure_enabled',
@@ -489,9 +498,18 @@ def map_train_diagnostic_key(raw_key: str) -> str:
     if raw_key.startswith('prototype_pairwise_') or raw_key.startswith('contextualized_prototype_pairwise_') or raw_key == 'prototype_contextualization_entropy':
         return f'train/prototype_geometry/{raw_key}'
     if raw_key in {
+        'prototype_cosine_offdiag_min',
+        'prototype_cosine_offdiag_mean',
         'prototype_cosine_offdiag_max',
-        'prototype_high_similarity_pair_ratio',
-        'prototype_assignment_overlap_mean',
+        'prototype_high_similarity_pair_ratio_07',
+        'prototype_high_similarity_pair_ratio_08',
+        'prototype_high_similarity_pair_ratio_09',
+        'prototype_activation_corr_mean',
+        'prototype_activation_corr_max',
+        'debug_proto_unique_count_in_batch',
+        'debug_label_unique_count_in_batch',
+        'debug_prototype_norm_mean',
+        'debug_routing_prob_row_sum_mean',
     }:
         return f'train/prototype/{raw_key}'
     if raw_key.startswith('semantic_') or raw_key in {

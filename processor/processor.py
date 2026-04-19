@@ -33,10 +33,7 @@ from utils.metric_logging import (
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
 from utils.metrics_prototype import (
-    compute_assignment_overlap_mean,
-    compute_proto_cosine_offdiag_max,
-    compute_proto_high_sim_ratio,
-    compute_proto_label_nmi,
+    collect_prototype_debug_metrics,
     resolve_prototype_bank_tensor,
 )
 from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
@@ -660,17 +657,57 @@ def _do_train_runtime(
                 ):
                     with torch.no_grad():
                         proto_ids = routing_probs.detach().argmax(dim=1)
-                        debug_dict.update(
-                            {
-                                'routing_proto_label_nmi': compute_proto_label_nmi(proto_ids, labels),
-                                'prototype_cosine_offdiag_max': compute_proto_cosine_offdiag_max(prototype_bank),
-                                'prototype_high_similarity_pair_ratio': compute_proto_high_sim_ratio(prototype_bank),
-                                'prototype_assignment_overlap_mean': compute_assignment_overlap_mean(
-                                    proto_ids=proto_ids,
-                                    num_prototypes=int(prototype_bank.size(0)),
-                                ),
-                            }
+                        prototype_metrics, prototype_sanity = collect_prototype_debug_metrics(
+                            proto_ids=proto_ids,
+                            labels=labels,
+                            routing_probs=routing_probs,
+                            prototype_bank=prototype_bank,
                         )
+                        debug_dict.update(prototype_metrics)
+
+                        prototype_debug_log_interval = max(int(getattr(args, 'prototype_debug_log_interval', 200)), 1)
+                        if current_steps % prototype_debug_log_interval == 0:
+                            logger.info(
+                                (
+                                    '[prototype-metrics-sanity] step=%d '
+                                    'proto_ids(shape=%s,dtype=%s,device=%s,min=%.1f,max=%.1f,unique=%.0f) '
+                                    'labels(shape=%s,dtype=%s,device=%s,min=%.1f,max=%.1f,unique=%.0f) '
+                                    'routing_probs(shape=%s,dtype=%s,device=%s,row_sum[min/mean/max]=[%.4f/%.4f/%.4f],'
+                                    'value[min/max]=[%.4f/%.4f],nan=%.0f,inf=%.0f) '
+                                    'prototype_bank(shape=%s,dtype=%s,device=%s,norm[min/mean/max]=[%.4f/%.4f/%.4f],nan=%.0f,inf=%.0f)'
+                                ),
+                                current_steps,
+                                tuple(proto_ids.shape),
+                                str(proto_ids.dtype),
+                                str(proto_ids.device),
+                                prototype_sanity['proto_min'],
+                                prototype_sanity['proto_max'],
+                                prototype_sanity['proto_unique_count'],
+                                tuple(labels.shape),
+                                str(labels.dtype),
+                                str(labels.device),
+                                prototype_sanity['label_min'],
+                                prototype_sanity['label_max'],
+                                prototype_sanity['label_unique_count'],
+                                tuple(routing_probs.shape),
+                                str(routing_probs.dtype),
+                                str(routing_probs.device),
+                                prototype_sanity['routing_row_sum_min'],
+                                prototype_sanity['routing_row_sum_mean'],
+                                prototype_sanity['routing_row_sum_max'],
+                                prototype_sanity['routing_min'],
+                                prototype_sanity['routing_max'],
+                                prototype_sanity['routing_has_nan'],
+                                prototype_sanity['routing_has_inf'],
+                                tuple(prototype_bank.shape),
+                                str(prototype_bank.dtype),
+                                str(prototype_bank.device),
+                                prototype_sanity['prototype_norm_min'],
+                                prototype_sanity['prototype_norm_mean'],
+                                prototype_sanity['prototype_norm_max'],
+                                prototype_sanity['prototype_has_nan'],
+                                prototype_sanity['prototype_has_inf'],
+                            )
 
             scalar_metrics = collect_scalar_metrics(outputs, include_debug_metrics=log_debug_metrics)
             batch_size = batch['images'].shape[0]
