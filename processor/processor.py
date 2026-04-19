@@ -32,6 +32,13 @@ from utils.metric_logging import (
 )
 from utils.meter import AverageMeter
 from utils.metrics import Evaluator
+from utils.metrics_prototype import (
+    compute_assignment_overlap_mean,
+    compute_proto_cosine_offdiag_max,
+    compute_proto_high_sim_ratio,
+    compute_proto_label_nmi,
+    resolve_prototype_bank_tensor,
+)
 from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
 
 
@@ -628,6 +635,42 @@ def _do_train_runtime(
                     # Cross-batch coverage uses the existing routing weights and never feeds back into training.
                     coverage_tracker.update(alpha)
                     outputs['debug'].update(coverage_tracker.get_debug_metrics())
+
+            if log_debug_metrics:
+                core_model = model.module if hasattr(model, 'module') else model
+                prototype_enabled = bool(getattr(core_model, 'use_prototype_branch', False))
+                debug_dict = outputs.get('debug') if isinstance(outputs.get('debug'), dict) else {}
+                prototype_active = bool(float(debug_dict.get('prototype_branch_active', 1.0)) > 0.5)
+                labels = batch.get('pids')
+                routing_probs = outputs.get('alpha')
+                prototype_bank = resolve_prototype_bank_tensor(core_model)
+                if (
+                    prototype_enabled
+                    and prototype_active
+                    and isinstance(debug_dict, dict)
+                    and isinstance(labels, torch.Tensor)
+                    and labels.ndim == 1
+                    and isinstance(routing_probs, torch.Tensor)
+                    and routing_probs.ndim == 2
+                    and routing_probs.size(0) == labels.size(0)
+                    and routing_probs.size(1) > 0
+                    and isinstance(prototype_bank, torch.Tensor)
+                    and prototype_bank.ndim == 2
+                    and prototype_bank.size(0) > 0
+                ):
+                    with torch.no_grad():
+                        proto_ids = routing_probs.detach().argmax(dim=1)
+                        debug_dict.update(
+                            {
+                                'routing_proto_label_nmi': compute_proto_label_nmi(proto_ids, labels),
+                                'prototype_cosine_offdiag_max': compute_proto_cosine_offdiag_max(prototype_bank),
+                                'prototype_high_similarity_pair_ratio': compute_proto_high_sim_ratio(prototype_bank),
+                                'prototype_assignment_overlap_mean': compute_assignment_overlap_mean(
+                                    proto_ids=proto_ids,
+                                    num_prototypes=int(prototype_bank.size(0)),
+                                ),
+                            }
+                        )
 
             scalar_metrics = collect_scalar_metrics(outputs, include_debug_metrics=log_debug_metrics)
             batch_size = batch['images'].shape[0]
