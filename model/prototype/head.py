@@ -188,6 +188,16 @@ class PrototypeConditionedTextHead(nn.Module):
         self.semantic_ramp_loss_diag = bool(semantic_ramp_loss_diag)
         self.semantic_ramp_loss_semantic_pbt = bool(semantic_ramp_loss_semantic_pbt)
         self.semantic_ramp_use_prototype = bool(semantic_ramp_use_prototype)
+        self.defer_prototype_init_until_semantic_start = bool(
+            self.semantic_ramp_use_prototype
+            and self.prototype_method_role == 'semantic_structure'
+            and self.prototype_semantic_enabled
+            and self.semantic_structure_enabled
+            and (
+                self.semantic_recompute_start_epoch > 0
+                or self.semantic_recompute_start_step > 0
+            )
+        )
         self._semantic_recompute_count = 0
         self._semantic_last_recompute_epoch: Optional[int] = None
         self._semantic_last_recompute_step: Optional[int] = None
@@ -222,6 +232,7 @@ class PrototypeConditionedTextHead(nn.Module):
             init_tol=prototype_init_tol,
             init_seed=prototype_init_seed,
             init_features=prototype_init_features,
+            defer_initialization=self.defer_prototype_init_until_semantic_start,
         )
         # Recomputed semantic anchors are ephemeral runtime caches and should not break
         # checkpoint compatibility when older checkpoints are loaded.
@@ -829,6 +840,16 @@ class PrototypeConditionedTextHead(nn.Module):
         current_step: Optional[int] = None,
         semantic_recompute_features: Optional[torch.Tensor] = None,
     ) -> Dict[str, object]:
+        if hasattr(self.prototype_bank, 'is_initialized') and hasattr(self.prototype_bank, 'initialize_if_needed'):
+            needs_init = not bool(self.prototype_bank.is_initialized())
+            if needs_init:
+                if not self.defer_prototype_init_until_semantic_start:
+                    self.prototype_bank.initialize_if_needed()
+                elif (epoch is not None or current_step is not None) and self._semantic_schedule_started(
+                    epoch=epoch,
+                    current_step=current_step,
+                ):
+                    self.prototype_bank.initialize_if_needed()
         legacy_prototypes, bank_debug = self.prototype_bank(return_debug=True)
         recompute_debug = self._maybe_refresh_semantic_anchor_cache(
             features=semantic_recompute_features,
