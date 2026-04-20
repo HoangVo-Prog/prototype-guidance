@@ -628,6 +628,9 @@ class PrototypeLosses(nn.Module):
         if image_embeddings.shape != surrogate_text_embeddings.shape or image_embeddings.shape != exact_text_embeddings.shape:
             raise ValueError('Image, surrogate text, and exact text embeddings must share shape [B, D].')
 
+        # Preserve a stable reference for downstream logic that may need host logits.
+        # This guards against accidental local deletion/regression of `host_pairwise_logits`.
+        host_pairwise_logits_ref = host_pairwise_logits
         batch_size = image_embeddings.size(0)
 
         pids_for_metrics = pids
@@ -694,7 +697,7 @@ class PrototypeLosses(nn.Module):
         if should_compute_semantic_hardneg_margin:
             hardneg_info = self._semantic_hardneg_margin_loss(
                 semantic_info=semantic_info,
-                host_pairwise_logits=host_pairwise_logits,
+                host_pairwise_logits=host_pairwise_logits_ref,
             )
             loss_semantic_hardneg_margin = hardneg_info['loss']
             loss_semantic_hardneg_margin_image = hardneg_info['loss_image']
@@ -737,8 +740,8 @@ class PrototypeLosses(nn.Module):
         host_weight_std = zero.detach()
         proto_score_mean = zero.detach()
         proto_diag_mean = zero.detach()
-        if isinstance(host_pairwise_logits, torch.Tensor) and isinstance(surrogate_pairwise_logits, torch.Tensor) and host_pairwise_logits.shape == surrogate_pairwise_logits.shape:
-            proto_host_score_corr = self._pairwise_correlation(surrogate_pairwise_logits, host_pairwise_logits).detach()
+        if isinstance(host_pairwise_logits_ref, torch.Tensor) and isinstance(surrogate_pairwise_logits, torch.Tensor) and host_pairwise_logits_ref.shape == surrogate_pairwise_logits.shape:
+            proto_host_score_corr = self._pairwise_correlation(surrogate_pairwise_logits, host_pairwise_logits_ref).detach()
         else:
             proto_host_score_corr = zero.detach()
 

@@ -786,11 +786,17 @@ class PASRuntimeModel(nn.Module):
             )
         else:
             policy = self._policy_for_runtime_mode(mode)
+            host_pairwise_logits_for_plugin = (
+                host_outputs.get('surrogate_pairwise_logits') if policy.allow_host_pairwise_logits else None
+            )
+            if isinstance(host_pairwise_logits_for_plugin, torch.Tensor) and self.host_type == 'itself':
+                # ITSELF host similarity is returned as [text, image]; semantic hard-neg mining expects [image, text].
+                host_pairwise_logits_for_plugin = host_pairwise_logits_for_plugin.t().contiguous()
             interface = self.host_core.build_plugin_interface(
                 image_output=image_output,
                 text_output=text_output,
                 token_ids=batch['caption_ids'],
-                host_pairwise_logits=host_outputs.get('surrogate_pairwise_logits') if policy.allow_host_pairwise_logits else None,
+                host_pairwise_logits=host_pairwise_logits_for_plugin,
                 policy=policy,
                 metadata={
                     'runtime_mode': mode,
