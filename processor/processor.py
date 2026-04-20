@@ -471,7 +471,7 @@ def _do_train_runtime(
         )
         eval_loss_total = eval_loss_metrics.get('loss_total')
         if eval_loss_total is not None:
-            logger.info('Selected eval split loss (proxy-disabled): %.4f', eval_loss_total)
+            logger.info('Eval total loss: %.4f', eval_loss_total)
         if args.distributed:
             top1_score = evaluator.eval(model.module.eval())
         else:

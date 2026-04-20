@@ -695,13 +695,40 @@ class PrototypeLosses(nn.Module):
             )
             loss_semantic_pbt = zero
         if should_compute_semantic_hardneg_margin:
-            hardneg_info = self._semantic_hardneg_margin_loss(
-                semantic_info=semantic_info,
-                host_pairwise_logits=host_pairwise_logits_ref,
+            hardneg_artifacts_ready = all(
+                isinstance(semantic_info.get(key), torch.Tensor)
+                for key in ('image_student_probs', 'text_student_probs', 'text_targets', 'image_targets')
             )
-            loss_semantic_hardneg_margin = hardneg_info['loss']
-            loss_semantic_hardneg_margin_image = hardneg_info['loss_image']
-            loss_semantic_hardneg_margin_text = hardneg_info['loss_text']
+            valid_cluster_count = semantic_info.get('valid_cluster_count')
+            valid_cluster_value = (
+                float(valid_cluster_count.detach().float().item())
+                if isinstance(valid_cluster_count, torch.Tensor) and valid_cluster_count.numel() == 1
+                else 0.0
+            )
+            if hardneg_artifacts_ready:
+                hardneg_info = self._semantic_hardneg_margin_loss(
+                    semantic_info=semantic_info,
+                    host_pairwise_logits=host_pairwise_logits_ref,
+                )
+                loss_semantic_hardneg_margin = hardneg_info['loss']
+                loss_semantic_hardneg_margin_image = hardneg_info['loss_image']
+                loss_semantic_hardneg_margin_text = hardneg_info['loss_text']
+            elif valid_cluster_value <= 0.0:
+                # No valid semantic clusters this step: keep training stable by skipping only this term.
+                loss_semantic_hardneg_margin = zero
+                loss_semantic_hardneg_margin_image = zero
+                loss_semantic_hardneg_margin_text = zero
+                hardneg_info = {
+                    'pos_img_mean': zero.detach(),
+                    'neg_img_mean': zero.detach(),
+                    'pos_txt_mean': zero.detach(),
+                    'neg_txt_mean': zero.detach(),
+                }
+            else:
+                raise ValueError(
+                    'Semantic hard-negative margin was enabled, but semantic probabilities/targets are unavailable '
+                    'despite positive valid_cluster_count. This indicates a semantic-loss wiring bug.'
+                )
         else:
             loss_semantic_hardneg_margin = zero
             loss_semantic_hardneg_margin_image = zero
