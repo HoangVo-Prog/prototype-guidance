@@ -96,11 +96,11 @@ semantic_structure:
   text_student_source: surrogate_diagonal
   image_student_source: image_semantic_feature
 
-  recompute_start_epoch: 6
+  recompute_start_epoch: 3
   recompute_start_step: 0
-  loss_ramp_start_epoch: 6
+  loss_ramp_start_epoch: 3
   loss_ramp_start_step: 0
-  loss_ramp_epochs: 2
+  loss_ramp_epochs: 0
   loss_ramp_steps: 0
   ramp_loss_diag: true
   ramp_loss_semantic_pbt: true
@@ -109,34 +109,15 @@ semantic_structure:
 objectives:
   objectives:
     use_host_loss: true
-    use_loss_proxy_image: false
-    use_loss_proxy_text: false
-    use_loss_proxy_text_exact: false
-    use_loss_align: false
     use_loss_diag: true
     use_loss_semantic_pbt: true
-    use_loss_gap: false
-    use_loss_support: false
-    prototype_gap_margin: 0.05
-    prototype_support_target: 4.0
-    use_loss_ret: false
-    use_loss_weight_ret: false
     retrieval_mode: clip_bidirectional
     use_balancing_loss: false
     use_diversity_loss: false
   lambda:
     host: 1.0
-    proxy: 0.0
-    proxy_image: 0.0
-    proxy_text: 0.0
-    proxy_text_exact: 0.0
-    align: 0.0
     diag: 4.0
-    semantic_pbt: 2.0
-    gap: 0.0
-    support: 0.0
-    ret: 0.0
-    weight_ret: 0.0
+    semantic_pbt: 1.0
     balance: 0.0
     diversity: 0.0
 
@@ -153,7 +134,7 @@ text_pooling:
 
 
 training:
-  batch_size: 128
+  batch_size: 256
   epochs: 15
   log_period: 50
   eval_frequency: 1

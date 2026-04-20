@@ -43,17 +43,7 @@ fusion:
 objectives:
   objectives:
     use_host_loss: true
-    use_loss_proxy_image: false
-    use_loss_proxy_text: false
-    use_loss_proxy_text_exact: false
-    use_loss_align: true
     use_loss_diag: true
-    use_loss_gap: true
-    use_loss_support: true
-    prototype_gap_margin: 0.05
-    prototype_support_target: 4.0
-    use_loss_ret: true
-    use_loss_weight_ret: false
     retrieval_mode: surrogate_i2t
     use_balancing_loss: false
     use_diversity_loss: false
@@ -103,10 +93,7 @@ training:
         fusion: 5.0e-5
       loss_weights:
         lambda_host: 0.0
-        lambda_ret: 1.0
         lambda_diag: 1.0
-        lambda_gap: 0.5
-        lambda_support: 0.1
     - name: joint_adaptation
       epoch_start: 6
       epoch_end: 20
@@ -121,10 +108,7 @@ training:
         fusion: 2.0e-5
       loss_weights:
         lambda_host: 1.0
-        lambda_ret: 1.0
         lambda_diag: 1.0
-        lambda_gap: 0.5
-        lambda_support: 0.1
 
 optimizer:
   type: AdamW

@@ -48,10 +48,6 @@ METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key !
 _CONSOLE_LOSS_SKIP_KEYS = {
     # Keep canonical naming in console logs.
     'loss_proto_total',  # alias of loss_proto in current prototype path
-    'loss_dir',          # alias of loss_diag
-    'loss_sup',          # alias of loss_support
-    'loss_dir_weighted',     # alias of loss_diag_weighted
-    'loss_sup_weighted',     # alias of loss_support_weighted
 }
 CONSOLE_LOSS_LOG_KEYS = tuple(
     key for key in TRAIN_LOSS_KEYS if key in METER_KEYS and key not in _CONSOLE_LOSS_SKIP_KEYS
@@ -683,57 +679,13 @@ def _do_train_runtime(
                 ):
                     with torch.no_grad():
                         proto_ids = routing_probs.detach().argmax(dim=1)
-                        prototype_metrics, prototype_sanity = collect_prototype_debug_metrics(
+                        prototype_metrics, _prototype_sanity = collect_prototype_debug_metrics(
                             proto_ids=proto_ids,
                             labels=labels,
                             routing_probs=routing_probs,
                             prototype_bank=prototype_bank,
                         )
                         debug_dict.update(prototype_metrics)
-
-                        prototype_debug_log_interval = max(int(getattr(args, 'prototype_debug_log_interval', 200)), 1)
-                        if current_steps % prototype_debug_log_interval == 0:
-                            logger.info(
-                                (
-                                    '[prototype-metrics-sanity] step=%d '
-                                    'proto_ids(shape=%s,dtype=%s,device=%s,min=%.1f,max=%.1f,unique=%.0f) '
-                                    'labels(shape=%s,dtype=%s,device=%s,min=%.1f,max=%.1f,unique=%.0f) '
-                                    'routing_probs(shape=%s,dtype=%s,device=%s,row_sum[min/mean/max]=[%.4f/%.4f/%.4f],'
-                                    'value[min/max]=[%.4f/%.4f],nan=%.0f,inf=%.0f) '
-                                    'prototype_bank(shape=%s,dtype=%s,device=%s,norm[min/mean/max]=[%.4f/%.4f/%.4f],nan=%.0f,inf=%.0f)'
-                                ),
-                                current_steps,
-                                tuple(proto_ids.shape),
-                                str(proto_ids.dtype),
-                                str(proto_ids.device),
-                                prototype_sanity['proto_min'],
-                                prototype_sanity['proto_max'],
-                                prototype_sanity['proto_unique_count'],
-                                tuple(labels.shape),
-                                str(labels.dtype),
-                                str(labels.device),
-                                prototype_sanity['label_min'],
-                                prototype_sanity['label_max'],
-                                prototype_sanity['label_unique_count'],
-                                tuple(routing_probs.shape),
-                                str(routing_probs.dtype),
-                                str(routing_probs.device),
-                                prototype_sanity['routing_row_sum_min'],
-                                prototype_sanity['routing_row_sum_mean'],
-                                prototype_sanity['routing_row_sum_max'],
-                                prototype_sanity['routing_min'],
-                                prototype_sanity['routing_max'],
-                                prototype_sanity['routing_has_nan'],
-                                prototype_sanity['routing_has_inf'],
-                                tuple(prototype_bank.shape),
-                                str(prototype_bank.dtype),
-                                str(prototype_bank.device),
-                                prototype_sanity['prototype_norm_min'],
-                                prototype_sanity['prototype_norm_mean'],
-                                prototype_sanity['prototype_norm_max'],
-                                prototype_sanity['prototype_has_nan'],
-                                prototype_sanity['prototype_has_inf'],
-                            )
 
             scalar_metrics = collect_scalar_metrics(outputs, include_debug_metrics=log_debug_metrics)
             batch_size = batch['images'].shape[0]

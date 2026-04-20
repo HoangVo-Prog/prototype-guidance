@@ -16,30 +16,12 @@ TRAIN_LOSS_KEYS = (
     'loss_proto',
     'loss_host_weighted',
     'lambda_host',
-    'loss_proxy',
-    'loss_proxy_image',
-    'loss_proxy_text',
-    'loss_proxy_text_exact',
-    'loss_ret',
     'loss_semantic_pbt',
-    'loss_weight_ret',
-    'loss_align',
     'loss_diag',
-    'loss_gap',
-    'loss_support',
     'loss_diversity',
     'loss_balance',
-    'loss_proxy_image_weighted',
-    'loss_proxy_text_weighted',
-    'loss_proxy_text_exact_weighted',
-    'loss_proxy_weighted',
-    'loss_ret_weighted',
     'loss_semantic_pbt_weighted',
-    'loss_weight_ret_weighted',
-    'loss_align_weighted',
-    'loss_gap_weighted',
     'loss_diag_weighted',
-    'loss_support_weighted',
     'loss_diversity_weighted',
     'loss_balance_weighted',
 )
@@ -337,38 +319,16 @@ _LOSS_BASE_SUFFIX_MAP = {
     'loss_host_cid': 'host_cid',
     'loss_proto_total': 'proto_total',
     'loss_proto': 'proto',
-    'loss_proxy': 'proxy',
-    'loss_proxy_image': 'proxy_image',
-    'loss_proxy_text': 'proxy_text',
-    'loss_proxy_text_exact': 'proxy_text_exact',
-    'loss_ret': 'ret',
     'loss_semantic_pbt': 'semantic_pbt',
-    'loss_weight_ret': 'weight_ret',
-    'loss_align': 'align',
-    'loss_dir': 'dir',
-    'loss_gap': 'gap',
-    'loss_sup': 'sup',
     'loss_diag': 'diag',
-    'loss_support': 'support',
     'loss_diversity': 'diversity',
     'loss_balance': 'balance',
 }
 
 _LOSS_WEIGHTED_SUFFIX_MAP = {
     'loss_host_weighted': 'host',
-    'loss_proxy_image_weighted': 'proxy_image',
-    'loss_proxy_text_weighted': 'proxy_text',
-    'loss_proxy_text_exact_weighted': 'proxy_text_exact',
-    'loss_proxy_weighted': 'proxy',
-    'loss_ret_weighted': 'ret',
     'loss_semantic_pbt_weighted': 'semantic_pbt',
-    'loss_weight_ret_weighted': 'weight_ret',
-    'loss_align_weighted': 'align',
-    'loss_dir_weighted': 'dir',
-    'loss_gap_weighted': 'gap',
-    'loss_sup_weighted': 'sup',
     'loss_diag_weighted': 'diag',
-    'loss_support_weighted': 'support',
     'loss_diversity_weighted': 'diversity',
     'loss_balance_weighted': 'balance',
 }
@@ -430,10 +390,6 @@ _VAL_DEBUG_NAMESPACE_MAP = {
 
 
 def _map_train_loss_key(raw_key: str) -> str:
-    if raw_key == 'loss_weight_ret':
-        return 'train/loss_weight_ret'
-    if raw_key == 'loss_weight_ret_weighted':
-        return 'train/loss_weight_ret_weighted'
     if raw_key in _LOSS_BASE_SUFFIX_MAP:
         return f'train/loss/{_LOSS_BASE_SUFFIX_MAP[raw_key]}'
     if raw_key in _LOSS_WEIGHTED_SUFFIX_MAP:
@@ -444,10 +400,6 @@ def _map_train_loss_key(raw_key: str) -> str:
 
 
 def _map_val_loss_key(raw_key: str) -> str:
-    if raw_key == 'loss_weight_ret':
-        return 'val/loss_weight_ret'
-    if raw_key == 'loss_weight_ret_weighted':
-        return 'val/loss_weight_ret_weighted'
     if raw_key in _LOSS_BASE_SUFFIX_MAP:
         return f'val/loss/{_LOSS_BASE_SUFFIX_MAP[raw_key]}'
     if raw_key in _LOSS_WEIGHTED_SUFFIX_MAP:

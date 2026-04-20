@@ -14,36 +14,11 @@ class PrototypeLosses(nn.Module):
         num_classes: int = 0,
         embedding_dim: int = 0,
         proxy_temperature: float = 0.07,
-        lambda_proxy: float = 1.0,
-        lambda_proxy_image: Optional[float] = None,
-        lambda_proxy_text: Optional[float] = None,
-        lambda_proxy_text_exact: Optional[float] = None,
-        use_loss_proxy_image: bool = True,
-        use_loss_proxy_text: bool = True,
-        use_loss_proxy_text_exact: bool = True,
-        use_loss_align: bool = True,
-        lambda_align: float = 1.0,
-        use_loss_dir: Optional[bool] = None,
-        lambda_dir: Optional[float] = None,
-        use_loss_gap: bool = True,
-        lambda_gap: float = 0.5,
-        fidelity_gap_margin: float = 0.05,
-        use_loss_sup: Optional[bool] = None,
-        lambda_sup: Optional[float] = None,
-        prototype_support_target: Optional[float] = None,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
         diag_temperature: float = 0.07,
-        use_loss_ret: bool = True,
-        lambda_ret: float = 1.0,
         use_loss_semantic_pbt: bool = False,
         lambda_semantic_pbt: float = 0.0,
-        use_loss_weight_ret: bool = False,
-        lambda_weight_ret: float = 0.0,
-        weight_ret_margin_delta: float = 0.0,
-        weight_ret_tau: float = 0.5,
-        weight_ret_detach_host: bool = True,
-        weight_ret_normalize_mean_one: bool = True,
         prototype_method_role: str = 'retrieval_branch',
         prototype_semantic_enabled: bool = False,
         semantic_structure_enabled: bool = False,
@@ -54,9 +29,6 @@ class PrototypeLosses(nn.Module):
         semantic_pred_temperature: float = 0.07,
         semantic_min_cluster_count_for_pbt: float = 1.0,
         semantic_empty_cluster_policy: str = 'skip',
-        use_loss_support: bool = False,
-        support_loss_weight: float = 0.0,
-        support_min: float = 2.0,
         use_diversity_loss: bool = False,
         diversity_loss_weight: float = 0.0,
         use_balance_loss: bool = False,
@@ -84,35 +56,10 @@ class PrototypeLosses(nn.Module):
         self.lambda_div = float(diversity_loss_weight)
         self.use_balance_loss = bool(use_balance_loss)
         self.lambda_bal = float(balance_loss_weight)
-        self.lambda_proxy = float(lambda_proxy)
-        self.lambda_proxy_image = self.lambda_proxy if lambda_proxy_image is None else float(lambda_proxy_image)
-        self.lambda_proxy_text = self.lambda_proxy if lambda_proxy_text is None else float(lambda_proxy_text)
-        self.lambda_proxy_text_exact = self.lambda_proxy if lambda_proxy_text_exact is None else float(lambda_proxy_text_exact)
-        self.use_loss_proxy_image = bool(use_loss_proxy_image)
-        self.use_loss_proxy_text = bool(use_loss_proxy_text)
-        self.use_loss_proxy_text_exact = bool(use_loss_proxy_text_exact)
-        self.use_loss_align = bool(use_loss_align)
-        self.lambda_align = float(lambda_align)
-        resolved_use_loss_dir = bool(use_loss_diag) if use_loss_dir is None else bool(use_loss_dir)
-        resolved_lambda_dir = float(lambda_diag) if lambda_dir is None else float(lambda_dir)
-        resolved_use_loss_sup = bool(use_loss_support) if use_loss_sup is None else bool(use_loss_sup)
-        resolved_lambda_sup = float(support_loss_weight) if lambda_sup is None else float(lambda_sup)
-        resolved_support_target = float(support_min) if prototype_support_target is None else float(prototype_support_target)
-        self.use_loss_dir = resolved_use_loss_dir
-        self.lambda_dir = resolved_lambda_dir
-        self.use_loss_gap = bool(use_loss_gap)
-        self.lambda_gap = float(lambda_gap)
-        self.fidelity_gap_margin = float(fidelity_gap_margin)
-        self.use_loss_ret = bool(use_loss_ret)
-        self.lambda_ret = float(lambda_ret)
+        self.use_loss_diag = bool(use_loss_diag)
+        self.lambda_diag = float(lambda_diag)
         self.use_loss_semantic_pbt = bool(use_loss_semantic_pbt)
         self.lambda_semantic_pbt = float(lambda_semantic_pbt)
-        self.use_loss_weight_ret = bool(use_loss_weight_ret)
-        self.lambda_weight_ret = float(lambda_weight_ret)
-        self.weight_ret_margin_delta = float(weight_ret_margin_delta)
-        self.weight_ret_tau = float(weight_ret_tau)
-        self.weight_ret_detach_host = bool(weight_ret_detach_host)
-        self.weight_ret_normalize_mean_one = bool(weight_ret_normalize_mean_one)
         self.prototype_method_role = str(prototype_method_role).lower()
         self.prototype_semantic_enabled = bool(prototype_semantic_enabled)
         self.semantic_structure_enabled = bool(semantic_structure_enabled)
@@ -123,26 +70,11 @@ class PrototypeLosses(nn.Module):
         self.semantic_pred_temperature = float(semantic_pred_temperature)
         self.semantic_min_cluster_count_for_pbt = float(semantic_min_cluster_count_for_pbt)
         self.semantic_empty_cluster_policy = str(semantic_empty_cluster_policy).lower()
-        self.use_loss_sup = resolved_use_loss_sup
-        self.lambda_sup = resolved_lambda_sup
-        self.support_target = resolved_support_target
-        # Backward-compatible aliases for legacy config/checkpoint plumbing.
-        self.use_loss_diag = self.use_loss_dir
-        self.lambda_diag = self.lambda_dir
-        self.use_loss_support = self.use_loss_sup
-        self.lambda_support = self.lambda_sup
-        self.support_min = self.support_target
         self.proxy_temperature = float(proxy_temperature)
         self.diag_temperature = float(diag_temperature)
         self.num_classes = int(num_classes)
         self.embedding_dim = int(embedding_dim)
 
-        if self.support_target <= 0.0:
-            raise ValueError('prototype_support_target must be positive.')
-        if self.fidelity_gap_margin < 0.0:
-            raise ValueError('fidelity_gap_margin must be non-negative.')
-        if self.weight_ret_tau <= 0.0:
-            raise ValueError('weight_ret_tau must be positive.')
         if self.semantic_target_temperature <= 0.0:
             raise ValueError('semantic_target_temperature must be positive.')
         if self.semantic_pred_temperature <= 0.0:
@@ -403,36 +335,8 @@ class PrototypeLosses(nn.Module):
             'margin': positive_mean - offdiag_mean,
         }
 
-    def fidelity_gap_loss(self, surrogate_embeddings: torch.Tensor, exact_embeddings: torch.Tensor) -> Dict[str, torch.Tensor]:
-        surrogate_normalized = F.normalize(surrogate_embeddings, dim=-1)
-        exact_normalized = F.normalize(exact_embeddings.detach(), dim=-1)
-        cosine_matrix = surrogate_normalized @ exact_normalized.t()
-        batch_size = cosine_matrix.size(0)
-        positive = cosine_matrix.diagonal()
-        if batch_size <= 1 or positive.numel() == 0:
-            hardest_negative = torch.zeros_like(positive)
-            loss = positive.new_zeros(())
-        else:
-            negative_mask = ~torch.eye(batch_size, device=cosine_matrix.device, dtype=torch.bool)
-            hardest_negative = cosine_matrix.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
-            loss = (self.fidelity_gap_margin - positive + hardest_negative).clamp_min(0.0).mean()
-        return {
-            'loss': loss,
-            'pos': positive,
-            'hardneg': hardest_negative,
-            'gap_margin': positive - hardest_negative,
-        }
-
     def effective_support(self, routing_weights: torch.Tensor) -> torch.Tensor:
         return torch.reciprocal(routing_weights.pow(2).sum(dim=-1).clamp_min(1e-12))
-
-    def support_loss(self, routing_weights: Optional[torch.Tensor]) -> torch.Tensor:
-        if routing_weights is None or not self.use_loss_sup:
-            device = self.logit_scale.device if routing_weights is None else routing_weights.device
-            return torch.zeros((), device=device)
-        support = self.effective_support(routing_weights)
-        target = support.new_tensor(self.support_target).clamp_min(1e-12)
-        return ((support - target) / target).clamp_min(0.0).pow(2).mean()
 
     def diversity_loss(self, prototypes: Optional[torch.Tensor]) -> torch.Tensor:
         if prototypes is None or not self.use_diversity_loss:
@@ -450,71 +354,6 @@ class PrototypeLosses(nn.Module):
         usage = routing_weights.mean(dim=0)
         target = torch.full_like(usage, 1.0 / usage.numel())
         return (usage - target).pow(2).sum()
-
-    def surrogate_retrieval_loss(self, surrogate_pairwise_logits: torch.Tensor) -> Dict[str, torch.Tensor]:
-        if surrogate_pairwise_logits.ndim != 2 or surrogate_pairwise_logits.size(0) != surrogate_pairwise_logits.size(1):
-            raise ValueError(
-                'surrogate_pairwise_logits must have shape [B, B] with image rows and text columns; '
-                f'received {tuple(surrogate_pairwise_logits.shape)}.'
-            )
-        targets = torch.arange(surrogate_pairwise_logits.size(0), device=surrogate_pairwise_logits.device)
-        return {
-            'loss': F.cross_entropy(surrogate_pairwise_logits, targets),
-            'logits': surrogate_pairwise_logits,
-        }
-
-    def _host_margin(self, host_pairwise_logits: torch.Tensor) -> torch.Tensor:
-        if host_pairwise_logits.ndim != 2 or host_pairwise_logits.size(0) != host_pairwise_logits.size(1):
-            raise ValueError(
-                'host_pairwise_logits must have shape [B, B] to compute host margins; '
-                f'received {tuple(host_pairwise_logits.shape)}.'
-            )
-        positive = host_pairwise_logits.diagonal()
-        if host_pairwise_logits.size(0) <= 1:
-            hardest_negative = torch.zeros_like(positive)
-        else:
-            negative_mask = ~torch.eye(host_pairwise_logits.size(0), device=host_pairwise_logits.device, dtype=torch.bool)
-            hardest_negative = host_pairwise_logits.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
-        return positive - hardest_negative
-
-    def weighted_surrogate_retrieval_loss(
-        self,
-        surrogate_pairwise_logits: torch.Tensor,
-        host_pairwise_logits: torch.Tensor,
-        eps: float = 1e-12,
-    ) -> Dict[str, torch.Tensor]:
-        if surrogate_pairwise_logits.ndim != 2 or surrogate_pairwise_logits.size(0) != surrogate_pairwise_logits.size(1):
-            raise ValueError(
-                'surrogate_pairwise_logits must have shape [B, B] with image rows and text columns; '
-                f'received {tuple(surrogate_pairwise_logits.shape)}.'
-            )
-        if host_pairwise_logits.ndim != 2 or host_pairwise_logits.size(0) != host_pairwise_logits.size(1):
-            raise ValueError(
-                'host_pairwise_logits must have shape [B, B] with image rows and text columns; '
-                f'received {tuple(host_pairwise_logits.shape)}.'
-            )
-        if host_pairwise_logits.shape != surrogate_pairwise_logits.shape:
-            raise ValueError(
-                'host_pairwise_logits and surrogate_pairwise_logits must have the same [B, B] shape; '
-                f'got host={tuple(host_pairwise_logits.shape)} vs surrogate={tuple(surrogate_pairwise_logits.shape)}.'
-            )
-
-        host_source = host_pairwise_logits.detach() if self.weight_ret_detach_host else host_pairwise_logits
-        host_margin = self._host_margin(host_source)
-        weights = torch.sigmoid((self.weight_ret_margin_delta - host_margin) / self.weight_ret_tau)
-        if self.weight_ret_normalize_mean_one:
-            weights = weights / weights.mean().clamp_min(eps)
-
-        log_probs = F.log_softmax(surrogate_pairwise_logits, dim=1)
-        targets = torch.arange(surrogate_pairwise_logits.size(0), device=surrogate_pairwise_logits.device)
-        diagonal_log_probs = log_probs[targets, targets]
-        loss = -(weights * diagonal_log_probs).mean()
-        return {
-            'loss': loss,
-            'weights': weights,
-            'host_margin': host_margin,
-            'diagonal_log_probs': diagonal_log_probs,
-        }
 
     def _pairwise_correlation(self, lhs: torch.Tensor, rhs: torch.Tensor) -> torch.Tensor:
         lhs_flat = lhs.detach().float().reshape(-1)
@@ -688,27 +527,8 @@ class PrototypeLosses(nn.Module):
             raise ValueError('Image, surrogate text, and exact text embeddings must share shape [B, D].')
 
         batch_size = image_embeddings.size(0)
-        if self.use_loss_ret:
-            if surrogate_pairwise_logits is None:
-                raise ValueError('surrogate_pairwise_logits must be provided when use_loss_ret is enabled.')
-            if surrogate_pairwise_logits.ndim != 2 or surrogate_pairwise_logits.shape != (batch_size, batch_size):
-                raise ValueError(
-                    'surrogate_pairwise_logits must have shape [B, B] with image rows matching the image batch; '
-                    f'got {tuple(surrogate_pairwise_logits.shape)} for batch size {batch_size}.'
-                )
-        if self.use_loss_weight_ret:
-            if surrogate_pairwise_logits is None:
-                raise ValueError('surrogate_pairwise_logits must be provided when use_loss_weight_ret is enabled.')
-            if host_pairwise_logits is None:
-                raise ValueError('host_pairwise_logits must be provided when use_loss_weight_ret is enabled.')
-            if host_pairwise_logits.ndim != 2 or host_pairwise_logits.shape != (batch_size, batch_size):
-                raise ValueError(
-                    'host_pairwise_logits must have shape [B, B] matching the image batch when use_loss_weight_ret is enabled; '
-                    f'got {tuple(host_pairwise_logits.shape)} for batch size {batch_size}.'
-                )
+        del host_pairwise_logits
 
-        # Stage-1 prototype objective is intentionally focused on ret/dir/gap/sup only.
-        proxy_losses_active = False
         pids_for_metrics = pids
         if pids_for_metrics is None:
             pids_for_metrics = torch.arange(batch_size, device=image_embeddings.device, dtype=torch.long)
@@ -717,33 +537,7 @@ class PrototypeLosses(nn.Module):
             if pids_for_metrics.ndim != 1 or pids_for_metrics.numel() != batch_size:
                 raise ValueError(f'pids must have shape [B], received {tuple(pids_for_metrics.shape)} for batch size {batch_size}.')
 
-        if proxy_losses_active:
-            proxy_pids = self._validate_class_labels(pids_for_metrics, batch_size, image_embeddings.device)
-            loss_proxy_image_info = self.proxy_loss(image_embeddings, proxy_pids)
-            loss_proxy_text_info = self.proxy_loss(surrogate_text_embeddings, proxy_pids)
-            loss_proxy_text_exact_info = self.proxy_loss(exact_text_embeddings, proxy_pids)
-        else:
-            proxy_pids = None
-            loss_proxy_image_info = {'loss': image_embeddings.new_zeros(()), 'logits': None}
-            loss_proxy_text_info = {'loss': image_embeddings.new_zeros(()), 'logits': None}
-            loss_proxy_text_exact_info = {'loss': image_embeddings.new_zeros(()), 'logits': None}
-
-        loss_ret_info = self.surrogate_retrieval_loss(surrogate_pairwise_logits) if self.use_loss_ret else None
-        loss_weight_ret_info = (
-            self.weighted_surrogate_retrieval_loss(surrogate_pairwise_logits, host_pairwise_logits)
-            if self.use_loss_weight_ret
-            else None
-        )
         zero = image_embeddings.new_zeros(())
-        loss_proxy_image = loss_proxy_image_info['loss'] if self.use_loss_proxy_image else zero
-        loss_proxy_text = loss_proxy_text_info['loss'] if self.use_loss_proxy_text else zero
-        loss_proxy_text_exact = loss_proxy_text_exact_info['loss'] if self.use_loss_proxy_text_exact else zero
-        loss_proxy = loss_proxy_image + loss_proxy_text + loss_proxy_text_exact
-        loss_proxy_image_weighted = self.lambda_proxy_image * loss_proxy_image
-        loss_proxy_text_weighted = self.lambda_proxy_text * loss_proxy_text
-        loss_proxy_text_exact_weighted = self.lambda_proxy_text_exact * loss_proxy_text_exact
-        loss_proxy_weighted = loss_proxy_image_weighted + loss_proxy_text_weighted + loss_proxy_text_exact_weighted
-        loss_align = zero
         if diag_loss_scale is not None:
             resolved_diag_scale = float(diag_loss_scale)
         else:
@@ -762,7 +556,7 @@ class PrototypeLosses(nn.Module):
         if resolved_semantic_pbt_scale < 0.0:
             resolved_semantic_pbt_scale = 0.0
 
-        should_compute_diag = self.use_loss_dir and resolved_diag_scale > 0.0
+        should_compute_diag = self.use_loss_diag and resolved_diag_scale > 0.0
         if should_compute_diag:
             dir_info = self.symmetric_relative_diagonal_loss(surrogate_text_embeddings, exact_text_embeddings)
             loss_dir = dir_info['loss']
@@ -775,10 +569,6 @@ class PrototypeLosses(nn.Module):
                 'offdiag_mean': zero,
                 'margin': zero,
             }
-        gap_info = self.fidelity_gap_loss(surrogate_text_embeddings, exact_text_embeddings)
-        loss_gap = gap_info['loss'] if self.use_loss_gap else zero
-        loss_ret = loss_ret_info['loss'] if self.use_loss_ret else zero
-        loss_weight_ret = loss_weight_ret_info['loss'] if self.use_loss_weight_ret else zero
         should_compute_semantic_pbt = self.use_loss_semantic_pbt and resolved_semantic_pbt_scale > 0.0
         if should_compute_semantic_pbt:
             semantic_info = self._semantic_pbt_loss(
@@ -798,53 +588,26 @@ class PrototypeLosses(nn.Module):
             loss_semantic_pbt = zero
 
         loss_semantic_pbt_weighted = self.lambda_semantic_pbt * resolved_semantic_pbt_scale * loss_semantic_pbt
-        loss_sup = self.support_loss(routing_weights)
         loss_diversity = zero
         loss_balance = zero
-        loss_ret_weighted = self.lambda_ret * loss_ret
-        loss_weight_ret_weighted = self.lambda_weight_ret * loss_weight_ret
-        loss_dir_weighted = resolved_diag_scale * self.lambda_dir * loss_dir
-        loss_gap_weighted = self.lambda_gap * loss_gap
-        loss_sup_weighted = self.lambda_sup * loss_sup
+        loss_dir_weighted = resolved_diag_scale * self.lambda_diag * loss_dir
         loss_total = (
-            loss_ret_weighted
-            + loss_weight_ret_weighted
-            + loss_semantic_pbt_weighted
+            loss_semantic_pbt_weighted
             + loss_dir_weighted
-            + loss_gap_weighted
-            + loss_sup_weighted
         )
 
-        support_values = None if routing_weights is None else self.effective_support(routing_weights)
-        if gap_info['pos'].numel() > 0:
-            diag_pos_cosine_mean = gap_info['pos'].mean().detach()
-            diag_hardneg_cosine_mean = gap_info['hardneg'].mean().detach()
-            diag_gap_margin_mean = gap_info['gap_margin'].mean().detach()
-        else:
-            diag_pos_cosine_mean = zero.detach()
-            diag_hardneg_cosine_mean = zero.detach()
-            diag_gap_margin_mean = zero.detach()
+        support_values = None
+        diag_pos_cosine_mean = zero.detach()
+        diag_hardneg_cosine_mean = zero.detach()
+        diag_gap_margin_mean = zero.detach()
         routing_support_mean = support_values.mean().detach() if support_values is not None else zero.detach()
         routing_support_std = support_values.std(unbiased=False).detach() if support_values is not None else zero.detach()
-        if loss_weight_ret_info is not None:
-            host_margin = loss_weight_ret_info['host_margin']
-            host_weights = loss_weight_ret_info['weights']
-            host_margin_mean = host_margin.mean().detach()
-            host_margin_min = host_margin.min().detach() if host_margin.numel() > 0 else zero.detach()
-            host_weight_mean = host_weights.mean().detach()
-            host_weight_std = host_weights.std(unbiased=False).detach() if host_weights.numel() > 0 else zero.detach()
-        else:
-            host_margin_mean = zero.detach()
-            host_margin_min = zero.detach()
-            host_weight_mean = zero.detach()
-            host_weight_std = zero.detach()
-        if loss_ret_info is not None:
-            proto_score_logits = loss_ret_info['logits']
-            proto_score_mean = proto_score_logits.mean().detach()
-            proto_diag_mean = proto_score_logits.diagonal().mean().detach() if proto_score_logits.numel() > 0 else zero.detach()
-        else:
-            proto_score_mean = zero.detach()
-            proto_diag_mean = zero.detach()
+        host_margin_mean = zero.detach()
+        host_margin_min = zero.detach()
+        host_weight_mean = zero.detach()
+        host_weight_std = zero.detach()
+        proto_score_mean = zero.detach()
+        proto_diag_mean = zero.detach()
         if isinstance(host_pairwise_logits, torch.Tensor) and isinstance(surrogate_pairwise_logits, torch.Tensor) and host_pairwise_logits.shape == surrogate_pairwise_logits.shape:
             proto_host_score_corr = self._pairwise_correlation(surrogate_pairwise_logits, host_pairwise_logits).detach()
         else:
@@ -853,46 +616,14 @@ class PrototypeLosses(nn.Module):
         outputs = {
             'loss_total': loss_total,
             'loss_proto': loss_total,
-            'loss_proxy': loss_proxy,
-            'loss_proxy_image': loss_proxy_image,
-            'loss_proxy_text': loss_proxy_text,
-            'loss_proxy_text_exact': loss_proxy_text_exact,
-            'loss_ret': loss_ret,
             'loss_semantic_pbt': loss_semantic_pbt,
-            'loss_weight_ret': loss_weight_ret,
-            'loss_align': loss_align,
-            'loss_dir': loss_dir,
-            'loss_gap': loss_gap,
-            'loss_sup': loss_sup,
-            # Backward-compatible aliases.
             'loss_diag': loss_dir,
-            'loss_support': loss_sup,
             'loss_diversity': loss_diversity,
             'loss_balance': loss_balance,
-            'loss_proxy_image_weighted': loss_proxy_image_weighted,
-            'loss_proxy_text_weighted': loss_proxy_text_weighted,
-            'loss_proxy_text_exact_weighted': loss_proxy_text_exact_weighted,
-            'loss_proxy_weighted': loss_proxy_weighted,
-            'loss_ret_weighted': loss_ret_weighted,
             'loss_semantic_pbt_weighted': loss_semantic_pbt_weighted,
-            'loss_weight_ret_weighted': loss_weight_ret_weighted,
-            'loss_align_weighted': zero,
-            'loss_dir_weighted': loss_dir_weighted,
-            'loss_gap_weighted': loss_gap_weighted,
-            'loss_sup_weighted': loss_sup_weighted,
             'loss_diag_weighted': loss_dir_weighted,
-            'loss_support_weighted': loss_sup_weighted,
             'loss_diversity_weighted': zero,
             'loss_balance_weighted': zero,
-            'lambda_proxy': torch.tensor(self.lambda_proxy, device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_proxy_image': torch.tensor(self.lambda_proxy_image, device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_proxy_text': torch.tensor(self.lambda_proxy_text, device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_proxy_text_exact': torch.tensor(self.lambda_proxy_text_exact, device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_proxy_image': torch.tensor(float(self.use_loss_proxy_image), device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_proxy_text': torch.tensor(float(self.use_loss_proxy_text), device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_proxy_text_exact': torch.tensor(float(self.use_loss_proxy_text_exact), device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_ret': torch.tensor(float(self.use_loss_ret), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_ret': torch.tensor(self.lambda_ret, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_semantic_pbt': torch.tensor(float(self.use_loss_semantic_pbt), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_semantic_pbt': torch.tensor(self.lambda_semantic_pbt, device=loss_total.device, dtype=loss_total.dtype),
             'prototype_loss_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
@@ -901,27 +632,8 @@ class PrototypeLosses(nn.Module):
             'loss_semantic_pbt_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             # Backward-compatible alias for existing logs/consumers.
             'semantic_loss_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_weight_ret': torch.tensor(float(self.use_loss_weight_ret), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_weight_ret': torch.tensor(self.lambda_weight_ret, device=loss_total.device, dtype=loss_total.dtype),
-            'weight_ret_margin_delta': torch.tensor(self.weight_ret_margin_delta, device=loss_total.device, dtype=loss_total.dtype),
-            'weight_ret_tau': torch.tensor(self.weight_ret_tau, device=loss_total.device, dtype=loss_total.dtype),
-            'weight_ret_detach_host': torch.tensor(float(self.weight_ret_detach_host), device=loss_total.device, dtype=loss_total.dtype),
-            'weight_ret_normalize_mean_one': torch.tensor(float(self.weight_ret_normalize_mean_one), device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_align': torch.tensor(float(self.use_loss_align), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_align': torch.tensor(self.lambda_align, device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_dir': torch.tensor(float(self.use_loss_dir), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_dir': torch.tensor(self.lambda_dir, device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_gap': torch.tensor(float(self.use_loss_gap), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_gap': torch.tensor(self.lambda_gap, device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_sup': torch.tensor(float(self.use_loss_sup), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_sup': torch.tensor(self.lambda_sup, device=loss_total.device, dtype=loss_total.dtype),
-            'prototype_gap_margin': torch.tensor(self.fidelity_gap_margin, device=loss_total.device, dtype=loss_total.dtype),
-            'prototype_support_target': torch.tensor(self.support_target, device=loss_total.device, dtype=loss_total.dtype),
-            # Backward-compatible aliases.
-            'use_loss_diag': torch.tensor(float(self.use_loss_dir), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_diag': torch.tensor(self.lambda_dir, device=loss_total.device, dtype=loss_total.dtype),
-            'use_loss_support': torch.tensor(float(self.use_loss_sup), device=loss_total.device, dtype=loss_total.dtype),
-            'lambda_support': torch.tensor(self.lambda_sup, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_diag': torch.tensor(float(self.use_loss_diag), device=loss_total.device, dtype=loss_total.dtype),
+            'lambda_diag': torch.tensor(self.lambda_diag, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_div': torch.tensor(self.lambda_div, device=loss_total.device, dtype=loss_total.dtype),
             'lambda_bal': torch.tensor(self.lambda_bal, device=loss_total.device, dtype=loss_total.dtype),
             'proxy_temperature': torch.tensor(self.proxy_temperature, device=loss_total.device, dtype=loss_total.dtype),
@@ -951,9 +663,6 @@ class PrototypeLosses(nn.Module):
                 'semantic_target_entropy': semantic_info['target_entropy'],
                 'semantic_pbt_valid_cluster_count': semantic_info['valid_cluster_count'],
                 'semantic_pbt_empty_cluster_count': semantic_info['empty_cluster_count'],
-                **self._proxy_debug_metrics('image', loss_proxy_image_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
-                **self._proxy_debug_metrics('text', loss_proxy_text_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
-                **self._proxy_debug_metrics('text_exact', loss_proxy_text_exact_info['logits'], proxy_pids if proxy_pids is not None else pids_for_metrics),
                 **self._cross_modal_debug_metrics('image_surrogate', image_embeddings, surrogate_text_embeddings, pids_for_metrics),
                 **self._cross_modal_debug_metrics('image_exact', image_embeddings, exact_text_embeddings, pids_for_metrics),
                 **self._surrogate_pairwise_debug_metrics(loss_ret_info['logits'] if loss_ret_info is not None else None),
@@ -962,10 +671,6 @@ class PrototypeLosses(nn.Module):
             },
         }
         if return_debug:
-            outputs['image_proxy_logits'] = loss_proxy_image_info['logits']
-            outputs['text_proxy_logits'] = loss_proxy_text_info['logits']
-            outputs['text_exact_proxy_logits'] = loss_proxy_text_exact_info['logits']
-            if loss_ret_info is not None:
-                outputs['surrogate_retrieval_logits'] = loss_ret_info['logits']
-            outputs['class_proxies'] = self.class_proxies.detach()
+            if isinstance(surrogate_pairwise_logits, torch.Tensor):
+                outputs['surrogate_retrieval_logits'] = surrogate_pairwise_logits
         return outputs

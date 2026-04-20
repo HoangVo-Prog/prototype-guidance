@@ -10,11 +10,11 @@ CONFIG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'configs')
 DEFAULT_CONFIG_PATH = os.path.join(CONFIG_DIR, 'base.yaml')
 DEFAULT_RETRIEVAL_METRICS = ['R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum']
 LEGACY_RETRIEVAL_FLAGS = {
-    '--use_loss_ret_exact': 'Legacy exact retrieval training is removed. Use --use_loss_ret for row-wise surrogate image-to-text retrieval.',
-    '--use_loss_ret_exact_image': 'Legacy exact image-side retrieval training is removed. Use --use_loss_ret for row-wise surrogate image-to-text retrieval.',
+    '--use_loss_ret_exact': 'Legacy exact retrieval training is removed.',
+    '--use_loss_ret_exact_image': 'Legacy exact image-side retrieval training is removed.',
     '--use_loss_ret_exact_text': 'Legacy text-to-image retrieval training is invalid because surrogate text embeddings are image-conditioned.',
-    '--lambda_ret_exact': 'Legacy exact retrieval weighting is removed. Use --lambda_ret for row-wise surrogate image-to-text retrieval.',
-    '--lambda_ret_exact_image': 'Legacy exact image-side retrieval weighting is removed. Use --lambda_ret for row-wise surrogate image-to-text retrieval.',
+    '--lambda_ret_exact': 'Legacy exact retrieval weighting is removed.',
+    '--lambda_ret_exact_image': 'Legacy exact image-side retrieval weighting is removed.',
     '--lambda_ret_exact_text': 'Legacy text-side retrieval weighting is removed. Column-wise text retrieval is invalid for image-conditioned text embeddings.',
     '--ret_exact_temperature': 'Legacy exact retrieval temperature is removed. Use --temperature for surrogate retrieval scoring.',
     '--use_loss_ret_text': 'Text-to-image retrieval loss is not supported because surrogate text embeddings are image-conditioned.',
@@ -33,6 +33,34 @@ LEGACY_RETRIEVAL_FLAGS = {
     '--composer_calibration_enabled': 'Composer calibration was removed from active runtime semantics.',
     '--retrieval_scorer': 'evaluation.retrieval_scorer was removed. Retrieval scoring is always exact host-only.',
     '--prototype_inference_mode': 'prototype_inference_mode was removed. Retrieval inference is always host_only.',
+    '--lambda_proxy': 'loss_proxy was removed from runtime semantics.',
+    '--lambda_proxy_image': 'loss_proxy was removed from runtime semantics.',
+    '--lambda_proxy_text': 'loss_proxy was removed from runtime semantics.',
+    '--lambda_proxy_text_exact': 'loss_proxy was removed from runtime semantics.',
+    '--use_loss_proxy_image': 'loss_proxy was removed from runtime semantics.',
+    '--use_loss_proxy_text': 'loss_proxy was removed from runtime semantics.',
+    '--use_loss_proxy_text_exact': 'loss_proxy was removed from runtime semantics.',
+    '--use_loss_dir': 'loss_dir was removed from runtime semantics.',
+    '--lambda_dir': 'loss_dir was removed from runtime semantics.',
+    '--use_loss_gap': 'loss_gap was removed from runtime semantics.',
+    '--lambda_gap': 'loss_gap was removed from runtime semantics.',
+    '--prototype_gap_margin': 'loss_gap was removed from runtime semantics.',
+    '--use_loss_sup': 'loss_sup/loss_support were removed from runtime semantics.',
+    '--lambda_sup': 'loss_sup/loss_support were removed from runtime semantics.',
+    '--use_loss_support': 'loss_sup/loss_support were removed from runtime semantics.',
+    '--lambda_support': 'loss_sup/loss_support were removed from runtime semantics.',
+    '--prototype_support_target': 'loss_sup/loss_support were removed from runtime semantics.',
+    '--support_min': 'loss_sup/loss_support were removed from runtime semantics.',
+    '--use_loss_ret': 'Prototype-side loss_ret was removed from runtime semantics.',
+    '--lambda_ret': 'Prototype-side loss_ret was removed from runtime semantics.',
+    '--use_loss_align': 'loss_align was removed from runtime semantics.',
+    '--lambda_align': 'loss_align was removed from runtime semantics.',
+    '--use_loss_weight_ret': 'loss_weight_ret was removed from runtime semantics.',
+    '--lambda_weight_ret': 'loss_weight_ret was removed from runtime semantics.',
+    '--weight_ret_margin_delta': 'loss_weight_ret was removed from runtime semantics.',
+    '--weight_ret_tau': 'loss_weight_ret was removed from runtime semantics.',
+    '--weight_ret_detach_host': 'loss_weight_ret was removed from runtime semantics.',
+    '--weight_ret_normalize_mean_one': 'loss_weight_ret was removed from runtime semantics.',
 }
 
 
@@ -111,40 +139,12 @@ def build_parser():
     parser.add_argument('--modify_k', dest='itself_modify_k', action='store_true')
     parser.add_argument('--lambda1_weight', type=float, default=0.5)
     parser.add_argument('--lambda2_weight', type=float, default=3.5)
-    parser.add_argument('--lambda_proxy', type=float, default=1.0)
-    parser.add_argument('--lambda_proxy_image', type=float, default=None)
-    parser.add_argument('--lambda_proxy_text', type=float, default=None)
-    parser.add_argument('--lambda_proxy_text_exact', type=float, default=None)
-    parser.add_argument('--use_loss_proxy_image', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--use_loss_proxy_text', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--use_loss_proxy_text_exact', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--use_loss_align', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--lambda_align', type=float, default=1.0)
-    parser.add_argument('--use_loss_dir', type=_str2bool, nargs='?', const=True, default=None)
-    parser.add_argument('--lambda_dir', type=float, default=None)
-    parser.add_argument('--use_loss_gap', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--lambda_gap', type=float, default=0.5)
-    parser.add_argument('--prototype_gap_margin', type=float, default=0.05)
-    parser.add_argument('--use_loss_sup', type=_str2bool, nargs='?', const=True, default=None)
-    parser.add_argument('--lambda_sup', type=float, default=None)
-    parser.add_argument('--prototype_support_target', type=float, default=4.0)
     parser.add_argument('--use_loss_diag', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_diag', type=float, default=1.0)
     parser.add_argument('--diag_temperature', type=float, default=0.07)
-    parser.add_argument('--use_loss_ret', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--retrieval_mode', type=str, default='surrogate_i2t')
-    parser.add_argument('--lambda_ret', type=float, default=0.5)
     parser.add_argument('--use_loss_semantic_pbt', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_semantic_pbt', type=float, default=0.0)
-    parser.add_argument('--use_loss_weight_ret', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--lambda_weight_ret', type=float, default=0.0)
-    parser.add_argument('--weight_ret_margin_delta', type=float, default=0.0)
-    parser.add_argument('--weight_ret_tau', type=float, default=0.5)
-    parser.add_argument('--weight_ret_detach_host', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--weight_ret_normalize_mean_one', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--use_loss_support', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--lambda_support', type=float, default=0.1)
-    parser.add_argument('--support_min', type=float, default=2.0)
     parser.add_argument('--img_size', type=int, nargs=2, default=(384, 128))
     parser.add_argument('--stride_size', type=int, default=16)
     parser.add_argument('--text_length', type=int, default=77)
@@ -549,25 +549,9 @@ def _finalize_args(args):
     args.prototype_contextualization_enabled = authoritative_contextualization
     args.use_prototype_contextualization = authoritative_contextualization
     args = _resolve_freeze_controls(args)
-    args.lambda_proxy_image = args.lambda_proxy if args.lambda_proxy_image is None else float(args.lambda_proxy_image)
-    args.lambda_proxy_text = args.lambda_proxy if args.lambda_proxy_text is None else float(args.lambda_proxy_text)
-    args.lambda_proxy_text_exact = args.lambda_proxy if args.lambda_proxy_text_exact is None else float(args.lambda_proxy_text_exact)
-    args.lambda_dir = float(args.lambda_diag) if getattr(args, 'lambda_dir', None) is None else float(args.lambda_dir)
-    args.use_loss_dir = bool(args.lambda_dir > 0.0) if getattr(args, 'use_loss_dir', None) is None else bool(args.use_loss_dir)
-    args.use_loss_diag = bool(args.use_loss_dir)
-    args.lambda_diag = float(args.lambda_dir)
     args.diag_temperature = float(getattr(args, 'diag_temperature', 0.07))
-    args.lambda_sup = float(args.lambda_support) if getattr(args, 'lambda_sup', None) is None else float(args.lambda_sup)
-    args.use_loss_sup = bool(args.lambda_sup > 0.0) if getattr(args, 'use_loss_sup', None) is None else bool(args.use_loss_sup)
-    args.use_loss_support = bool(args.use_loss_sup)
-    args.lambda_support = float(args.lambda_sup)
-    args.use_loss_gap = bool(getattr(args, 'use_loss_gap', True))
-    args.lambda_gap = float(getattr(args, 'lambda_gap', 0.5))
-    args.prototype_gap_margin = float(getattr(args, 'prototype_gap_margin', 0.05))
-    args.prototype_support_target = float(getattr(args, 'prototype_support_target', getattr(args, 'support_min', 4.0)))
-    args.support_min = float(args.prototype_support_target)
-    args.use_loss_ret = bool(args.use_loss_ret)
-    args.lambda_ret = float(args.lambda_ret)
+    args.use_loss_diag = bool(getattr(args, 'use_loss_diag', True))
+    args.lambda_diag = float(getattr(args, 'lambda_diag', 1.0))
     args.use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
     args.lambda_semantic_pbt = float(getattr(args, 'lambda_semantic_pbt', 0.0))
     semantic_loss_explicit = (
@@ -587,45 +571,6 @@ def _finalize_args(args):
     if not args.use_loss_semantic_pbt:
         args.lambda_semantic_pbt = 0.0
 
-    # In semantic-structure mode, legacy retrieval-side losses stay available but default to off
-    # unless the user explicitly enables them.
-    ret_loss_explicit = (
-        ('use_loss_ret' in cli_dests)
-        or _has_override_path('loss', 'use_loss_ret')
-        or _has_nested_override_path('objectives', 'objectives', 'use_loss_ret')
-    )
-    ret_lambda_explicit = (
-        ('lambda_ret' in cli_dests)
-        or _has_override_path('loss', 'lambda_ret')
-        or _has_nested_override_path('objectives', 'lambda', 'ret')
-    )
-    support_loss_explicit = (
-        ('use_loss_support' in cli_dests)
-        or ('use_loss_sup' in cli_dests)
-        or _has_override_path('loss', 'use_loss_support')
-        or _has_override_path('loss', 'use_loss_sup')
-        or _has_nested_override_path('objectives', 'objectives', 'use_loss_support')
-        or _has_nested_override_path('objectives', 'objectives', 'use_loss_sup')
-    )
-    support_lambda_explicit = (
-        ('lambda_support' in cli_dests)
-        or ('lambda_sup' in cli_dests)
-        or _has_override_path('loss', 'lambda_support')
-        or _has_override_path('loss', 'lambda_sup')
-        or _has_nested_override_path('objectives', 'lambda', 'support')
-        or _has_nested_override_path('objectives', 'lambda', 'sup')
-    )
-    if semantic_mode_selected and not ret_loss_explicit:
-        args.use_loss_ret = False
-    if semantic_mode_selected and not ret_lambda_explicit:
-        args.lambda_ret = 0.0
-    if semantic_mode_selected and not support_loss_explicit:
-        args.use_loss_sup = False
-        args.use_loss_support = False
-    if semantic_mode_selected and not support_lambda_explicit:
-        args.lambda_sup = 0.0
-        args.lambda_support = 0.0
-
     args.prototype_routing_source = str(getattr(args, 'prototype_routing_source', 'global')).lower()
     args.prototype_local_routing_temperature = getattr(args, 'prototype_local_routing_temperature', None)
     if args.prototype_local_routing_temperature in ('', None):
@@ -640,12 +585,6 @@ def _finalize_args(args):
     else:
         args.prototype_local_routing_adapter_dim = int(local_adapter_dim)
     args.prototype_local_routing_normalize_inputs = bool(getattr(args, 'prototype_local_routing_normalize_inputs', True))
-    args.use_loss_weight_ret = bool(getattr(args, 'use_loss_weight_ret', False))
-    args.lambda_weight_ret = float(getattr(args, 'lambda_weight_ret', 0.0))
-    args.weight_ret_margin_delta = float(getattr(args, 'weight_ret_margin_delta', 0.0))
-    args.weight_ret_tau = float(getattr(args, 'weight_ret_tau', 0.5))
-    args.weight_ret_detach_host = bool(getattr(args, 'weight_ret_detach_host', True))
-    args.weight_ret_normalize_mean_one = bool(getattr(args, 'weight_ret_normalize_mean_one', True))
     args.image_backbone = args.image_backbone or args.pretrain_choice
     args.text_backbone = args.text_backbone or 'clip_text_transformer'
     return args
