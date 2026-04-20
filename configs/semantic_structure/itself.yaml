@@ -117,9 +117,9 @@ objectives:
     use_diversity_loss: false
   lambda:
     host: 1.0
-    diag: 3.0
+    diag: 4.0
     semantic_pbt: 1.0
-    semantic_hardneg_margin: 10.0
+    semantic_hardneg_margin: 1.0
     balance: 0.0
     diversity: 0.0
   semantic_hardneg_margin: 0.05
