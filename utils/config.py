@@ -389,7 +389,6 @@ UNSUPPORTED_CONFIG_PATHS = {
     ('objectives', 'lambda', 'proxy_text'): 'objectives.lambda.proxy_text was removed.',
     ('objectives', 'lambda', 'proxy_text_exact'): 'objectives.lambda.proxy_text_exact was removed.',
     ('objectives', 'lambda', 'dir'): 'objectives.lambda.dir was removed.',
-    ('objectives', 'lambda', 'diag'): 'objectives.lambda.diag was removed.',
     ('objectives', 'lambda', 'gap'): 'objectives.lambda.gap was removed.',
     ('objectives', 'lambda', 'sup'): 'objectives.lambda.sup was removed.',
     ('objectives', 'lambda', 'support'): 'objectives.lambda.support was removed.',
