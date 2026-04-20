@@ -89,7 +89,7 @@ semantic_structure:
   pred_temperature: 0.07
   
   recompute_schedule: epoch
-  recompute_interval: 1
+  recompute_interval: 2
   min_cluster_count_for_pbt: 1.0
   empty_cluster_policy: skip
   text_teacher_source: exact_diagonal
@@ -111,6 +111,7 @@ objectives:
     use_host_loss: true
     use_loss_diag: true
     use_loss_semantic_pbt: true
+    use_loss_semantic_hardneg_margin: false
     retrieval_mode: clip_bidirectional
     use_balancing_loss: false
     use_diversity_loss: false
@@ -118,8 +119,11 @@ objectives:
     host: 1.0
     diag: 4.0
     semantic_pbt: 1.0
+    semantic_hardneg_margin: 0.0
     balance: 0.0
     diversity: 0.0
+  semantic_hardneg_margin: 0.05
+  semantic_hardneg_eps: 1.0e-8
 
 text_pooling:
   token_policy: content_only

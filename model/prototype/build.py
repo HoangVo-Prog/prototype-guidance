@@ -69,6 +69,10 @@ def build_prototype_head(
     semantic_ramp_use_prototype = bool(getattr(args, 'semantic_ramp_use_prototype', False))
     use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
     lambda_semantic_pbt = float(getattr(args, 'lambda_semantic_pbt', 0.0))
+    use_loss_semantic_hardneg_margin = bool(getattr(args, 'use_loss_semantic_hardneg_margin', False))
+    lambda_semantic_hardneg_margin = float(getattr(args, 'lambda_semantic_hardneg_margin', 0.0))
+    semantic_hardneg_margin = float(getattr(args, 'semantic_hardneg_margin', 0.05))
+    semantic_hardneg_eps = float(getattr(args, 'semantic_hardneg_eps', 1e-8))
 
     common_kwargs = dict(
         input_dim=input_dim,
@@ -94,6 +98,10 @@ def build_prototype_head(
         diag_temperature=getattr(args, 'diag_temperature', 0.07),
         use_loss_semantic_pbt=use_loss_semantic_pbt,
         lambda_semantic_pbt=lambda_semantic_pbt,
+        use_loss_semantic_hardneg_margin=use_loss_semantic_hardneg_margin,
+        lambda_semantic_hardneg_margin=lambda_semantic_hardneg_margin,
+        semantic_hardneg_margin=semantic_hardneg_margin,
+        semantic_hardneg_eps=semantic_hardneg_eps,
         prototype_method_role=prototype_method_role,
         prototype_semantic_enabled=prototype_semantic_enabled,
         semantic_structure_enabled=semantic_structure_enabled,
@@ -194,6 +202,10 @@ def build_prototype_head(
         diag_temperature=getattr(args, 'diag_temperature', 0.07),
         use_loss_semantic_pbt=use_loss_semantic_pbt,
         lambda_semantic_pbt=lambda_semantic_pbt,
+        use_loss_semantic_hardneg_margin=use_loss_semantic_hardneg_margin,
+        lambda_semantic_hardneg_margin=lambda_semantic_hardneg_margin,
+        semantic_hardneg_margin=semantic_hardneg_margin,
+        semantic_hardneg_eps=semantic_hardneg_eps,
         use_diversity_loss=getattr(args, 'use_diversity_loss', True),
         diversity_loss_weight=diversity_loss_weight,
         use_balance_loss=use_balancing_loss,

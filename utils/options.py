@@ -145,6 +145,10 @@ def build_parser():
     parser.add_argument('--retrieval_mode', type=str, default='surrogate_i2t')
     parser.add_argument('--use_loss_semantic_pbt', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_semantic_pbt', type=float, default=0.0)
+    parser.add_argument('--use_loss_semantic_hardneg_margin', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--lambda_semantic_hardneg_margin', type=float, default=0.0)
+    parser.add_argument('--semantic_hardneg_margin', type=float, default=0.05)
+    parser.add_argument('--semantic_hardneg_eps', type=float, default=1e-8)
     parser.add_argument('--img_size', type=int, nargs=2, default=(384, 128))
     parser.add_argument('--stride_size', type=int, default=16)
     parser.add_argument('--text_length', type=int, default=77)
@@ -554,6 +558,10 @@ def _finalize_args(args):
     args.lambda_diag = float(getattr(args, 'lambda_diag', 1.0))
     args.use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
     args.lambda_semantic_pbt = float(getattr(args, 'lambda_semantic_pbt', 0.0))
+    args.use_loss_semantic_hardneg_margin = bool(getattr(args, 'use_loss_semantic_hardneg_margin', False))
+    args.lambda_semantic_hardneg_margin = float(getattr(args, 'lambda_semantic_hardneg_margin', 0.0))
+    args.semantic_hardneg_margin = float(getattr(args, 'semantic_hardneg_margin', 0.05))
+    args.semantic_hardneg_eps = float(getattr(args, 'semantic_hardneg_eps', 1e-8))
     semantic_loss_explicit = (
         ('use_loss_semantic_pbt' in cli_dests)
         or _has_override_path('loss', 'use_loss_semantic_pbt')
@@ -570,6 +578,8 @@ def _finalize_args(args):
         args.lambda_semantic_pbt = 1.0 if args.use_loss_semantic_pbt else 0.0
     if not args.use_loss_semantic_pbt:
         args.lambda_semantic_pbt = 0.0
+    if not args.use_loss_semantic_hardneg_margin:
+        args.lambda_semantic_hardneg_margin = 0.0
 
     args.prototype_routing_source = str(getattr(args, 'prototype_routing_source', 'global')).lower()
     args.prototype_local_routing_temperature = getattr(args, 'prototype_local_routing_temperature', None)

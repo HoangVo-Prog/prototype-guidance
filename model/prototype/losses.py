@@ -19,6 +19,10 @@ class PrototypeLosses(nn.Module):
         diag_temperature: float = 0.07,
         use_loss_semantic_pbt: bool = False,
         lambda_semantic_pbt: float = 0.0,
+        use_loss_semantic_hardneg_margin: bool = False,
+        lambda_semantic_hardneg_margin: float = 0.0,
+        semantic_hardneg_margin: float = 0.05,
+        semantic_hardneg_eps: float = 1e-8,
         prototype_method_role: str = 'retrieval_branch',
         prototype_semantic_enabled: bool = False,
         semantic_structure_enabled: bool = False,
@@ -60,6 +64,10 @@ class PrototypeLosses(nn.Module):
         self.lambda_diag = float(lambda_diag)
         self.use_loss_semantic_pbt = bool(use_loss_semantic_pbt)
         self.lambda_semantic_pbt = float(lambda_semantic_pbt)
+        self.use_loss_semantic_hardneg_margin = bool(use_loss_semantic_hardneg_margin)
+        self.lambda_semantic_hardneg_margin = float(lambda_semantic_hardneg_margin)
+        self.semantic_hardneg_margin = float(semantic_hardneg_margin)
+        self.semantic_hardneg_eps = float(semantic_hardneg_eps)
         self.prototype_method_role = str(prototype_method_role).lower()
         self.prototype_semantic_enabled = bool(prototype_semantic_enabled)
         self.semantic_structure_enabled = bool(semantic_structure_enabled)
@@ -81,6 +89,10 @@ class PrototypeLosses(nn.Module):
             raise ValueError('semantic_pred_temperature must be positive.')
         if self.semantic_min_cluster_count_for_pbt <= 0.0:
             raise ValueError('semantic_min_cluster_count_for_pbt must be positive.')
+        if self.semantic_hardneg_margin < 0.0:
+            raise ValueError('semantic_hardneg_margin must be non-negative.')
+        if self.semantic_hardneg_eps <= 0.0:
+            raise ValueError('semantic_hardneg_eps must be positive.')
         if self.semantic_empty_cluster_policy not in {'skip', 'reseed'}:
             raise ValueError(
                 f'Unsupported semantic_empty_cluster_policy={self.semantic_empty_cluster_policy!r}. '
@@ -404,6 +416,10 @@ class PrototypeLosses(nn.Module):
             'valid_cluster_count': zero.detach(),
             'empty_cluster_count': zero.detach(),
             'target_entropy': zero.detach(),
+            'image_student_probs': None,
+            'text_student_probs': None,
+            'text_targets': None,
+            'image_targets': None,
         }
         if not self._semantic_mode_enabled():
             return outputs
@@ -495,9 +511,95 @@ class PrototypeLosses(nn.Module):
                 'valid_cluster_count': valid_mask.sum().to(dtype=loss_semantic.dtype).detach(),
                 'empty_cluster_count': (~valid_mask).sum().to(dtype=loss_semantic.dtype).detach(),
                 'target_entropy': target_entropy.detach(),
+                'image_student_probs': torch.softmax(image_logits, dim=-1),
+                'text_student_probs': torch.softmax(teacher_logits, dim=-1),
+                'text_targets': teacher_targets_valid,
+                'image_targets': image_targets_valid,
             }
         )
         return outputs
+
+    def _semantic_hardneg_margin_loss(
+        self,
+        *,
+        semantic_info: Dict[str, torch.Tensor],
+        host_pairwise_logits: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        image_probs = semantic_info.get('image_student_probs')
+        text_probs = semantic_info.get('text_student_probs')
+        text_targets = semantic_info.get('text_targets')
+        image_targets = semantic_info.get('image_targets')
+        if not all(isinstance(value, torch.Tensor) for value in (image_probs, text_probs, text_targets, image_targets)):
+            raise ValueError(
+                'Semantic hard-negative margin requires semantic student probabilities/targets from semantic PBT path, '
+                'but they are unavailable. Ensure semantic tensors are produced in the current training step.'
+            )
+        if not isinstance(host_pairwise_logits, torch.Tensor):
+            raise ValueError(
+                'Semantic hard-negative margin requires host_pairwise_logits from HostCore, but it is unavailable.'
+            )
+        if host_pairwise_logits.ndim != 2:
+            raise ValueError(
+                f'Semantic hard-negative margin requires host_pairwise_logits with shape [B, B], got {tuple(host_pairwise_logits.shape)}.'
+            )
+        batch_size = int(image_probs.size(0))
+        if host_pairwise_logits.size(0) != batch_size or host_pairwise_logits.size(1) != batch_size:
+            raise ValueError(
+                'Semantic hard-negative margin requires host_pairwise_logits shape [B, B] aligned with semantic tensors; '
+                f'got host={tuple(host_pairwise_logits.shape)} semantic_batch={batch_size}.'
+            )
+        if batch_size < 2:
+            zero = image_probs.new_zeros(())
+            return {
+                'loss': zero,
+                'loss_image': zero,
+                'loss_text': zero,
+                'pos_img_mean': zero.detach(),
+                'neg_img_mean': zero.detach(),
+                'pos_txt_mean': zero.detach(),
+                'neg_txt_mean': zero.detach(),
+            }
+
+        if image_probs.ndim != 2 or text_probs.ndim != 2 or text_targets.ndim != 2 or image_targets.ndim != 2:
+            raise ValueError('Semantic hard-negative margin expects [B, K] tensors for probs and targets.')
+        if image_probs.shape != text_targets.shape:
+            raise ValueError(
+                'Semantic hard-negative margin requires image_student_probs and text_targets to share shape [B, K]; '
+                f'got {tuple(image_probs.shape)} and {tuple(text_targets.shape)}.'
+            )
+        if text_probs.shape != image_targets.shape:
+            raise ValueError(
+                'Semantic hard-negative margin requires text_student_probs and image_targets to share shape [B, K]; '
+                f'got {tuple(text_probs.shape)} and {tuple(image_targets.shape)}.'
+            )
+
+        # Host score is used only for discrete hardest-negative index selection.
+        host_scores = host_pairwise_logits.detach().to(device=image_probs.device, dtype=image_probs.dtype)
+        diag_mask = ~torch.eye(batch_size, device=host_scores.device, dtype=torch.bool)
+        masked = host_scores.masked_fill(~diag_mask, float('-inf'))
+        hardest_neg_caption = masked.argmax(dim=1)
+        hardest_neg_image = masked.argmax(dim=0)
+
+        log_p_i_from_t = torch.log(image_probs.clamp_min(self.semantic_hardneg_eps))
+        log_p_t_from_i = torch.log(text_probs.clamp_min(self.semantic_hardneg_eps))
+
+        pos_img = (text_targets * log_p_i_from_t).sum(dim=-1)
+        neg_img = (text_targets.index_select(0, hardest_neg_caption) * log_p_i_from_t).sum(dim=-1)
+        loss_img = F.relu(self.semantic_hardneg_margin - pos_img + neg_img).mean()
+
+        pos_txt = (image_targets * log_p_t_from_i).sum(dim=-1)
+        neg_txt = (image_targets.index_select(0, hardest_neg_image) * log_p_t_from_i).sum(dim=-1)
+        loss_txt = F.relu(self.semantic_hardneg_margin - pos_txt + neg_txt).mean()
+
+        return {
+            'loss': 0.5 * (loss_img + loss_txt),
+            'loss_image': loss_img,
+            'loss_text': loss_txt,
+            'pos_img_mean': pos_img.mean().detach(),
+            'neg_img_mean': neg_img.mean().detach(),
+            'pos_txt_mean': pos_txt.mean().detach(),
+            'neg_txt_mean': neg_txt.mean().detach(),
+        }
 
     def forward(
         self,
@@ -527,7 +629,6 @@ class PrototypeLosses(nn.Module):
             raise ValueError('Image, surrogate text, and exact text embeddings must share shape [B, D].')
 
         batch_size = image_embeddings.size(0)
-        del host_pairwise_logits
 
         pids_for_metrics = pids
         if pids_for_metrics is None:
@@ -570,14 +671,18 @@ class PrototypeLosses(nn.Module):
                 'margin': zero,
             }
         should_compute_semantic_pbt = self.use_loss_semantic_pbt and resolved_semantic_pbt_scale > 0.0
-        if should_compute_semantic_pbt:
+        should_compute_semantic_hardneg_margin = (
+            self.use_loss_semantic_hardneg_margin and resolved_semantic_pbt_scale > 0.0
+        )
+        need_semantic_artifacts = should_compute_semantic_pbt or should_compute_semantic_hardneg_margin
+        if need_semantic_artifacts:
             semantic_info = self._semantic_pbt_loss(
                 image_student=semantic_image_student_embeddings,
                 text_student=semantic_text_student_embeddings,
                 text_teacher=semantic_text_teacher_embeddings,
                 base_prototypes=semantic_base_prototypes,
             )
-            loss_semantic_pbt = semantic_info['loss']
+            loss_semantic_pbt = semantic_info['loss'] if should_compute_semantic_pbt else zero
         else:
             semantic_info = self._semantic_pbt_loss(
                 image_student=None,
@@ -586,13 +691,37 @@ class PrototypeLosses(nn.Module):
                 base_prototypes=None,
             )
             loss_semantic_pbt = zero
+        if should_compute_semantic_hardneg_margin:
+            hardneg_info = self._semantic_hardneg_margin_loss(
+                semantic_info=semantic_info,
+                host_pairwise_logits=host_pairwise_logits,
+            )
+            loss_semantic_hardneg_margin = hardneg_info['loss']
+            loss_semantic_hardneg_margin_image = hardneg_info['loss_image']
+            loss_semantic_hardneg_margin_text = hardneg_info['loss_text']
+        else:
+            loss_semantic_hardneg_margin = zero
+            loss_semantic_hardneg_margin_image = zero
+            loss_semantic_hardneg_margin_text = zero
+            hardneg_info = {
+                'pos_img_mean': zero.detach(),
+                'neg_img_mean': zero.detach(),
+                'pos_txt_mean': zero.detach(),
+                'neg_txt_mean': zero.detach(),
+            }
 
         loss_semantic_pbt_weighted = self.lambda_semantic_pbt * resolved_semantic_pbt_scale * loss_semantic_pbt
+        loss_semantic_hardneg_margin_weighted = (
+            self.lambda_semantic_hardneg_margin
+            * resolved_semantic_pbt_scale
+            * loss_semantic_hardneg_margin
+        )
         loss_diversity = zero
         loss_balance = zero
         loss_dir_weighted = resolved_diag_scale * self.lambda_diag * loss_dir
         loss_total = (
             loss_semantic_pbt_weighted
+            + loss_semantic_hardneg_margin_weighted
             + loss_dir_weighted
         )
 
@@ -617,15 +746,39 @@ class PrototypeLosses(nn.Module):
             'loss_total': loss_total,
             'loss_proto': loss_total,
             'loss_semantic_pbt': loss_semantic_pbt,
+            'loss_semantic_hardneg_margin': loss_semantic_hardneg_margin,
+            'loss_semantic_hardneg_margin_image': loss_semantic_hardneg_margin_image,
+            'loss_semantic_hardneg_margin_text': loss_semantic_hardneg_margin_text,
             'loss_diag': loss_dir,
             'loss_diversity': loss_diversity,
             'loss_balance': loss_balance,
             'loss_semantic_pbt_weighted': loss_semantic_pbt_weighted,
+            'loss_semantic_hardneg_margin_weighted': loss_semantic_hardneg_margin_weighted,
             'loss_diag_weighted': loss_dir_weighted,
             'loss_diversity_weighted': zero,
             'loss_balance_weighted': zero,
             'use_loss_semantic_pbt': torch.tensor(float(self.use_loss_semantic_pbt), device=loss_total.device, dtype=loss_total.dtype),
             'lambda_semantic_pbt': torch.tensor(self.lambda_semantic_pbt, device=loss_total.device, dtype=loss_total.dtype),
+            'use_loss_semantic_hardneg_margin': torch.tensor(
+                float(self.use_loss_semantic_hardneg_margin),
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'lambda_semantic_hardneg_margin': torch.tensor(
+                self.lambda_semantic_hardneg_margin,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'semantic_hardneg_margin': torch.tensor(
+                self.semantic_hardneg_margin,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'semantic_hardneg_eps': torch.tensor(
+                self.semantic_hardneg_eps,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
             'prototype_loss_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             'prototype_loss_ramp_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             'loss_diag_scale': torch.tensor(resolved_diag_scale, device=loss_total.device, dtype=loss_total.dtype),
@@ -663,9 +816,13 @@ class PrototypeLosses(nn.Module):
                 'semantic_target_entropy': semantic_info['target_entropy'],
                 'semantic_pbt_valid_cluster_count': semantic_info['valid_cluster_count'],
                 'semantic_pbt_empty_cluster_count': semantic_info['empty_cluster_count'],
+                'sem_hardneg_pos_img_mean': hardneg_info['pos_img_mean'],
+                'sem_hardneg_neg_img_mean': hardneg_info['neg_img_mean'],
+                'sem_hardneg_pos_txt_mean': hardneg_info['pos_txt_mean'],
+                'sem_hardneg_neg_txt_mean': hardneg_info['neg_txt_mean'],
                 **self._cross_modal_debug_metrics('image_surrogate', image_embeddings, surrogate_text_embeddings, pids_for_metrics),
                 **self._cross_modal_debug_metrics('image_exact', image_embeddings, exact_text_embeddings, pids_for_metrics),
-                **self._surrogate_pairwise_debug_metrics(loss_ret_info['logits'] if loss_ret_info is not None else None),
+                **self._surrogate_pairwise_debug_metrics(surrogate_pairwise_logits),
                 **self._norm_stats('class_proxy_norm', self.class_proxies.detach()),
                 **self._normalized_norm_stats('class_proxy_norm_normalized', self.class_proxies.detach()),
             },

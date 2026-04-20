@@ -17,10 +17,14 @@ TRAIN_LOSS_KEYS = (
     'loss_host_weighted',
     'lambda_host',
     'loss_semantic_pbt',
+    'loss_semantic_hardneg_margin',
+    'loss_semantic_hardneg_margin_image',
+    'loss_semantic_hardneg_margin_text',
     'loss_diag',
     'loss_diversity',
     'loss_balance',
     'loss_semantic_pbt_weighted',
+    'loss_semantic_hardneg_margin_weighted',
     'loss_diag_weighted',
     'loss_diversity_weighted',
     'loss_balance_weighted',
@@ -222,6 +226,10 @@ DEBUG_METRIC_MAP = {
     'semantic_target_entropy': 'debug/semantic_target_entropy',
     'semantic_pbt_valid_cluster_count': 'debug/semantic_pbt_valid_cluster_count',
     'semantic_pbt_empty_cluster_count': 'debug/semantic_pbt_empty_cluster_count',
+    'sem_hardneg_pos_img_mean': 'debug/sem_hardneg_pos_img_mean',
+    'sem_hardneg_neg_img_mean': 'debug/sem_hardneg_neg_img_mean',
+    'sem_hardneg_pos_txt_mean': 'debug/sem_hardneg_pos_txt_mean',
+    'sem_hardneg_neg_txt_mean': 'debug/sem_hardneg_neg_txt_mean',
     'q_norm': 'debug/q_norm',
     'surrogate_t_pool_norm': 'debug/surrogate_t_pool_norm',
     'exact_t_pool_norm': 'debug/exact_t_pool_norm',
@@ -320,6 +328,9 @@ _LOSS_BASE_SUFFIX_MAP = {
     'loss_proto_total': 'proto_total',
     'loss_proto': 'proto',
     'loss_semantic_pbt': 'semantic_pbt',
+    'loss_semantic_hardneg_margin': 'semantic_hardneg_margin',
+    'loss_semantic_hardneg_margin_image': 'semantic_hardneg_margin_image',
+    'loss_semantic_hardneg_margin_text': 'semantic_hardneg_margin_text',
     'loss_diag': 'diag',
     'loss_diversity': 'diversity',
     'loss_balance': 'balance',
@@ -328,6 +339,7 @@ _LOSS_BASE_SUFFIX_MAP = {
 _LOSS_WEIGHTED_SUFFIX_MAP = {
     'loss_host_weighted': 'host',
     'loss_semantic_pbt_weighted': 'semantic_pbt',
+    'loss_semantic_hardneg_margin_weighted': 'semantic_hardneg_margin',
     'loss_diag_weighted': 'diag',
     'loss_diversity_weighted': 'diversity',
     'loss_balance_weighted': 'balance',
@@ -470,6 +482,8 @@ def map_train_diagnostic_key(raw_key: str) -> str:
         'semantic_structure_enabled',
         'prototype_method_role_semantic_structure',
     }:
+        return f'train/semantic/{raw_key}'
+    if raw_key.startswith('sem_hardneg_'):
         return f'train/semantic/{raw_key}'
     if raw_key.startswith('grad_norm_') or raw_key == 'surrogate_retrieval_grad_norm':
         return f'train/grad/{raw_key}'

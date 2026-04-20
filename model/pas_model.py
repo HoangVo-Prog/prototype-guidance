@@ -662,6 +662,9 @@ class PASModel(nn.Module):
             'loss_proxy_text_exact': zero,
             'loss_ret': zero,
             'loss_semantic_pbt': zero,
+            'loss_semantic_hardneg_margin': zero,
+            'loss_semantic_hardneg_margin_image': zero,
+            'loss_semantic_hardneg_margin_text': zero,
             'loss_align': zero,
             'loss_dir': zero,
             'loss_gap': zero,
@@ -676,6 +679,7 @@ class PASModel(nn.Module):
             'loss_proxy_weighted': zero,
             'loss_ret_weighted': zero,
             'loss_semantic_pbt_weighted': zero,
+            'loss_semantic_hardneg_margin_weighted': zero,
             'loss_weight_ret': zero,
             'loss_weight_ret_weighted': zero,
             'loss_align_weighted': zero,
@@ -697,6 +701,10 @@ class PASModel(nn.Module):
             'lambda_ret': zero,
             'use_loss_semantic_pbt': zero,
             'lambda_semantic_pbt': zero,
+            'use_loss_semantic_hardneg_margin': zero,
+            'lambda_semantic_hardneg_margin': zero,
+            'semantic_hardneg_margin': zero,
+            'semantic_hardneg_eps': zero,
             'prototype_loss_scale': zero,
             'prototype_loss_ramp_scale': zero,
             'loss_diag_scale': zero,
@@ -1044,6 +1052,9 @@ class PASModel(nn.Module):
                 'surrogate_pairwise_logits': None,
             }
         else:
+            host_pairwise_logits_for_prototype = host_outputs.get('surrogate_pairwise_logits')
+            if isinstance(host_pairwise_logits_for_prototype, torch.Tensor) and self.host_type == 'itself':
+                host_pairwise_logits_for_prototype = host_pairwise_logits_for_prototype.t().contiguous()
             prototype_outputs = self.prototype_head(
                 image_embeddings=self._cast_to_prototype_dtype(image_output.projected_pooled),
                 image_local_tokens=self._cast_to_prototype_dtype(image_output.projected_tokens),
@@ -1052,7 +1063,7 @@ class PASModel(nn.Module):
                 pids=pids,
                 attention_mask=text_output.token_mask,
                 special_token_positions=text_output.special_token_positions,
-                host_pairwise_logits=host_outputs.get('surrogate_pairwise_logits'),
+                host_pairwise_logits=host_pairwise_logits_for_prototype,
                 epoch=epoch,
                 current_step=current_step,
                 return_debug=should_return_debug,
@@ -1080,6 +1091,18 @@ class PASModel(nn.Module):
             'loss_proxy_text_exact': prototype_losses['loss_proxy_text_exact'],
             'loss_ret': prototype_losses['loss_ret'],
             'loss_semantic_pbt': prototype_losses.get('loss_semantic_pbt', host_losses['loss_total'].new_zeros(())),
+            'loss_semantic_hardneg_margin': prototype_losses.get(
+                'loss_semantic_hardneg_margin',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'loss_semantic_hardneg_margin_image': prototype_losses.get(
+                'loss_semantic_hardneg_margin_image',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'loss_semantic_hardneg_margin_text': prototype_losses.get(
+                'loss_semantic_hardneg_margin_text',
+                host_losses['loss_total'].new_zeros(()),
+            ),
             'loss_align': prototype_losses['loss_align'],
             'loss_dir': prototype_losses['loss_dir'],
             'loss_gap': prototype_losses['loss_gap'],
@@ -1094,6 +1117,10 @@ class PASModel(nn.Module):
             'loss_proxy_weighted': prototype_losses['loss_proxy_weighted'],
             'loss_ret_weighted': prototype_losses['loss_ret_weighted'],
             'loss_semantic_pbt_weighted': prototype_losses.get('loss_semantic_pbt_weighted', host_losses['loss_total'].new_zeros(())),
+            'loss_semantic_hardneg_margin_weighted': prototype_losses.get(
+                'loss_semantic_hardneg_margin_weighted',
+                host_losses['loss_total'].new_zeros(()),
+            ),
             'loss_weight_ret': prototype_losses['loss_weight_ret'],
             'loss_weight_ret_weighted': prototype_losses['loss_weight_ret_weighted'],
             'loss_align_weighted': prototype_losses['loss_align_weighted'],
@@ -1115,6 +1142,22 @@ class PASModel(nn.Module):
             'lambda_ret': metric_losses['lambda_ret'],
             'use_loss_semantic_pbt': prototype_losses.get('use_loss_semantic_pbt', host_losses['loss_total'].new_zeros(())),
             'lambda_semantic_pbt': prototype_losses.get('lambda_semantic_pbt', host_losses['loss_total'].new_zeros(())),
+            'use_loss_semantic_hardneg_margin': prototype_losses.get(
+                'use_loss_semantic_hardneg_margin',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'lambda_semantic_hardneg_margin': prototype_losses.get(
+                'lambda_semantic_hardneg_margin',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hardneg_margin': prototype_losses.get(
+                'semantic_hardneg_margin',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hardneg_eps': prototype_losses.get(
+                'semantic_hardneg_eps',
+                host_losses['loss_total'].new_zeros(()),
+            ),
             'prototype_loss_scale': prototype_losses.get(
                 'prototype_loss_scale',
                 prototype_losses.get('semantic_loss_scale', host_losses['loss_total'].new_zeros(())),
