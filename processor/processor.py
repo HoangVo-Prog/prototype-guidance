@@ -325,6 +325,7 @@ def _collect_loss_grad_norm_metrics(outputs, parameters):
         'train/grad_loss_norm/diag': 0.0,
         'train/grad_loss_norm/semantic_pbt': 0.0,
         'train/grad_loss_norm/semantic_hardneg_margin': 0.0,
+        'train/grad_loss_norm/semantic_hosthard_weighted': 0.0,
     }
     if not parameters:
         return metrics
@@ -336,6 +337,10 @@ def _collect_loss_grad_norm_metrics(outputs, parameters):
         (
             'train/grad_loss_norm/semantic_hardneg_margin',
             ('loss_semantic_hardneg_margin_weighted', 'loss_semantic_hardneg_margin'),
+        ),
+        (
+            'train/grad_loss_norm/semantic_hosthard_weighted',
+            ('loss_semantic_hosthard_weighted_weighted', 'loss_semantic_hosthard_weighted'),
         ),
     )
     for metric_key, candidate_loss_keys in loss_key_preferences:

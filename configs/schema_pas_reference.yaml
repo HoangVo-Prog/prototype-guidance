@@ -110,6 +110,7 @@ semantic_structure:
   ramp_loss_diag: false
   ramp_loss_semantic_pbt: true
   ramp_loss_semantic_hardneg_margin: true
+  ramp_loss_semantic_hosthard_weighted: true
   ramp_use_prototype: false
 
 fusion:
@@ -127,6 +128,7 @@ objectives:
     use_host_loss: true
     use_loss_diag: false
     use_loss_semantic_pbt: false
+    use_loss_semantic_hosthard_weighted: false
     retrieval_mode: surrogate_i2t
     use_balancing_loss: false
     use_diversity_loss: false
@@ -138,9 +140,14 @@ objectives:
     support: 0.0
     ret: 0.0
     semantic_pbt: 0.0
+    semantic_hosthard_weighted: 0.0
     weight_ret: 0.0
     balance: 0.0
     diversity: 0.0
+  semantic_hosthard_margin_ref: 0.0
+  semantic_hosthard_tau: 0.1
+  semantic_hosthard_eps: 1.0e-8
+  semantic_hosthard_normalize_weights: true
 
 text_pooling:
   token_policy: content_only

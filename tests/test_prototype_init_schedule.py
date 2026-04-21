@@ -49,6 +49,7 @@ class PrototypeInitScheduleTests(unittest.TestCase):
             semantic_ramp_loss_diag=True,
             semantic_ramp_loss_semantic_pbt=True,
             semantic_ramp_loss_semantic_hardneg_margin=True,
+            semantic_ramp_loss_semantic_hosthard_weighted=True,
         )
         scales = head._resolve_loss_scales(ramp_scale=0.4, prototype_usage_enabled=True)
 
@@ -56,6 +57,7 @@ class PrototypeInitScheduleTests(unittest.TestCase):
         self.assertEqual(scales['diag'], 0.4)
         self.assertEqual(scales['semantic_pbt'], 0.4)
         self.assertEqual(scales['semantic_hardneg_margin'], 0.4)
+        self.assertEqual(scales['semantic_hosthard_weighted'], 0.4)
 
 
 if __name__ == '__main__':

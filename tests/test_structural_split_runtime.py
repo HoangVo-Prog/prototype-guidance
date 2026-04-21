@@ -116,6 +116,24 @@ class StructuralSplitRuntimeTests(unittest.TestCase):
                 }
             )
 
+    def test_semantic_hosthard_weighted_requires_joint_runtime_when_enabled(self):
+        with self.assertRaisesRegex(ValueError, 'use_loss_semantic_hosthard_weighted'):
+            validate_config_data(
+                {
+                    'model': {
+                        'use_prototype_branch': True,
+                        'use_prototype_bank': True,
+                        'use_image_conditioned_pooling': True,
+                        'runtime_mode': 'host_only',
+                    },
+                    'objectives': {
+                        'objectives': {
+                            'use_loss_semantic_hosthard_weighted': True,
+                        },
+                    },
+                }
+            )
+
     def test_itself_ablation_alphas_out_of_range_fail(self):
         with self.assertRaisesRegex(ValueError, 'itself_lambda_ablation_alphas'):
             validate_config_data({'evaluation': {'itself_lambda_ablation_alphas': [1.2]}})

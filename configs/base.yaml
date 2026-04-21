@@ -106,5 +106,6 @@ semantic_structure:
   ramp_loss_diag: false
   ramp_loss_semantic_pbt: true
   ramp_loss_semantic_hardneg_margin: true
+  ramp_loss_semantic_hosthard_weighted: true
   ramp_use_prototype: false
 

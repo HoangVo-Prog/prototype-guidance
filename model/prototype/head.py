@@ -69,6 +69,7 @@ class PrototypeConditionedTextHead(nn.Module):
         semantic_ramp_loss_diag: bool = False,
         semantic_ramp_loss_semantic_pbt: bool = True,
         semantic_ramp_loss_semantic_hardneg_margin: bool = True,
+        semantic_ramp_loss_semantic_hosthard_weighted: bool = True,
         semantic_ramp_use_prototype: bool = False,
         token_scoring_type: str = 'cosine',
         token_temperature: float = 0.07,
@@ -94,6 +95,12 @@ class PrototypeConditionedTextHead(nn.Module):
         lambda_semantic_hardneg_margin: float = 0.0,
         semantic_hardneg_margin: float = 0.05,
         semantic_hardneg_eps: float = 1e-8,
+        use_loss_semantic_hosthard_weighted: bool = False,
+        lambda_semantic_hosthard_weighted: float = 0.0,
+        semantic_hosthard_margin_ref: float = 0.0,
+        semantic_hosthard_tau: float = 0.1,
+        semantic_hosthard_eps: float = 1e-8,
+        semantic_hosthard_normalize_weights: bool = True,
         use_diversity_loss: bool = False,
         diversity_loss_weight: float = 0.0,
         use_balance_loss: bool = False,
@@ -165,6 +172,7 @@ class PrototypeConditionedTextHead(nn.Module):
         self.semantic_ramp_loss_diag = bool(semantic_ramp_loss_diag)
         self.semantic_ramp_loss_semantic_pbt = bool(semantic_ramp_loss_semantic_pbt)
         self.semantic_ramp_loss_semantic_hardneg_margin = bool(semantic_ramp_loss_semantic_hardneg_margin)
+        self.semantic_ramp_loss_semantic_hosthard_weighted = bool(semantic_ramp_loss_semantic_hosthard_weighted)
         self.semantic_ramp_use_prototype = bool(semantic_ramp_use_prototype)
         self.defer_prototype_init_until_semantic_start = bool(
             self.semantic_ramp_use_prototype
@@ -295,6 +303,12 @@ class PrototypeConditionedTextHead(nn.Module):
             lambda_semantic_hardneg_margin=lambda_semantic_hardneg_margin,
             semantic_hardneg_margin=semantic_hardneg_margin,
             semantic_hardneg_eps=semantic_hardneg_eps,
+            use_loss_semantic_hosthard_weighted=use_loss_semantic_hosthard_weighted,
+            lambda_semantic_hosthard_weighted=lambda_semantic_hosthard_weighted,
+            semantic_hosthard_margin_ref=semantic_hosthard_margin_ref,
+            semantic_hosthard_tau=semantic_hosthard_tau,
+            semantic_hosthard_eps=semantic_hosthard_eps,
+            semantic_hosthard_normalize_weights=semantic_hosthard_normalize_weights,
             prototype_method_role=prototype_method_role,
             prototype_semantic_enabled=prototype_semantic_enabled,
             semantic_structure_enabled=semantic_structure_enabled,
@@ -537,12 +551,16 @@ class PrototypeConditionedTextHead(nn.Module):
                 'diag': 0.0,
                 'semantic_pbt': 0.0,
                 'semantic_hardneg_margin': 0.0,
+                'semantic_hosthard_weighted': 0.0,
             }
         return {
             'prototype': float(ramp_scale),
             'diag': float(ramp_scale) if self.semantic_ramp_loss_diag else 1.0,
             'semantic_pbt': float(ramp_scale) if self.semantic_ramp_loss_semantic_pbt else 1.0,
             'semantic_hardneg_margin': float(ramp_scale) if self.semantic_ramp_loss_semantic_hardneg_margin else 1.0,
+            'semantic_hosthard_weighted': (
+                float(ramp_scale) if self.semantic_ramp_loss_semantic_hosthard_weighted else 1.0
+            ),
         }
 
     def _zero_loss_outputs(self, reference: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -553,11 +571,15 @@ class PrototypeConditionedTextHead(nn.Module):
             'loss_semantic_hardneg_margin': zero,
             'loss_semantic_hardneg_margin_image': zero,
             'loss_semantic_hardneg_margin_text': zero,
+            'loss_semantic_hosthard_weighted': zero,
+            'loss_semantic_hosthard_weighted_image': zero,
+            'loss_semantic_hosthard_weighted_text': zero,
             'loss_diag': zero,
             'loss_diversity': zero,
             'loss_balance': zero,
             'loss_semantic_pbt_weighted': zero,
             'loss_semantic_hardneg_margin_weighted': zero,
+            'loss_semantic_hosthard_weighted_weighted': zero,
             'loss_diag_weighted': zero,
             'loss_diversity_weighted': zero,
             'loss_balance_weighted': zero,
@@ -565,13 +587,20 @@ class PrototypeConditionedTextHead(nn.Module):
             'lambda_semantic_pbt': zero,
             'use_loss_semantic_hardneg_margin': zero,
             'lambda_semantic_hardneg_margin': zero,
+            'use_loss_semantic_hosthard_weighted': zero,
+            'lambda_semantic_hosthard_weighted': zero,
             'semantic_hardneg_margin': zero,
             'semantic_hardneg_eps': zero,
+            'semantic_hosthard_margin_ref': zero,
+            'semantic_hosthard_tau': zero,
+            'semantic_hosthard_eps': zero,
+            'semantic_hosthard_normalize_weights': zero,
             'prototype_loss_scale': zero,
             'prototype_loss_ramp_scale': zero,
             'loss_diag_scale': zero,
             'loss_semantic_pbt_scale': zero,
             'loss_semantic_hardneg_margin_scale': zero,
+            'loss_semantic_hosthard_weighted_scale': zero,
             'semantic_loss_scale': zero,
             'use_loss_diag': zero,
             'lambda_diag': zero,
@@ -1429,6 +1458,7 @@ class PrototypeConditionedTextHead(nn.Module):
         diag_loss_scale = loss_scales['diag']
         semantic_pbt_loss_scale = loss_scales['semantic_pbt']
         semantic_hardneg_margin_loss_scale = loss_scales['semantic_hardneg_margin']
+        semantic_hosthard_weighted_loss_scale = loss_scales['semantic_hosthard_weighted']
         if not prototype_usage_enabled:
             loss_outputs = self._zero_loss_outputs(image_outputs['image_projected'])
         else:
@@ -1448,6 +1478,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 diag_loss_scale=diag_loss_scale,
                 semantic_pbt_loss_scale=semantic_pbt_loss_scale,
                 semantic_hardneg_margin_loss_scale=semantic_hardneg_margin_loss_scale,
+                semantic_hosthard_weighted_loss_scale=semantic_hosthard_weighted_loss_scale,
                 return_debug=return_debug,
                 disable_proxy_losses=disable_proxy_losses,
             )
@@ -1506,6 +1537,9 @@ class PrototypeConditionedTextHead(nn.Module):
             'loss_semantic_pbt_scale': image_outputs['image_projected'].new_tensor(float(semantic_pbt_loss_scale)),
             'loss_semantic_hardneg_margin_scale': image_outputs['image_projected'].new_tensor(
                 float(semantic_hardneg_margin_loss_scale)
+            ),
+            'loss_semantic_hosthard_weighted_scale': image_outputs['image_projected'].new_tensor(
+                float(semantic_hosthard_weighted_loss_scale)
             ),
             # Backward-compatible alias for existing logs/consumers.
             'semantic_loss_scale': image_outputs['image_projected'].new_tensor(float(semantic_pbt_loss_scale)),

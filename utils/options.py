@@ -149,6 +149,12 @@ def build_parser():
     parser.add_argument('--lambda_semantic_hardneg_margin', type=float, default=0.0)
     parser.add_argument('--semantic_hardneg_margin', type=float, default=0.05)
     parser.add_argument('--semantic_hardneg_eps', type=float, default=1e-8)
+    parser.add_argument('--use_loss_semantic_hosthard_weighted', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--lambda_semantic_hosthard_weighted', type=float, default=0.0)
+    parser.add_argument('--semantic_hosthard_margin_ref', type=float, default=0.0)
+    parser.add_argument('--semantic_hosthard_tau', type=float, default=0.1)
+    parser.add_argument('--semantic_hosthard_eps', type=float, default=1e-8)
+    parser.add_argument('--semantic_hosthard_normalize_weights', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--img_size', type=int, nargs=2, default=(384, 128))
     parser.add_argument('--stride_size', type=int, default=16)
     parser.add_argument('--text_length', type=int, default=77)
@@ -204,6 +210,7 @@ def build_parser():
     parser.add_argument('--semantic_ramp_loss_diag', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--semantic_ramp_loss_semantic_pbt', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--semantic_ramp_loss_semantic_hardneg_margin', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--semantic_ramp_loss_semantic_hosthard_weighted', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--semantic_ramp_use_prototype', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--use_balancing_loss', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_bal', '--prototype_balance_loss_weight', dest='prototype_balance_loss_weight', type=float, default=0.0)
@@ -571,6 +578,9 @@ def _finalize_args(args):
     args.semantic_ramp_loss_semantic_hardneg_margin = bool(
         getattr(args, 'semantic_ramp_loss_semantic_hardneg_margin', True)
     )
+    args.semantic_ramp_loss_semantic_hosthard_weighted = bool(
+        getattr(args, 'semantic_ramp_loss_semantic_hosthard_weighted', True)
+    )
     args.semantic_ramp_use_prototype = bool(getattr(args, 'semantic_ramp_use_prototype', False))
     args.prototype_inference_mode = 'host_only'
 
@@ -600,6 +610,12 @@ def _finalize_args(args):
     args.lambda_semantic_hardneg_margin = float(getattr(args, 'lambda_semantic_hardneg_margin', 0.0))
     args.semantic_hardneg_margin = float(getattr(args, 'semantic_hardneg_margin', 0.05))
     args.semantic_hardneg_eps = float(getattr(args, 'semantic_hardneg_eps', 1e-8))
+    args.use_loss_semantic_hosthard_weighted = bool(getattr(args, 'use_loss_semantic_hosthard_weighted', False))
+    args.lambda_semantic_hosthard_weighted = float(getattr(args, 'lambda_semantic_hosthard_weighted', 0.0))
+    args.semantic_hosthard_margin_ref = float(getattr(args, 'semantic_hosthard_margin_ref', 0.0))
+    args.semantic_hosthard_tau = float(getattr(args, 'semantic_hosthard_tau', 0.1))
+    args.semantic_hosthard_eps = float(getattr(args, 'semantic_hosthard_eps', 1e-8))
+    args.semantic_hosthard_normalize_weights = bool(getattr(args, 'semantic_hosthard_normalize_weights', True))
     semantic_loss_explicit = (
         ('use_loss_semantic_pbt' in cli_dests)
         or _has_override_path('loss', 'use_loss_semantic_pbt')
@@ -618,6 +634,8 @@ def _finalize_args(args):
         args.lambda_semantic_pbt = 0.0
     if not args.use_loss_semantic_hardneg_margin:
         args.lambda_semantic_hardneg_margin = 0.0
+    if not args.use_loss_semantic_hosthard_weighted:
+        args.lambda_semantic_hosthard_weighted = 0.0
 
     args.prototype_routing_source = str(getattr(args, 'prototype_routing_source', 'global')).lower()
     args.prototype_local_routing_temperature = getattr(args, 'prototype_local_routing_temperature', None)

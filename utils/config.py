@@ -107,6 +107,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('semantic_structure', 'ramp_loss_diag'): 'semantic_ramp_loss_diag',
     ('semantic_structure', 'ramp_loss_semantic_pbt'): 'semantic_ramp_loss_semantic_pbt',
     ('semantic_structure', 'ramp_loss_semantic_hardneg_margin'): 'semantic_ramp_loss_semantic_hardneg_margin',
+    ('semantic_structure', 'ramp_loss_semantic_hosthard_weighted'): 'semantic_ramp_loss_semantic_hosthard_weighted',
     ('semantic_structure', 'ramp_use_prototype'): 'semantic_ramp_use_prototype',
 
 
@@ -114,6 +115,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('objectives', 'objectives', 'use_loss_diag'): 'use_loss_diag',
     ('objectives', 'objectives', 'use_loss_semantic_pbt'): 'use_loss_semantic_pbt',
     ('objectives', 'objectives', 'use_loss_semantic_hardneg_margin'): 'use_loss_semantic_hardneg_margin',
+    ('objectives', 'objectives', 'use_loss_semantic_hosthard_weighted'): 'use_loss_semantic_hosthard_weighted',
     ('objectives', 'objectives', 'retrieval_mode'): 'retrieval_mode',
     ('objectives', 'objectives', 'use_balancing_loss'): 'use_balancing_loss',
     ('objectives', 'objectives', 'use_diversity_loss'): 'use_diversity_loss',
@@ -122,10 +124,15 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('objectives', 'lambda', 'diag'): 'lambda_diag',
     ('objectives', 'lambda', 'semantic_pbt'): 'lambda_semantic_pbt',
     ('objectives', 'lambda', 'semantic_hardneg_margin'): 'lambda_semantic_hardneg_margin',
+    ('objectives', 'lambda', 'semantic_hosthard_weighted'): 'lambda_semantic_hosthard_weighted',
     ('objectives', 'lambda', 'balance'): 'prototype_balance_loss_weight',
     ('objectives', 'lambda', 'diversity'): 'diversity_loss_weight',
     ('objectives', 'semantic_hardneg_margin'): 'semantic_hardneg_margin',
     ('objectives', 'semantic_hardneg_eps'): 'semantic_hardneg_eps',
+    ('objectives', 'semantic_hosthard_margin_ref'): 'semantic_hosthard_margin_ref',
+    ('objectives', 'semantic_hosthard_tau'): 'semantic_hosthard_tau',
+    ('objectives', 'semantic_hosthard_eps'): 'semantic_hosthard_eps',
+    ('objectives', 'semantic_hosthard_normalize_weights'): 'semantic_hosthard_normalize_weights',
 
     ('text_pooling', 'token_policy'): 'token_policy',
     ('text_pooling', 'scoring_type'): 'token_scoring_type',
@@ -278,10 +285,16 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('objectives', 'lambda_host'): 'lambda_host',
     ('objectives', 'objectives', 'use_loss_diag'): 'use_loss_diag',
     ('objectives', 'objectives', 'use_loss_semantic_hardneg_margin'): 'use_loss_semantic_hardneg_margin',
+    ('objectives', 'objectives', 'use_loss_semantic_hosthard_weighted'): 'use_loss_semantic_hosthard_weighted',
     ('objectives', 'lambda', 'diag'): 'lambda_diag',
     ('objectives', 'lambda', 'semantic_hardneg_margin'): 'lambda_semantic_hardneg_margin',
+    ('objectives', 'lambda', 'semantic_hosthard_weighted'): 'lambda_semantic_hosthard_weighted',
     ('objectives', 'semantic_hardneg_margin'): 'semantic_hardneg_margin',
     ('objectives', 'semantic_hardneg_eps'): 'semantic_hardneg_eps',
+    ('objectives', 'semantic_hosthard_margin_ref'): 'semantic_hosthard_margin_ref',
+    ('objectives', 'semantic_hosthard_tau'): 'semantic_hosthard_tau',
+    ('objectives', 'semantic_hosthard_eps'): 'semantic_hosthard_eps',
+    ('objectives', 'semantic_hosthard_normalize_weights'): 'semantic_hosthard_normalize_weights',
     ('objectives', 'use_diag_fidelity'): 'use_loss_diag',
     ('objectives', 'lambda_diag'): 'lambda_diag',
     ('objectives', 'diag_temperature'): 'diag_temperature',
@@ -294,11 +307,17 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('loss', 'diag_temperature'): 'diag_temperature',
     ('loss', 'use_loss_semantic_pbt'): 'use_loss_semantic_pbt',
     ('loss', 'use_loss_semantic_hardneg_margin'): 'use_loss_semantic_hardneg_margin',
+    ('loss', 'use_loss_semantic_hosthard_weighted'): 'use_loss_semantic_hosthard_weighted',
     ('loss', 'retrieval_mode'): 'retrieval_mode',
     ('loss', 'lambda_semantic_pbt'): 'lambda_semantic_pbt',
     ('loss', 'lambda_semantic_hardneg_margin'): 'lambda_semantic_hardneg_margin',
+    ('loss', 'lambda_semantic_hosthard_weighted'): 'lambda_semantic_hosthard_weighted',
     ('loss', 'semantic_hardneg_margin'): 'semantic_hardneg_margin',
     ('loss', 'semantic_hardneg_eps'): 'semantic_hardneg_eps',
+    ('loss', 'semantic_hosthard_margin_ref'): 'semantic_hosthard_margin_ref',
+    ('loss', 'semantic_hosthard_tau'): 'semantic_hosthard_tau',
+    ('loss', 'semantic_hosthard_eps'): 'semantic_hosthard_eps',
+    ('loss', 'semantic_hosthard_normalize_weights'): 'semantic_hosthard_normalize_weights',
     ('loss', 'use_balancing_loss'): 'use_balancing_loss',
     ('loss', 'balance_loss_weight'): 'prototype_balance_loss_weight',
     ('loss', 'use_diversity_loss'): 'use_diversity_loss',
@@ -310,6 +329,8 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'lambda_semantic_pbt'): 'lambda_semantic_pbt',
     ('training', 'use_loss_semantic_hardneg_margin'): 'use_loss_semantic_hardneg_margin',
     ('training', 'lambda_semantic_hardneg_margin'): 'lambda_semantic_hardneg_margin',
+    ('training', 'use_loss_semantic_hosthard_weighted'): 'use_loss_semantic_hosthard_weighted',
+    ('training', 'lambda_semantic_hosthard_weighted'): 'lambda_semantic_hosthard_weighted',
     ('training', 'log_debug_metrics'): 'log_debug_metrics',
 
     ('text_pooling', 'token_similarity'): 'token_scoring_type',
@@ -946,8 +967,11 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     semantic_min_cluster_count_for_pbt = float(flat.get('semantic_min_cluster_count_for_pbt', 1.0))
     use_loss_semantic_pbt = bool(flat.get('use_loss_semantic_pbt', False))
     use_loss_semantic_hardneg_margin = bool(flat.get('use_loss_semantic_hardneg_margin', False))
+    use_loss_semantic_hosthard_weighted = bool(flat.get('use_loss_semantic_hosthard_weighted', False))
     semantic_hardneg_margin = float(flat.get('semantic_hardneg_margin', 0.05))
     semantic_hardneg_eps = float(flat.get('semantic_hardneg_eps', 1e-8))
+    semantic_hosthard_tau = float(flat.get('semantic_hosthard_tau', 0.1))
+    semantic_hosthard_eps = float(flat.get('semantic_hosthard_eps', 1e-8))
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -990,10 +1014,16 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         raise ValueError('objectives.semantic_hardneg_margin must be non-negative.')
     if semantic_hardneg_eps <= 0.0:
         raise ValueError('objectives.semantic_hardneg_eps must be positive.')
+    if semantic_hosthard_tau <= 0.0:
+        raise ValueError('objectives.semantic_hosthard_tau must be positive.')
+    if semantic_hosthard_eps <= 0.0:
+        raise ValueError('objectives.semantic_hosthard_eps must be positive.')
     if use_loss_semantic_pbt and not use_prototype_branch:
         raise ValueError('loss.use_loss_semantic_pbt requires model.use_prototype_branch=true.')
     if use_loss_semantic_hardneg_margin and not use_prototype_branch:
         raise ValueError('loss.use_loss_semantic_hardneg_margin requires model.use_prototype_branch=true.')
+    if use_loss_semantic_hosthard_weighted and not use_prototype_branch:
+        raise ValueError('loss.use_loss_semantic_hosthard_weighted requires model.use_prototype_branch=true.')
     if use_loss_semantic_pbt and runtime_mode == 'host_only':
         raise ValueError(
             'loss.use_loss_semantic_pbt is incompatible with model.runtime_mode=host_only because '
@@ -1003,6 +1033,12 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     if use_loss_semantic_hardneg_margin and runtime_mode == 'host_only':
         raise ValueError(
             'loss.use_loss_semantic_hardneg_margin is incompatible with model.runtime_mode=host_only because '
+            'host-only runtime disables prototype loss computation. '
+            'Use model.runtime_mode=joint_training.'
+        )
+    if use_loss_semantic_hosthard_weighted and runtime_mode == 'host_only':
+        raise ValueError(
+            'loss.use_loss_semantic_hosthard_weighted is incompatible with model.runtime_mode=host_only because '
             'host-only runtime disables prototype loss computation. '
             'Use model.runtime_mode=joint_training.'
         )
@@ -1072,8 +1108,11 @@ def validate_runtime_args_namespace(args) -> None:
     semantic_min_cluster_count_for_pbt = float(getattr(args, 'semantic_min_cluster_count_for_pbt', 1.0))
     use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
     use_loss_semantic_hardneg_margin = bool(getattr(args, 'use_loss_semantic_hardneg_margin', False))
+    use_loss_semantic_hosthard_weighted = bool(getattr(args, 'use_loss_semantic_hosthard_weighted', False))
     semantic_hardneg_margin = float(getattr(args, 'semantic_hardneg_margin', 0.05))
     semantic_hardneg_eps = float(getattr(args, 'semantic_hardneg_eps', 1e-8))
+    semantic_hosthard_tau = float(getattr(args, 'semantic_hosthard_tau', 0.1))
+    semantic_hosthard_eps = float(getattr(args, 'semantic_hosthard_eps', 1e-8))
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -1115,10 +1154,16 @@ def validate_runtime_args_namespace(args) -> None:
         raise ValueError('semantic_hardneg_margin must be non-negative.')
     if semantic_hardneg_eps <= 0.0:
         raise ValueError('semantic_hardneg_eps must be positive.')
+    if semantic_hosthard_tau <= 0.0:
+        raise ValueError('semantic_hosthard_tau must be positive.')
+    if semantic_hosthard_eps <= 0.0:
+        raise ValueError('semantic_hosthard_eps must be positive.')
     if use_loss_semantic_pbt and not use_prototype_branch:
         raise ValueError('use_loss_semantic_pbt requires use_prototype_branch=true.')
     if use_loss_semantic_hardneg_margin and not use_prototype_branch:
         raise ValueError('use_loss_semantic_hardneg_margin requires use_prototype_branch=true.')
+    if use_loss_semantic_hosthard_weighted and not use_prototype_branch:
+        raise ValueError('use_loss_semantic_hosthard_weighted requires use_prototype_branch=true.')
     if use_loss_semantic_pbt and runtime_mode == 'host_only':
         raise ValueError(
             'use_loss_semantic_pbt is incompatible with runtime_mode=host_only because host-only runtime disables '
@@ -1127,6 +1172,11 @@ def validate_runtime_args_namespace(args) -> None:
     if use_loss_semantic_hardneg_margin and runtime_mode == 'host_only':
         raise ValueError(
             'use_loss_semantic_hardneg_margin is incompatible with runtime_mode=host_only because host-only runtime '
+            'disables prototype loss computation. Use runtime_mode=joint_training.'
+        )
+    if use_loss_semantic_hosthard_weighted and runtime_mode == 'host_only':
+        raise ValueError(
+            'use_loss_semantic_hosthard_weighted is incompatible with runtime_mode=host_only because host-only runtime '
             'disables prototype loss computation. Use runtime_mode=joint_training.'
         )
 

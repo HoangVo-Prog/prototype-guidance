@@ -69,6 +69,9 @@ def build_prototype_head(
     semantic_ramp_loss_semantic_hardneg_margin = bool(
         getattr(args, 'semantic_ramp_loss_semantic_hardneg_margin', True)
     )
+    semantic_ramp_loss_semantic_hosthard_weighted = bool(
+        getattr(args, 'semantic_ramp_loss_semantic_hosthard_weighted', True)
+    )
     semantic_ramp_use_prototype = bool(getattr(args, 'semantic_ramp_use_prototype', False))
     use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
     lambda_semantic_pbt = float(getattr(args, 'lambda_semantic_pbt', 0.0))
@@ -76,6 +79,12 @@ def build_prototype_head(
     lambda_semantic_hardneg_margin = float(getattr(args, 'lambda_semantic_hardneg_margin', 0.0))
     semantic_hardneg_margin = float(getattr(args, 'semantic_hardneg_margin', 0.05))
     semantic_hardneg_eps = float(getattr(args, 'semantic_hardneg_eps', 1e-8))
+    use_loss_semantic_hosthard_weighted = bool(getattr(args, 'use_loss_semantic_hosthard_weighted', False))
+    lambda_semantic_hosthard_weighted = float(getattr(args, 'lambda_semantic_hosthard_weighted', 0.0))
+    semantic_hosthard_margin_ref = float(getattr(args, 'semantic_hosthard_margin_ref', 0.0))
+    semantic_hosthard_tau = float(getattr(args, 'semantic_hosthard_tau', 0.1))
+    semantic_hosthard_eps = float(getattr(args, 'semantic_hosthard_eps', 1e-8))
+    semantic_hosthard_normalize_weights = bool(getattr(args, 'semantic_hosthard_normalize_weights', True))
 
     common_kwargs = dict(
         input_dim=input_dim,
@@ -105,6 +114,12 @@ def build_prototype_head(
         lambda_semantic_hardneg_margin=lambda_semantic_hardneg_margin,
         semantic_hardneg_margin=semantic_hardneg_margin,
         semantic_hardneg_eps=semantic_hardneg_eps,
+        use_loss_semantic_hosthard_weighted=use_loss_semantic_hosthard_weighted,
+        lambda_semantic_hosthard_weighted=lambda_semantic_hosthard_weighted,
+        semantic_hosthard_margin_ref=semantic_hosthard_margin_ref,
+        semantic_hosthard_tau=semantic_hosthard_tau,
+        semantic_hosthard_eps=semantic_hosthard_eps,
+        semantic_hosthard_normalize_weights=semantic_hosthard_normalize_weights,
         prototype_method_role=prototype_method_role,
         prototype_semantic_enabled=prototype_semantic_enabled,
         semantic_structure_enabled=semantic_structure_enabled,
@@ -185,6 +200,7 @@ def build_prototype_head(
         semantic_ramp_loss_diag=semantic_ramp_loss_diag,
         semantic_ramp_loss_semantic_pbt=semantic_ramp_loss_semantic_pbt,
         semantic_ramp_loss_semantic_hardneg_margin=semantic_ramp_loss_semantic_hardneg_margin,
+        semantic_ramp_loss_semantic_hosthard_weighted=semantic_ramp_loss_semantic_hosthard_weighted,
         semantic_ramp_use_prototype=semantic_ramp_use_prototype,
         token_scoring_type=token_scoring_type,
         token_temperature=token_temperature,
@@ -210,6 +226,12 @@ def build_prototype_head(
         lambda_semantic_hardneg_margin=lambda_semantic_hardneg_margin,
         semantic_hardneg_margin=semantic_hardneg_margin,
         semantic_hardneg_eps=semantic_hardneg_eps,
+        use_loss_semantic_hosthard_weighted=use_loss_semantic_hosthard_weighted,
+        lambda_semantic_hosthard_weighted=lambda_semantic_hosthard_weighted,
+        semantic_hosthard_margin_ref=semantic_hosthard_margin_ref,
+        semantic_hosthard_tau=semantic_hosthard_tau,
+        semantic_hosthard_eps=semantic_hosthard_eps,
+        semantic_hosthard_normalize_weights=semantic_hosthard_normalize_weights,
         use_diversity_loss=getattr(args, 'use_diversity_loss', True),
         diversity_loss_weight=diversity_loss_weight,
         use_balance_loss=use_balancing_loss,

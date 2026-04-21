@@ -23,6 +23,12 @@ class PrototypeLosses(nn.Module):
         lambda_semantic_hardneg_margin: float = 0.0,
         semantic_hardneg_margin: float = 0.05,
         semantic_hardneg_eps: float = 1e-8,
+        use_loss_semantic_hosthard_weighted: bool = False,
+        lambda_semantic_hosthard_weighted: float = 0.0,
+        semantic_hosthard_margin_ref: float = 0.0,
+        semantic_hosthard_tau: float = 0.1,
+        semantic_hosthard_eps: float = 1e-8,
+        semantic_hosthard_normalize_weights: bool = True,
         prototype_method_role: str = 'retrieval_branch',
         prototype_semantic_enabled: bool = False,
         semantic_structure_enabled: bool = False,
@@ -68,6 +74,12 @@ class PrototypeLosses(nn.Module):
         self.lambda_semantic_hardneg_margin = float(lambda_semantic_hardneg_margin)
         self.semantic_hardneg_margin = float(semantic_hardneg_margin)
         self.semantic_hardneg_eps = float(semantic_hardneg_eps)
+        self.use_loss_semantic_hosthard_weighted = bool(use_loss_semantic_hosthard_weighted)
+        self.lambda_semantic_hosthard_weighted = float(lambda_semantic_hosthard_weighted)
+        self.semantic_hosthard_margin_ref = float(semantic_hosthard_margin_ref)
+        self.semantic_hosthard_tau = float(semantic_hosthard_tau)
+        self.semantic_hosthard_eps = float(semantic_hosthard_eps)
+        self.semantic_hosthard_normalize_weights = bool(semantic_hosthard_normalize_weights)
         self.prototype_method_role = str(prototype_method_role).lower()
         self.prototype_semantic_enabled = bool(prototype_semantic_enabled)
         self.semantic_structure_enabled = bool(semantic_structure_enabled)
@@ -93,6 +105,10 @@ class PrototypeLosses(nn.Module):
             raise ValueError('semantic_hardneg_margin must be non-negative.')
         if self.semantic_hardneg_eps <= 0.0:
             raise ValueError('semantic_hardneg_eps must be positive.')
+        if self.semantic_hosthard_tau <= 0.0:
+            raise ValueError('semantic_hosthard_tau must be positive.')
+        if self.semantic_hosthard_eps <= 0.0:
+            raise ValueError('semantic_hosthard_eps must be positive.')
         if self.semantic_empty_cluster_policy not in {'skip', 'reseed'}:
             raise ValueError(
                 f'Unsupported semantic_empty_cluster_policy={self.semantic_empty_cluster_policy!r}. '
@@ -601,6 +617,92 @@ class PrototypeLosses(nn.Module):
             'neg_txt_mean': neg_txt.mean().detach(),
         }
 
+    def _semantic_hosthard_weighted_loss(
+        self,
+        *,
+        semantic_info: Dict[str, torch.Tensor],
+        host_pairwise_logits: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        image_probs = semantic_info.get('image_student_probs')
+        text_probs = semantic_info.get('text_student_probs')
+        text_targets = semantic_info.get('text_targets')
+        image_targets = semantic_info.get('image_targets')
+        if not all(isinstance(value, torch.Tensor) for value in (image_probs, text_probs, text_targets, image_targets)):
+            raise ValueError(
+                'Semantic host-hardness weighted loss requires semantic student probabilities/targets from semantic '
+                'PBT path, but they are unavailable. Ensure semantic tensors are produced in the current training step.'
+            )
+        if not isinstance(host_pairwise_logits, torch.Tensor):
+            raise ValueError(
+                'Semantic host-hardness weighted loss requires host_pairwise_logits from HostCore, but it is unavailable.'
+            )
+        if host_pairwise_logits.ndim != 2:
+            raise ValueError(
+                'Semantic host-hardness weighted loss requires host_pairwise_logits with shape [B, B], '
+                f'got {tuple(host_pairwise_logits.shape)}.'
+            )
+        if image_probs.ndim != 2 or text_probs.ndim != 2 or text_targets.ndim != 2 or image_targets.ndim != 2:
+            raise ValueError('Semantic host-hardness weighted loss expects [B, K] tensors for probs and targets.')
+        if image_probs.shape != text_targets.shape:
+            raise ValueError(
+                'Semantic host-hardness weighted loss requires image_student_probs and text_targets to share shape [B, K]; '
+                f'got {tuple(image_probs.shape)} and {tuple(text_targets.shape)}.'
+            )
+        if text_probs.shape != image_targets.shape:
+            raise ValueError(
+                'Semantic host-hardness weighted loss requires text_student_probs and image_targets to share shape [B, K]; '
+                f'got {tuple(text_probs.shape)} and {tuple(image_targets.shape)}.'
+            )
+
+        batch_size = int(image_probs.size(0))
+        if host_pairwise_logits.size(0) != batch_size or host_pairwise_logits.size(1) != batch_size:
+            raise ValueError(
+                'Semantic host-hardness weighted loss requires host_pairwise_logits shape [B, B] aligned with semantic '
+                f'tensors; got host={tuple(host_pairwise_logits.shape)} semantic_batch={batch_size}.'
+            )
+        if batch_size < 2:
+            zero = image_probs.new_zeros(())
+            return {
+                'loss': zero,
+                'loss_image': zero,
+                'loss_text': zero,
+                'weight_mean': zero.detach(),
+                'weight_max': zero.detach(),
+                'margin_row_mean': zero.detach(),
+                'margin_col_mean': zero.detach(),
+                'margin_mean': zero.detach(),
+            }
+
+        host_scores = host_pairwise_logits.detach().to(device=image_probs.device, dtype=image_probs.dtype)
+        offdiag_mask = ~torch.eye(batch_size, device=host_scores.device, dtype=torch.bool)
+        masked_scores = host_scores.masked_fill(~offdiag_mask, float('-inf'))
+        diagonal = host_scores.diagonal()
+        margin_row = diagonal - masked_scores.max(dim=1).values
+        margin_col = diagonal - masked_scores.max(dim=0).values
+        margin = torch.minimum(margin_row, margin_col)
+
+        weights = torch.sigmoid((self.semantic_hosthard_margin_ref - margin) / self.semantic_hosthard_tau)
+        if self.semantic_hosthard_normalize_weights:
+            weights = weights / weights.mean().clamp_min(self.semantic_hosthard_eps)
+
+        log_p_i_from_t = torch.log(image_probs.clamp_min(self.semantic_hosthard_eps))
+        log_p_t_from_i = torch.log(text_probs.clamp_min(self.semantic_hosthard_eps))
+        ce_img = -(text_targets * log_p_i_from_t).sum(dim=-1)
+        ce_txt = -(image_targets * log_p_t_from_i).sum(dim=-1)
+
+        loss_image = (weights * ce_img).mean()
+        loss_text = (weights * ce_txt).mean()
+        return {
+            'loss': 0.5 * (loss_image + loss_text),
+            'loss_image': loss_image,
+            'loss_text': loss_text,
+            'weight_mean': weights.mean().detach(),
+            'weight_max': weights.max().detach(),
+            'margin_row_mean': margin_row.mean().detach(),
+            'margin_col_mean': margin_col.mean().detach(),
+            'margin_mean': margin.mean().detach(),
+        }
+
     def forward(
         self,
         image_embeddings: torch.Tensor,
@@ -618,6 +720,7 @@ class PrototypeLosses(nn.Module):
         diag_loss_scale: Optional[float] = None,
         semantic_pbt_loss_scale: Optional[float] = None,
         semantic_hardneg_margin_loss_scale: Optional[float] = None,
+        semantic_hosthard_weighted_loss_scale: Optional[float] = None,
         # Backward-compatible aliases for older call sites.
         prototype_loss_scale: Optional[float] = None,
         semantic_loss_scale: Optional[float] = None,
@@ -668,6 +771,13 @@ class PrototypeLosses(nn.Module):
         if resolved_semantic_hardneg_margin_scale < 0.0:
             resolved_semantic_hardneg_margin_scale = 0.0
 
+        if semantic_hosthard_weighted_loss_scale is not None:
+            resolved_semantic_hosthard_weighted_scale = float(semantic_hosthard_weighted_loss_scale)
+        else:
+            resolved_semantic_hosthard_weighted_scale = resolved_semantic_pbt_scale
+        if resolved_semantic_hosthard_weighted_scale < 0.0:
+            resolved_semantic_hosthard_weighted_scale = 0.0
+
         should_compute_diag = self.use_loss_diag and resolved_diag_scale > 0.0
         if should_compute_diag:
             dir_info = self.symmetric_relative_diagonal_loss(surrogate_text_embeddings, exact_text_embeddings)
@@ -685,7 +795,29 @@ class PrototypeLosses(nn.Module):
         should_compute_semantic_hardneg_margin = (
             self.use_loss_semantic_hardneg_margin and resolved_semantic_hardneg_margin_scale > 0.0
         )
-        need_semantic_artifacts = should_compute_semantic_pbt or should_compute_semantic_hardneg_margin
+        should_compute_semantic_hosthard_weighted = (
+            self.use_loss_semantic_hosthard_weighted
+            and resolved_semantic_hosthard_weighted_scale > 0.0
+            and abs(self.lambda_semantic_hosthard_weighted) > 0.0
+        )
+        if should_compute_semantic_hosthard_weighted and not all(
+            isinstance(tensor, torch.Tensor)
+            for tensor in (
+                semantic_image_student_embeddings,
+                semantic_text_student_embeddings,
+                semantic_text_teacher_embeddings,
+                semantic_base_prototypes,
+            )
+        ):
+            raise ValueError(
+                'Semantic host-hardness weighted loss requires semantic_image_student_embeddings, '
+                'semantic_text_student_embeddings, semantic_text_teacher_embeddings, and semantic_base_prototypes tensors.'
+            )
+        need_semantic_artifacts = (
+            should_compute_semantic_pbt
+            or should_compute_semantic_hardneg_margin
+            or should_compute_semantic_hosthard_weighted
+        )
         if need_semantic_artifacts:
             semantic_info = self._semantic_pbt_loss(
                 image_student=semantic_image_student_embeddings,
@@ -748,11 +880,63 @@ class PrototypeLosses(nn.Module):
                 'neg_txt_mean': zero.detach(),
             }
 
+        if should_compute_semantic_hosthard_weighted:
+            hosthard_artifacts_ready = all(
+                isinstance(semantic_info.get(key), torch.Tensor)
+                for key in ('image_student_probs', 'text_student_probs', 'text_targets', 'image_targets')
+            )
+            valid_cluster_count = semantic_info.get('valid_cluster_count')
+            valid_cluster_value = (
+                float(valid_cluster_count.detach().float().item())
+                if isinstance(valid_cluster_count, torch.Tensor) and valid_cluster_count.numel() == 1
+                else 0.0
+            )
+            if hosthard_artifacts_ready:
+                hosthard_info = self._semantic_hosthard_weighted_loss(
+                    semantic_info=semantic_info,
+                    host_pairwise_logits=host_pairwise_logits_ref,
+                )
+                loss_semantic_hosthard_weighted = hosthard_info['loss']
+                loss_semantic_hosthard_weighted_image = hosthard_info['loss_image']
+                loss_semantic_hosthard_weighted_text = hosthard_info['loss_text']
+            elif valid_cluster_value <= 0.0:
+                loss_semantic_hosthard_weighted = zero
+                loss_semantic_hosthard_weighted_image = zero
+                loss_semantic_hosthard_weighted_text = zero
+                hosthard_info = {
+                    'weight_mean': zero.detach(),
+                    'weight_max': zero.detach(),
+                    'margin_row_mean': zero.detach(),
+                    'margin_col_mean': zero.detach(),
+                    'margin_mean': zero.detach(),
+                }
+            else:
+                raise ValueError(
+                    'Semantic host-hardness weighted loss was enabled, but semantic probabilities/targets are unavailable '
+                    'despite positive valid_cluster_count. This indicates a semantic-loss wiring bug.'
+                )
+        else:
+            loss_semantic_hosthard_weighted = zero
+            loss_semantic_hosthard_weighted_image = zero
+            loss_semantic_hosthard_weighted_text = zero
+            hosthard_info = {
+                'weight_mean': zero.detach(),
+                'weight_max': zero.detach(),
+                'margin_row_mean': zero.detach(),
+                'margin_col_mean': zero.detach(),
+                'margin_mean': zero.detach(),
+            }
+
         loss_semantic_pbt_weighted = self.lambda_semantic_pbt * resolved_semantic_pbt_scale * loss_semantic_pbt
         loss_semantic_hardneg_margin_weighted = (
             self.lambda_semantic_hardneg_margin
             * resolved_semantic_hardneg_margin_scale
             * loss_semantic_hardneg_margin
+        )
+        loss_semantic_hosthard_weighted_weighted = (
+            self.lambda_semantic_hosthard_weighted
+            * resolved_semantic_hosthard_weighted_scale
+            * loss_semantic_hosthard_weighted
         )
         loss_diversity = zero
         loss_balance = zero
@@ -760,6 +944,7 @@ class PrototypeLosses(nn.Module):
         loss_total = (
             loss_semantic_pbt_weighted
             + loss_semantic_hardneg_margin_weighted
+            + loss_semantic_hosthard_weighted_weighted
             + loss_dir_weighted
         )
 
@@ -787,11 +972,15 @@ class PrototypeLosses(nn.Module):
             'loss_semantic_hardneg_margin': loss_semantic_hardneg_margin,
             'loss_semantic_hardneg_margin_image': loss_semantic_hardneg_margin_image,
             'loss_semantic_hardneg_margin_text': loss_semantic_hardneg_margin_text,
+            'loss_semantic_hosthard_weighted': loss_semantic_hosthard_weighted,
+            'loss_semantic_hosthard_weighted_image': loss_semantic_hosthard_weighted_image,
+            'loss_semantic_hosthard_weighted_text': loss_semantic_hosthard_weighted_text,
             'loss_diag': loss_dir,
             'loss_diversity': loss_diversity,
             'loss_balance': loss_balance,
             'loss_semantic_pbt_weighted': loss_semantic_pbt_weighted,
             'loss_semantic_hardneg_margin_weighted': loss_semantic_hardneg_margin_weighted,
+            'loss_semantic_hosthard_weighted_weighted': loss_semantic_hosthard_weighted_weighted,
             'loss_diag_weighted': loss_dir_weighted,
             'loss_diversity_weighted': zero,
             'loss_balance_weighted': zero,
@@ -807,6 +996,16 @@ class PrototypeLosses(nn.Module):
                 device=loss_total.device,
                 dtype=loss_total.dtype,
             ),
+            'use_loss_semantic_hosthard_weighted': torch.tensor(
+                float(self.use_loss_semantic_hosthard_weighted),
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'lambda_semantic_hosthard_weighted': torch.tensor(
+                self.lambda_semantic_hosthard_weighted,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
             'semantic_hardneg_margin': torch.tensor(
                 self.semantic_hardneg_margin,
                 device=loss_total.device,
@@ -817,12 +1016,37 @@ class PrototypeLosses(nn.Module):
                 device=loss_total.device,
                 dtype=loss_total.dtype,
             ),
+            'semantic_hosthard_margin_ref': torch.tensor(
+                self.semantic_hosthard_margin_ref,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'semantic_hosthard_tau': torch.tensor(
+                self.semantic_hosthard_tau,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'semantic_hosthard_eps': torch.tensor(
+                self.semantic_hosthard_eps,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'semantic_hosthard_normalize_weights': torch.tensor(
+                float(self.semantic_hosthard_normalize_weights),
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
             'prototype_loss_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             'prototype_loss_ramp_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             'loss_diag_scale': torch.tensor(resolved_diag_scale, device=loss_total.device, dtype=loss_total.dtype),
             'loss_semantic_pbt_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             'loss_semantic_hardneg_margin_scale': torch.tensor(
                 resolved_semantic_hardneg_margin_scale,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'loss_semantic_hosthard_weighted_scale': torch.tensor(
+                resolved_semantic_hosthard_weighted_scale,
                 device=loss_total.device,
                 dtype=loss_total.dtype,
             ),
@@ -863,6 +1087,11 @@ class PrototypeLosses(nn.Module):
                 'sem_hardneg_neg_img_mean': hardneg_info['neg_img_mean'],
                 'sem_hardneg_pos_txt_mean': hardneg_info['pos_txt_mean'],
                 'sem_hardneg_neg_txt_mean': hardneg_info['neg_txt_mean'],
+                'semantic_hosthard_weight_mean': hosthard_info['weight_mean'],
+                'semantic_hosthard_weight_max': hosthard_info['weight_max'],
+                'semantic_hosthard_margin_row_mean': hosthard_info['margin_row_mean'],
+                'semantic_hosthard_margin_col_mean': hosthard_info['margin_col_mean'],
+                'semantic_hosthard_margin_mean': hosthard_info['margin_mean'],
                 **self._cross_modal_debug_metrics('image_surrogate', image_embeddings, surrogate_text_embeddings, pids_for_metrics),
                 **self._cross_modal_debug_metrics('image_exact', image_embeddings, exact_text_embeddings, pids_for_metrics),
                 **self._surrogate_pairwise_debug_metrics(surrogate_pairwise_logits),
