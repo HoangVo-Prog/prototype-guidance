@@ -143,7 +143,7 @@ training:
   epochs: 15
   log_period: 50
   eval_frequency: 1
-  early_stopping_enabled: false
+  early_stopping_enabled: true
   early_stopping_metric: R1
   early_stopping_mode: max
   early_stopping_patience: 5
