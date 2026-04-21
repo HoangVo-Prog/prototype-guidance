@@ -111,6 +111,64 @@ class SemanticHardnegMarginTests(unittest.TestCase):
         self.assertEqual(float(outputs['loss_semantic_hardneg_margin_image'].item()), 0.0)
         self.assertEqual(float(outputs['loss_semantic_hardneg_margin_text'].item()), 0.0)
 
+    def test_hardneg_margin_uses_dedicated_ramp_scale_when_provided(self):
+        torch.manual_seed(11)
+        losses = self._build_losses()
+
+        x = torch.randn(4, 4)
+        base_prototypes = torch.randn(3, 4)
+        host_scores = torch.randn(4, 4)
+
+        baseline = losses(
+            x,
+            x,
+            x,
+            pids=torch.arange(4, dtype=torch.long),
+            host_pairwise_logits=host_scores,
+            semantic_image_student_embeddings=x,
+            semantic_text_student_embeddings=x,
+            semantic_text_teacher_embeddings=x,
+            semantic_base_prototypes=base_prototypes,
+        )
+        half_scaled = losses(
+            x,
+            x,
+            x,
+            pids=torch.arange(4, dtype=torch.long),
+            host_pairwise_logits=host_scores,
+            semantic_image_student_embeddings=x,
+            semantic_text_student_embeddings=x,
+            semantic_text_teacher_embeddings=x,
+            semantic_base_prototypes=base_prototypes,
+            semantic_hardneg_margin_loss_scale=0.5,
+        )
+
+        torch.testing.assert_close(
+            half_scaled['loss_semantic_hardneg_margin_weighted'],
+            baseline['loss_semantic_hardneg_margin_weighted'] * 0.5,
+        )
+        self.assertEqual(float(half_scaled['loss_semantic_hardneg_margin_scale'].item()), 0.5)
+
+    def test_hardneg_margin_scale_defaults_to_semantic_pbt_scale(self):
+        losses = self._build_losses()
+        x = torch.randn(3, 4)
+        base_prototypes = torch.randn(2, 4)
+        host_scores = torch.randn(3, 3)
+
+        outputs = losses(
+            x,
+            x,
+            x,
+            pids=torch.arange(3, dtype=torch.long),
+            host_pairwise_logits=host_scores,
+            semantic_image_student_embeddings=x,
+            semantic_text_student_embeddings=x,
+            semantic_text_teacher_embeddings=x,
+            semantic_base_prototypes=base_prototypes,
+            semantic_pbt_loss_scale=0.25,
+        )
+        self.assertEqual(float(outputs['loss_semantic_hardneg_margin_scale'].item()), 0.25)
+
     def test_missing_semantic_structures_raise(self):
         losses = self._build_losses()
         x = torch.randn(3, 4)
@@ -139,4 +197,3 @@ class SemanticHardnegMarginTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-

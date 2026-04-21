@@ -105,5 +105,6 @@ semantic_structure:
   loss_ramp_steps: 0
   ramp_loss_diag: false
   ramp_loss_semantic_pbt: true
+  ramp_loss_semantic_hardneg_margin: true
   ramp_use_prototype: false
 

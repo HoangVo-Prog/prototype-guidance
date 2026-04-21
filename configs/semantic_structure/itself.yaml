@@ -89,7 +89,7 @@ semantic_structure:
   pred_temperature: 0.07
   
   recompute_schedule: epoch
-  recompute_interval: 2
+  recompute_interval: 3
   min_cluster_count_for_pbt: 1.0
   empty_cluster_policy: skip
   text_teacher_source: exact_diagonal
@@ -104,6 +104,7 @@ semantic_structure:
   loss_ramp_steps: 0
   ramp_loss_diag: true
   ramp_loss_semantic_pbt: true
+  ramp_loss_semantic_hardneg_margin: true
   ramp_use_prototype: true
 
 objectives:

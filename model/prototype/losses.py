@@ -617,6 +617,7 @@ class PrototypeLosses(nn.Module):
         semantic_base_prototypes: Optional[torch.Tensor] = None,
         diag_loss_scale: Optional[float] = None,
         semantic_pbt_loss_scale: Optional[float] = None,
+        semantic_hardneg_margin_loss_scale: Optional[float] = None,
         # Backward-compatible aliases for older call sites.
         prototype_loss_scale: Optional[float] = None,
         semantic_loss_scale: Optional[float] = None,
@@ -660,6 +661,13 @@ class PrototypeLosses(nn.Module):
         if resolved_semantic_pbt_scale < 0.0:
             resolved_semantic_pbt_scale = 0.0
 
+        if semantic_hardneg_margin_loss_scale is not None:
+            resolved_semantic_hardneg_margin_scale = float(semantic_hardneg_margin_loss_scale)
+        else:
+            resolved_semantic_hardneg_margin_scale = resolved_semantic_pbt_scale
+        if resolved_semantic_hardneg_margin_scale < 0.0:
+            resolved_semantic_hardneg_margin_scale = 0.0
+
         should_compute_diag = self.use_loss_diag and resolved_diag_scale > 0.0
         if should_compute_diag:
             dir_info = self.symmetric_relative_diagonal_loss(surrogate_text_embeddings, exact_text_embeddings)
@@ -675,7 +683,7 @@ class PrototypeLosses(nn.Module):
             }
         should_compute_semantic_pbt = self.use_loss_semantic_pbt and resolved_semantic_pbt_scale > 0.0
         should_compute_semantic_hardneg_margin = (
-            self.use_loss_semantic_hardneg_margin and resolved_semantic_pbt_scale > 0.0
+            self.use_loss_semantic_hardneg_margin and resolved_semantic_hardneg_margin_scale > 0.0
         )
         need_semantic_artifacts = should_compute_semantic_pbt or should_compute_semantic_hardneg_margin
         if need_semantic_artifacts:
@@ -743,7 +751,7 @@ class PrototypeLosses(nn.Module):
         loss_semantic_pbt_weighted = self.lambda_semantic_pbt * resolved_semantic_pbt_scale * loss_semantic_pbt
         loss_semantic_hardneg_margin_weighted = (
             self.lambda_semantic_hardneg_margin
-            * resolved_semantic_pbt_scale
+            * resolved_semantic_hardneg_margin_scale
             * loss_semantic_hardneg_margin
         )
         loss_diversity = zero
@@ -813,6 +821,11 @@ class PrototypeLosses(nn.Module):
             'prototype_loss_ramp_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             'loss_diag_scale': torch.tensor(resolved_diag_scale, device=loss_total.device, dtype=loss_total.dtype),
             'loss_semantic_pbt_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
+            'loss_semantic_hardneg_margin_scale': torch.tensor(
+                resolved_semantic_hardneg_margin_scale,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
             # Backward-compatible alias for existing logs/consumers.
             'semantic_loss_scale': torch.tensor(resolved_semantic_pbt_scale, device=loss_total.device, dtype=loss_total.dtype),
             'use_loss_diag': torch.tensor(float(self.use_loss_diag), device=loss_total.device, dtype=loss_total.dtype),

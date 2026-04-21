@@ -4,8 +4,8 @@ from model.prototype.head import PrototypeConditionedTextHead
 
 
 class PrototypeInitScheduleTests(unittest.TestCase):
-    def _build_head(self, recompute_start_epoch: int) -> PrototypeConditionedTextHead:
-        return PrototypeConditionedTextHead(
+    def _build_head(self, recompute_start_epoch: int, **overrides) -> PrototypeConditionedTextHead:
+        kwargs = dict(
             input_dim=8,
             num_prototypes=4,
             prototype_dim=8,
@@ -29,6 +29,8 @@ class PrototypeInitScheduleTests(unittest.TestCase):
             use_diversity_loss=False,
             use_balance_loss=False,
         )
+        kwargs.update(overrides)
+        return PrototypeConditionedTextHead(**kwargs)
 
     def test_prototype_init_is_deferred_until_recompute_start_epoch(self):
         head = self._build_head(recompute_start_epoch=3)
@@ -40,6 +42,20 @@ class PrototypeInitScheduleTests(unittest.TestCase):
 
         _ = head.get_prototype_context(return_debug=False, epoch=3, current_step=0)
         self.assertTrue(head.prototype_bank.is_initialized())
+
+    def test_all_ramp_losses_share_same_ramp_scale_when_enabled(self):
+        head = self._build_head(
+            recompute_start_epoch=0,
+            semantic_ramp_loss_diag=True,
+            semantic_ramp_loss_semantic_pbt=True,
+            semantic_ramp_loss_semantic_hardneg_margin=True,
+        )
+        scales = head._resolve_loss_scales(ramp_scale=0.4, prototype_usage_enabled=True)
+
+        self.assertEqual(scales['prototype'], 0.4)
+        self.assertEqual(scales['diag'], 0.4)
+        self.assertEqual(scales['semantic_pbt'], 0.4)
+        self.assertEqual(scales['semantic_hardneg_margin'], 0.4)
 
 
 if __name__ == '__main__':

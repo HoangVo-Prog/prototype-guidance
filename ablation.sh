@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 run_cmd() {
-    shift  
-
     local timestamp
     timestamp=$(date +"%Y%m%d_%H%M%S")
 
-    local log_file="logs/${timestamp}.log"
     mkdir -p logs
+    local log_file="logs/${timestamp}.log"
 
     echo "Starting run at ${timestamp}..."
-    nohup "$@" > "$log_file" 2>&1 &
-    local pid=$!
+    echo "Log: ${log_file}"
+    echo "Command: $*"
 
-    echo "PID: $pid"
-    echo "Log: $log_file"
-
-    wait "$pid"
+    "$@" > "$log_file" 2>&1
     local status=$?
 
     if [[ $status -ne 0 ]]; then
         echo "Run failed with exit code $status"
+        echo "Check log: ${log_file}"
         exit $status
     fi
 
@@ -30,29 +26,28 @@ run_cmd() {
 }
 
 run_cmd \
-    python train.py \
+    python /home/vhoang/prototype-guidance/train.py \
     --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
     --use_loss_semantic_hardneg_margin false \
     --lambda_semantic_pbt 20.0 \
     --lambda_semantic_hardneg_margin 0.0
 
 run_cmd \
-    python train.py \
+    python /home/vhoang/prototype-guidance/train.py \
     --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
     --use_loss_semantic_hardneg_margin false \
     --lambda_semantic_pbt 50.0 \
     --lambda_semantic_hardneg_margin 0.0
 
 run_cmd \
-    python train.py \
+    python /home/vhoang/prototype-guidance/train.py \
     --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
     --use_loss_semantic_hardneg_margin false \
     --lambda_semantic_pbt 100.0 \
     --lambda_semantic_hardneg_margin 0.0
 
 run_cmd \
-    python train.py \
+    python /home/vhoang/prototype-guidance/train.py \
     --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
     --lambda_semantic_pbt 100.0 \
     --lambda_semantic_hardneg_margin 100.0
-

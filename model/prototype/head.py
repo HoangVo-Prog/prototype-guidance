@@ -68,6 +68,7 @@ class PrototypeConditionedTextHead(nn.Module):
         semantic_loss_ramp_steps: int = 0,
         semantic_ramp_loss_diag: bool = False,
         semantic_ramp_loss_semantic_pbt: bool = True,
+        semantic_ramp_loss_semantic_hardneg_margin: bool = True,
         semantic_ramp_use_prototype: bool = False,
         token_scoring_type: str = 'cosine',
         token_temperature: float = 0.07,
@@ -163,6 +164,7 @@ class PrototypeConditionedTextHead(nn.Module):
         self.semantic_loss_ramp_steps = max(int(semantic_loss_ramp_steps), 0)
         self.semantic_ramp_loss_diag = bool(semantic_ramp_loss_diag)
         self.semantic_ramp_loss_semantic_pbt = bool(semantic_ramp_loss_semantic_pbt)
+        self.semantic_ramp_loss_semantic_hardneg_margin = bool(semantic_ramp_loss_semantic_hardneg_margin)
         self.semantic_ramp_use_prototype = bool(semantic_ramp_use_prototype)
         self.defer_prototype_init_until_semantic_start = bool(
             self.semantic_ramp_use_prototype
@@ -528,6 +530,21 @@ class PrototypeConditionedTextHead(nn.Module):
             scale = min(scale, max(0.0, min(step_progress, 1.0)))
         return float(max(scale, 0.0))
 
+    def _resolve_loss_scales(self, *, ramp_scale: float, prototype_usage_enabled: bool) -> Dict[str, float]:
+        if not prototype_usage_enabled:
+            return {
+                'prototype': 0.0,
+                'diag': 0.0,
+                'semantic_pbt': 0.0,
+                'semantic_hardneg_margin': 0.0,
+            }
+        return {
+            'prototype': float(ramp_scale),
+            'diag': float(ramp_scale) if self.semantic_ramp_loss_diag else 1.0,
+            'semantic_pbt': float(ramp_scale) if self.semantic_ramp_loss_semantic_pbt else 1.0,
+            'semantic_hardneg_margin': float(ramp_scale) if self.semantic_ramp_loss_semantic_hardneg_margin else 1.0,
+        }
+
     def _zero_loss_outputs(self, reference: torch.Tensor) -> Dict[str, torch.Tensor]:
         zero = reference.new_zeros(())
         return {
@@ -554,6 +571,7 @@ class PrototypeConditionedTextHead(nn.Module):
             'prototype_loss_ramp_scale': zero,
             'loss_diag_scale': zero,
             'loss_semantic_pbt_scale': zero,
+            'loss_semantic_hardneg_margin_scale': zero,
             'semantic_loss_scale': zero,
             'use_loss_diag': zero,
             'lambda_diag': zero,
@@ -1403,12 +1421,15 @@ class PrototypeConditionedTextHead(nn.Module):
             }
         )
         ramp_scale = self._prototype_loss_scale(epoch=epoch, current_step=current_step)
-        diag_loss_scale = ramp_scale if self.semantic_ramp_loss_diag else 1.0
-        semantic_pbt_loss_scale = ramp_scale if self.semantic_ramp_loss_semantic_pbt else 1.0
+        loss_scales = self._resolve_loss_scales(
+            ramp_scale=ramp_scale,
+            prototype_usage_enabled=prototype_usage_enabled,
+        )
+        ramp_scale = loss_scales['prototype']
+        diag_loss_scale = loss_scales['diag']
+        semantic_pbt_loss_scale = loss_scales['semantic_pbt']
+        semantic_hardneg_margin_loss_scale = loss_scales['semantic_hardneg_margin']
         if not prototype_usage_enabled:
-            ramp_scale = 0.0
-            diag_loss_scale = 0.0
-            semantic_pbt_loss_scale = 0.0
             loss_outputs = self._zero_loss_outputs(image_outputs['image_projected'])
         else:
             loss_outputs = self.losses(
@@ -1426,6 +1447,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 semantic_base_prototypes=semantic_target_features,
                 diag_loss_scale=diag_loss_scale,
                 semantic_pbt_loss_scale=semantic_pbt_loss_scale,
+                semantic_hardneg_margin_loss_scale=semantic_hardneg_margin_loss_scale,
                 return_debug=return_debug,
                 disable_proxy_losses=disable_proxy_losses,
             )
@@ -1482,6 +1504,9 @@ class PrototypeConditionedTextHead(nn.Module):
             'prototype_loss_ramp_scale': image_outputs['image_projected'].new_tensor(float(ramp_scale)),
             'loss_diag_scale': image_outputs['image_projected'].new_tensor(float(diag_loss_scale)),
             'loss_semantic_pbt_scale': image_outputs['image_projected'].new_tensor(float(semantic_pbt_loss_scale)),
+            'loss_semantic_hardneg_margin_scale': image_outputs['image_projected'].new_tensor(
+                float(semantic_hardneg_margin_loss_scale)
+            ),
             # Backward-compatible alias for existing logs/consumers.
             'semantic_loss_scale': image_outputs['image_projected'].new_tensor(float(semantic_pbt_loss_scale)),
             'losses': loss_outputs,
