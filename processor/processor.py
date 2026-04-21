@@ -1,6 +1,7 @@
 import logging
 import math
 import time
+from typing import Any, Dict
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -37,7 +38,7 @@ from utils.metric_logging import (
     collect_scalar_metrics,
 )
 from utils.meter import AverageMeter
-from utils.metrics import Evaluator
+from utils.metrics import Evaluator, collect_monitored_eval_rows, summarize_epoch_monitor
 from utils.metrics_prototype import (
     collect_prototype_debug_metrics,
     resolve_prototype_bank_tensor,
@@ -429,6 +430,172 @@ def _apply_runtime_mode_trainability(model, runtime_mode: str, logger) -> None:
     raise ValueError(f'Unsupported runtime mode after refactor: {mode!r}')
 
 
+def _resolve_early_stopping_config(args) -> Dict[str, Any]:
+    mode = str(getattr(args, 'early_stopping_mode', 'max') or 'max').strip().lower()
+    if mode not in {'max', 'min'}:
+        raise ValueError(
+            f'early_stopping_mode must be one of ["max", "min"]. Got {mode!r}.'
+        )
+    patience = int(getattr(args, 'early_stopping_patience', 5))
+    if patience <= 0:
+        raise ValueError(f'early_stopping_patience must be a positive integer. Got {patience}.')
+    start_epoch = int(getattr(args, 'early_stopping_start_epoch', 1))
+    if start_epoch < 1:
+        raise ValueError(f'early_stopping_start_epoch must be >= 1. Got {start_epoch}.')
+    monitored_bucket_raw = getattr(args, 'early_stopping_monitored_bucket', 'host')
+    monitored_bucket = None
+    if monitored_bucket_raw is not None:
+        monitored_bucket = str(monitored_bucket_raw).strip().lower()
+        if monitored_bucket == '':
+            monitored_bucket = None
+    task_pattern_raw = getattr(args, 'early_stopping_monitored_task_pattern', None)
+    monitored_task_pattern = None
+    if task_pattern_raw is not None:
+        monitored_task_pattern = str(task_pattern_raw).strip()
+        if monitored_task_pattern == '':
+            monitored_task_pattern = None
+    return {
+        'enabled': bool(getattr(args, 'early_stopping_enabled', False)),
+        'metric': str(getattr(args, 'early_stopping_metric', 'R1') or 'R1'),
+        'mode': mode,
+        'patience': patience,
+        'min_delta': float(getattr(args, 'early_stopping_min_delta', 0.0) or 0.0),
+        'start_epoch': start_epoch,
+        'monitored_bucket': monitored_bucket if monitored_bucket is not None else None,
+        'monitored_task_pattern': monitored_task_pattern,
+        'stop_on_nan': bool(getattr(args, 'early_stopping_stop_on_nan', False)),
+    }
+
+
+def _initialize_early_stopping_state() -> Dict[str, Any]:
+    return {
+        'best_value': None,
+        'best_epoch': None,
+        'best_row_name': None,
+        'best_row_metadata': None,
+        'bad_epochs': 0,
+        'should_stop': False,
+        'stop_reason': None,
+    }
+
+
+def _update_early_stopping_monitor(
+    logger,
+    eval_epoch: int,
+    eval_result: Any,
+    config: Dict[str, Any],
+    state: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not bool(config.get('enabled', False)):
+        return state
+
+    if int(eval_epoch) < int(config['start_epoch']):
+        logger.info(
+            'early_stop skipped: epoch=%d < start_epoch=%d',
+            int(eval_epoch),
+            int(config['start_epoch']),
+        )
+        return state
+
+    monitored_rows = collect_monitored_eval_rows(
+        eval_result,
+        monitored_bucket=config.get('monitored_bucket', 'host'),
+        monitored_task_pattern=config.get('monitored_task_pattern'),
+    )
+    summary = summarize_epoch_monitor(
+        monitored_rows,
+        metric_name=config.get('metric', 'R1'),
+        mode=config.get('mode', 'max'),
+    )
+
+    improved = False
+    epoch_best_value = summary.get('best_value')
+    epoch_best_row_name = summary.get('best_row_name')
+    num_rows_considered = int(summary.get('num_rows_considered', 0))
+    num_rows_total = int(summary.get('num_rows_total', 0))
+    num_invalid_rows = int(summary.get('num_invalid_rows', 0))
+
+    if num_rows_considered <= 0:
+        logger.warning(
+            'early_stop no valid monitored rows at epoch=%d (matched_rows=%d invalid_rows=%d metric=%s bucket=%s pattern=%s).',
+            int(eval_epoch),
+            num_rows_total,
+            num_invalid_rows,
+            config.get('metric', 'R1'),
+            config.get('monitored_bucket', 'host'),
+            config.get('monitored_task_pattern'),
+        )
+        all_rows_invalid = num_rows_total > 0 and num_invalid_rows == num_rows_total
+        if bool(config.get('stop_on_nan', False)) and all_rows_invalid:
+            state['should_stop'] = True
+            state['stop_reason'] = (
+                f'All monitored rows are invalid for metric={config.get("metric", "R1")} at epoch={int(eval_epoch)} '
+                f'and early_stopping_stop_on_nan=true.'
+            )
+        else:
+            state['bad_epochs'] = int(state.get('bad_epochs', 0)) + 1
+    else:
+        best_value = state.get('best_value')
+        if best_value is None:
+            improved = True
+        elif config.get('mode', 'max') == 'max':
+            improved = float(epoch_best_value) > float(best_value) + float(config.get('min_delta', 0.0))
+        else:
+            improved = float(epoch_best_value) < float(best_value) - float(config.get('min_delta', 0.0))
+
+        if improved:
+            state['best_value'] = float(epoch_best_value)
+            state['best_epoch'] = int(eval_epoch)
+            state['best_row_name'] = str(epoch_best_row_name or '')
+            state['best_row_metadata'] = summary.get('best_row_full_metadata')
+            state['bad_epochs'] = 0
+        else:
+            state['bad_epochs'] = int(state.get('bad_epochs', 0)) + 1
+
+    if not bool(state.get('should_stop', False)) and int(state.get('bad_epochs', 0)) >= int(config['patience']):
+        state['should_stop'] = True
+        state['stop_reason'] = (
+            f'no improvement in best monitored {config.get("metric", "R1")} for '
+            f'{int(state.get("bad_epochs", 0))} consecutive validation epochs'
+        )
+
+    logger.info(
+        (
+            'early_stop metric=%s mode=%s patience=%d min_delta=%.6f start_epoch=%d '
+            'monitored_bucket=%s monitored_task_pattern=%s monitored_rows_count=%d '
+            'epoch_best_value=%s epoch_best_row=%s global_best_value=%s global_best_epoch=%s '
+            'bad_epochs=%d/%d improved=%s'
+        ),
+        config.get('metric', 'R1'),
+        config.get('mode', 'max'),
+        int(config['patience']),
+        float(config.get('min_delta', 0.0)),
+        int(config['start_epoch']),
+        config.get('monitored_bucket', 'host'),
+        config.get('monitored_task_pattern'),
+        num_rows_considered,
+        'None' if epoch_best_value is None else f'{float(epoch_best_value):.4f}',
+        epoch_best_row_name,
+        'None' if state.get('best_value') is None else f'{float(state["best_value"]):.4f}',
+        state.get('best_epoch'),
+        int(state.get('bad_epochs', 0)),
+        int(config['patience']),
+        bool(improved),
+    )
+
+    if bool(state.get('should_stop', False)):
+        logger.warning(
+            'Early stopping triggered at epoch %d: %s. Best %s=%.4f, best epoch=%s, best row=%s',
+            int(eval_epoch),
+            state.get('stop_reason', 'stopping condition reached'),
+            config.get('metric', 'R1'),
+            float(state['best_value']) if state.get('best_value') is not None else float('nan'),
+            state.get('best_epoch'),
+            state.get('best_row_name'),
+        )
+    return state
+
+
 def _do_train_runtime(
     start_epoch,
     args,
@@ -493,6 +660,22 @@ def _do_train_runtime(
     current_steps = 0
     best_epoch = start_epoch
     last_epoch = start_epoch - 1
+    early_stopping_cfg = _resolve_early_stopping_config(args)
+    early_stopping_state = _initialize_early_stopping_state()
+    if early_stopping_cfg['enabled']:
+        logger.info(
+            'Early stopping enabled: metric=%s mode=%s patience=%d min_delta=%.6f start_epoch=%d bucket=%s pattern=%s stop_on_nan=%s',
+            early_stopping_cfg['metric'],
+            early_stopping_cfg['mode'],
+            int(early_stopping_cfg['patience']),
+            float(early_stopping_cfg['min_delta']),
+            int(early_stopping_cfg['start_epoch']),
+            early_stopping_cfg['monitored_bucket'],
+            early_stopping_cfg['monitored_task_pattern'],
+            bool(early_stopping_cfg['stop_on_nan']),
+        )
+    else:
+        logger.info('Early stopping disabled.')
     log_debug_metrics = bool(getattr(args, 'log_debug_metrics', True))
     coverage_tracker = RoutingCoverageTracker() if log_debug_metrics else None
     if resolved_runtime_mode == RUNTIME_MODE_JOINT_TRAINING:
@@ -824,6 +1007,15 @@ def _do_train_runtime(
                 best_epoch = epoch
                 arguments['epoch'] = epoch
                 checkpointer.save('best', **arguments)
+            early_stopping_state = _update_early_stopping_monitor(
+                logger=logger,
+                eval_epoch=epoch,
+                eval_result=evaluator,
+                config=early_stopping_cfg,
+                state=early_stopping_state,
+            )
+            if early_stopping_state.get('should_stop', False):
+                break
 
     if get_rank() == 0:
         if last_epoch >= start_epoch:
@@ -898,8 +1090,6 @@ def do_inference(model, test_img_loader, test_txt_loader, args):
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
-
-
 
 
 

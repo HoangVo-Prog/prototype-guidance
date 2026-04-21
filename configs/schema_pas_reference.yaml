@@ -158,6 +158,15 @@ training:
   epochs: 60
   log_period: 50
   eval_frequency: 1
+  early_stopping_enabled: false
+  early_stopping_metric: R1
+  early_stopping_mode: max
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.0
+  early_stopping_start_epoch: 1
+  early_stopping_monitored_bucket: host
+  early_stopping_monitored_task_pattern: null
+  early_stopping_stop_on_nan: false
   save_interval: 1
   resume: false
   resume_ckpt_file: ''

@@ -140,6 +140,15 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'log_period'): 'log_period',
     ('training', 'eval_frequency'): 'eval_period',
     ('training', 'save_interval'): 'save_interval',
+    ('training', 'early_stopping_enabled'): 'early_stopping_enabled',
+    ('training', 'early_stopping_metric'): 'early_stopping_metric',
+    ('training', 'early_stopping_mode'): 'early_stopping_mode',
+    ('training', 'early_stopping_patience'): 'early_stopping_patience',
+    ('training', 'early_stopping_min_delta'): 'early_stopping_min_delta',
+    ('training', 'early_stopping_start_epoch'): 'early_stopping_start_epoch',
+    ('training', 'early_stopping_monitored_bucket'): 'early_stopping_monitored_bucket',
+    ('training', 'early_stopping_monitored_task_pattern'): 'early_stopping_monitored_task_pattern',
+    ('training', 'early_stopping_stop_on_nan'): 'early_stopping_stop_on_nan',
     ('training', 'prototype_selection_metric'): 'prototype_selection_metric',
     ('training', 'resume'): 'resume',
     ('training', 'resume_ckpt_file'): 'resume_ckpt_file',
@@ -519,6 +528,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('semantic_structure', 'text_student_source'): ('surrogate_diagonal',),
     ('semantic_structure', 'image_student_source'): ('image_semantic_feature',),
     ('training', 'amp_dtype'): tuple(AMP_DTYPE_ALIASES.keys()),
+    ('training', 'early_stopping_mode'): ('max', 'min'),
     ('training', 'stage'): ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     ('optimizer', 'type'): ('SGD', 'Adam', 'AdamW'),
     ('optimizer', 'scheduler'): ('step', 'exp', 'poly', 'cosine', 'linear'),
@@ -556,6 +566,7 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'semantic_text_student_source': ('surrogate_diagonal',),
     'semantic_image_student_source': ('image_semantic_feature',),
     'amp_dtype': tuple(AMP_DTYPE_ALIASES.keys()),
+    'early_stopping_mode': ('max', 'min'),
     'training_stage': ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     'optimizer': ('SGD', 'Adam', 'AdamW'),
     'lrscheduler': ('step', 'exp', 'poly', 'cosine', 'linear'),
@@ -598,6 +609,37 @@ def _validate_itself_lambda_ablation_alphas(field_name: str, value: Any) -> None
             raise ValueError(f'{field_name} contains a non-numeric value: {alpha!r}.') from exc
         if alpha_float < 0.0 or alpha_float > 1.0:
             raise ValueError(f'{field_name} values must be in [0, 1]. Got {alpha_float}.')
+
+
+def _validate_early_stopping_fields(
+    *,
+    metric_field_name: str,
+    metric_value: Any,
+    mode_field_name: str,
+    mode_value: Any,
+    patience_field_name: str,
+    patience_value: Any,
+    start_epoch_field_name: str,
+    start_epoch_value: Any,
+) -> None:
+    metric = str(metric_value or '').strip()
+    if not metric:
+        raise ValueError(f'{metric_field_name} must be a non-empty metric name.')
+    mode = str(mode_value or '').strip().lower()
+    if mode not in {'max', 'min'}:
+        raise ValueError(f'{mode_field_name} must be one of: max, min.')
+    try:
+        patience = int(patience_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{patience_field_name} must be a positive integer.') from exc
+    if patience <= 0:
+        raise ValueError(f'{patience_field_name} must be a positive integer.')
+    try:
+        start_epoch = int(start_epoch_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{start_epoch_field_name} must be an integer >= 1.') from exc
+    if start_epoch < 1:
+        raise ValueError(f'{start_epoch_field_name} must be >= 1.')
 
 
 def _validate_fusion_config_data(config_data: Dict[str, Any]) -> None:
@@ -864,6 +906,23 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
             'evaluation.itself_lambda_ablation_alphas',
             config_data['evaluation']['itself_lambda_ablation_alphas'],
         )
+    if (
+        _path_exists(config_data, ('training', 'early_stopping_metric'))
+        or _path_exists(config_data, ('training', 'early_stopping_mode'))
+        or _path_exists(config_data, ('training', 'early_stopping_patience'))
+        or _path_exists(config_data, ('training', 'early_stopping_start_epoch'))
+    ):
+        training_cfg = config_data.get('training', {}) if isinstance(config_data.get('training', {}), dict) else {}
+        _validate_early_stopping_fields(
+            metric_field_name='training.early_stopping_metric',
+            metric_value=training_cfg.get('early_stopping_metric', 'R1'),
+            mode_field_name='training.early_stopping_mode',
+            mode_value=training_cfg.get('early_stopping_mode', 'max'),
+            patience_field_name='training.early_stopping_patience',
+            patience_value=training_cfg.get('early_stopping_patience', 5),
+            start_epoch_field_name='training.early_stopping_start_epoch',
+            start_epoch_value=training_cfg.get('early_stopping_start_epoch', 1),
+        )
     _validate_fusion_config_data(config_data)
 
     flat = flatten_config_dict(config_data)
@@ -976,6 +1035,16 @@ def validate_runtime_args_namespace(args) -> None:
     _validate_itself_lambda_ablation_alphas(
         'itself_lambda_ablation_alphas',
         getattr(args, 'itself_lambda_ablation_alphas', None),
+    )
+    _validate_early_stopping_fields(
+        metric_field_name='early_stopping_metric',
+        metric_value=getattr(args, 'early_stopping_metric', 'R1'),
+        mode_field_name='early_stopping_mode',
+        mode_value=getattr(args, 'early_stopping_mode', 'max'),
+        patience_field_name='early_stopping_patience',
+        patience_value=getattr(args, 'early_stopping_patience', 5),
+        start_epoch_field_name='early_stopping_start_epoch',
+        start_epoch_value=getattr(args, 'early_stopping_start_epoch', 1),
     )
     _validate_runtime_fusion_args(args)
     parse_freeze_schedule_config(

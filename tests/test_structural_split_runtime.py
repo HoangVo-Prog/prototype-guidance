@@ -120,6 +120,27 @@ class StructuralSplitRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'itself_lambda_ablation_alphas'):
             validate_config_data({'evaluation': {'itself_lambda_ablation_alphas': [1.2]}})
 
+    def test_early_stopping_config_is_accepted(self):
+        validate_config_data(
+            {
+                'training': {
+                    'early_stopping_enabled': True,
+                    'early_stopping_metric': 'R1',
+                    'early_stopping_mode': 'max',
+                    'early_stopping_patience': 3,
+                    'early_stopping_min_delta': 0.0,
+                    'early_stopping_start_epoch': 1,
+                    'early_stopping_monitored_bucket': 'host',
+                    'early_stopping_monitored_task_pattern': '*grab*',
+                    'early_stopping_stop_on_nan': False,
+                },
+            }
+        )
+
+    def test_early_stopping_invalid_mode_fails(self):
+        with self.assertRaisesRegex(ValueError, 'early_stopping_mode'):
+            validate_config_data({'training': {'early_stopping_mode': 'largest'}})
+
     def test_itself_inference_ablation_adds_global_grab_rows(self):
         args = types.SimpleNamespace(
             retrieval_metrics=['R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum'],

@@ -1,5 +1,7 @@
+import fnmatch
 import logging
-from typing import Dict, Tuple
+import math
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from prettytable import PrettyTable
 import torch
@@ -65,6 +67,160 @@ def get_metrics(similarity, qids, gids, name):
     }
 
 
+def _match_task_pattern(task_name: str, pattern: Optional[str]) -> bool:
+    if not pattern:
+        return True
+    normalized_name = str(task_name or '')
+    normalized_pattern = str(pattern).strip()
+    if not normalized_pattern:
+        return True
+    lowered_name = normalized_name.lower()
+    lowered_pattern = normalized_pattern.lower()
+    if any(char in lowered_pattern for char in ('*', '?', '[')):
+        return fnmatch.fnmatchcase(lowered_name, lowered_pattern)
+    return lowered_name == lowered_pattern or lowered_pattern in lowered_name
+
+
+def _extract_rows_and_roles(eval_result: Any) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+    row_roles: Dict[str, str] = {}
+    rows: List[Dict[str, Any]] = []
+    authority_context = {}
+
+    if hasattr(eval_result, 'latest_authority'):
+        authority_context = getattr(eval_result, 'latest_authority') or {}
+    elif isinstance(eval_result, dict):
+        authority_context = eval_result.get('authority') or {}
+    if isinstance(authority_context, dict):
+        raw_roles = authority_context.get('row_roles', {})
+        if isinstance(raw_roles, dict):
+            row_roles = {str(name): str(role) for name, role in raw_roles.items()}
+
+    if hasattr(eval_result, 'latest_eval_rows'):
+        latest_rows = getattr(eval_result, 'latest_eval_rows') or []
+        if isinstance(latest_rows, Sequence):
+            rows = [dict(row) for row in latest_rows if isinstance(row, dict)]
+    elif isinstance(eval_result, dict):
+        if isinstance(eval_result.get('rows'), Sequence):
+            rows = [dict(row) for row in eval_result.get('rows', []) if isinstance(row, dict)]
+        elif isinstance(eval_result.get('row_metrics'), dict):
+            rows = [
+                {
+                    'task': str(task_name),
+                    **{
+                        str(metric_name): metric_value
+                        for metric_name, metric_value in metric_values.items()
+                    },
+                }
+                for task_name, metric_values in eval_result['row_metrics'].items()
+                if isinstance(metric_values, dict)
+            ]
+
+    return rows, row_roles
+
+
+def collect_monitored_eval_rows(
+    eval_result: Any,
+    monitored_bucket: Optional[str] = 'host',
+    monitored_task_pattern: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    rows, row_roles = _extract_rows_and_roles(eval_result)
+    bucket_filter = None if monitored_bucket is None else str(monitored_bucket).strip().lower()
+    if bucket_filter == '':
+        bucket_filter = None
+
+    monitored_rows: List[Dict[str, Any]] = []
+    for row_index, row in enumerate(rows):
+        row_name = str(row.get('task') or row.get('name') or row.get('row_name') or '')
+        if not row_name:
+            continue
+        row_bucket = str(row.get('bucket') or row_roles.get(row_name, 'host')).strip().lower() or 'host'
+        if bucket_filter is not None and row_bucket != bucket_filter:
+            continue
+        if not _match_task_pattern(row_name, monitored_task_pattern):
+            continue
+        monitored_rows.append(
+            {
+                'row_index': int(row_index),
+                'row_name': row_name,
+                'bucket': row_bucket,
+                'row': row,
+            }
+        )
+    return monitored_rows
+
+
+def summarize_epoch_monitor(
+    rows: Sequence[Dict[str, Any]],
+    metric_name: str = 'R1',
+    mode: str = 'max',
+) -> Dict[str, Any]:
+    normalized_metric_name = str(metric_name or 'R1')
+    normalized_mode = str(mode or 'max').lower()
+    if normalized_mode not in {'max', 'min'}:
+        raise ValueError(f'Unsupported early-stopping mode: {mode!r}. Allowed values: max, min.')
+
+    valid_rows: List[Dict[str, Any]] = []
+    invalid_rows: List[Dict[str, Any]] = []
+    for item in rows:
+        row = item.get('row', {}) if isinstance(item, dict) else {}
+        if not isinstance(row, dict):
+            invalid_rows.append(dict(item) if isinstance(item, dict) else {'row': row})
+            continue
+        metric_value = row.get(normalized_metric_name)
+        if metric_value is None and isinstance(row.get('metrics'), dict):
+            metric_value = row['metrics'].get(normalized_metric_name)
+        try:
+            metric_float = float(metric_value)
+        except (TypeError, ValueError):
+            invalid_rows.append(dict(item))
+            continue
+        if not math.isfinite(metric_float):
+            invalid_rows.append(dict(item))
+            continue
+        row_entry = dict(item)
+        row_entry['metric_value'] = metric_float
+        valid_rows.append(row_entry)
+
+    if not valid_rows:
+        return {
+            'metric_name': normalized_metric_name,
+            'mode': normalized_mode,
+            'best_value': None,
+            'best_row_name': None,
+            'best_row_full_metadata': None,
+            'num_rows_total': int(len(rows)),
+            'num_rows_considered': 0,
+            'num_invalid_rows': int(len(invalid_rows)),
+        }
+
+    if normalized_mode == 'max':
+        best_value = max(entry['metric_value'] for entry in valid_rows)
+    else:
+        best_value = min(entry['metric_value'] for entry in valid_rows)
+    tied = [
+        entry
+        for entry in valid_rows
+        if abs(float(entry['metric_value']) - float(best_value)) <= 1e-12
+    ]
+    best_row = sorted(
+        tied,
+        key=lambda entry: (
+            str(entry.get('row_name', '')),
+            int(entry.get('row_index', 0)),
+        ),
+    )[0]
+    return {
+        'metric_name': normalized_metric_name,
+        'mode': normalized_mode,
+        'best_value': float(best_value),
+        'best_row_name': str(best_row.get('row_name', '')),
+        'best_row_full_metadata': dict(best_row),
+        'num_rows_total': int(len(rows)),
+        'num_rows_considered': int(len(valid_rows)),
+        'num_invalid_rows': int(len(invalid_rows)),
+    }
+
+
 class Evaluator:
     def __init__(self, img_loader, txt_loader, args):
         self.img_loader = img_loader
@@ -73,6 +229,7 @@ class Evaluator:
         self.args = args
         self.latest_metrics = {}
         self.latest_authority = {}
+        self.latest_eval_rows = []
 
         requested_metrics = tuple(getattr(args, 'retrieval_metrics', SUPPORTED_RETRIEVAL_METRICS) or SUPPORTED_RETRIEVAL_METRICS)
         unknown_metrics = sorted(set(requested_metrics) - set(SUPPORTED_RETRIEVAL_METRICS))
@@ -308,6 +465,14 @@ class Evaluator:
             },
         }
         self.latest_authority = authority_context
+        self.latest_eval_rows = []
+        for row in metric_rows:
+            row_copy = {
+                str(metric_key): (float(metric_value) if metric_key in SUPPORTED_RETRIEVAL_METRICS else metric_value)
+                for metric_key, metric_value in row.items()
+            }
+            row_copy['bucket'] = str(authority_context['row_roles'].get(row['task'], 'host'))
+            self.latest_eval_rows.append(row_copy)
 
         table = PrettyTable(['task'] + list(self.requested_metrics))
         for row in metric_rows:

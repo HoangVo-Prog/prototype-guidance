@@ -223,6 +223,15 @@ def build_parser():
     parser.add_argument('--log_period', default=50, type=int)
     parser.add_argument('--eval_frequency', '--eval_period', dest='eval_period', default=1, type=int)
     parser.add_argument('--save_interval', type=int, default=1)
+    parser.add_argument('--early_stopping_enabled', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--early_stopping_metric', type=str, default='R1')
+    parser.add_argument('--early_stopping_mode', type=str, default='max')
+    parser.add_argument('--early_stopping_patience', type=int, default=5)
+    parser.add_argument('--early_stopping_min_delta', type=float, default=0.0)
+    parser.add_argument('--early_stopping_start_epoch', type=int, default=1)
+    parser.add_argument('--early_stopping_monitored_bucket', type=str, default='host')
+    parser.add_argument('--early_stopping_monitored_task_pattern', type=str, default=None)
+    parser.add_argument('--early_stopping_stop_on_nan', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument(
         '--prototype-selection-metric',
         dest='prototype_selection_metric',
@@ -446,6 +455,25 @@ def _finalize_args(args):
     args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
     args.runtime_mode = str(getattr(args, 'runtime_mode', 'auto')).lower()
     args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
+    args.early_stopping_enabled = bool(getattr(args, 'early_stopping_enabled', False))
+    args.early_stopping_metric = str(getattr(args, 'early_stopping_metric', 'R1') or 'R1')
+    args.early_stopping_mode = str(getattr(args, 'early_stopping_mode', 'max') or 'max').lower()
+    args.early_stopping_patience = int(getattr(args, 'early_stopping_patience', 5))
+    args.early_stopping_min_delta = float(getattr(args, 'early_stopping_min_delta', 0.0) or 0.0)
+    args.early_stopping_start_epoch = int(getattr(args, 'early_stopping_start_epoch', 1))
+    monitored_bucket = getattr(args, 'early_stopping_monitored_bucket', 'host')
+    if monitored_bucket is None:
+        args.early_stopping_monitored_bucket = None
+    else:
+        monitored_bucket = str(monitored_bucket).strip()
+        args.early_stopping_monitored_bucket = monitored_bucket if monitored_bucket else None
+    monitored_task_pattern = getattr(args, 'early_stopping_monitored_task_pattern', None)
+    if monitored_task_pattern is None:
+        args.early_stopping_monitored_task_pattern = None
+    else:
+        monitored_task_pattern = str(monitored_task_pattern).strip()
+        args.early_stopping_monitored_task_pattern = monitored_task_pattern if monitored_task_pattern else None
+    args.early_stopping_stop_on_nan = bool(getattr(args, 'early_stopping_stop_on_nan', False))
     args.prototype_method_role = str(getattr(args, 'prototype_method_role', 'semantic_structure')).lower()
     if args.prototype_method_role != 'semantic_structure':
         raise ValueError(
