@@ -33,6 +33,13 @@ run_cmd \
     python train.py \
     --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
     --use_loss_semantic_hardneg_margin false \
+    --lambda_semantic_pbt 20.0 \
+    --lambda_semantic_hardneg_margin 0.0
+
+run_cmd \
+    python train.py \
+    --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
+    --use_loss_semantic_hardneg_margin false \
     --lambda_semantic_pbt 50.0 \
     --lambda_semantic_hardneg_margin 0.0
 
