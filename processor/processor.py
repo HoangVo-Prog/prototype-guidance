@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 
 import torch
@@ -295,6 +296,59 @@ def _collect_output_gradient_metrics(outputs, scale: float = 1.0):
     return metrics
 
 
+def _compute_grad_norm_from_loss(loss: torch.Tensor, parameters) -> float:
+    if not isinstance(loss, torch.Tensor) or not bool(loss.requires_grad):
+        return 0.0
+    grads = torch.autograd.grad(
+        loss,
+        parameters,
+        retain_graph=True,
+        create_graph=False,
+        allow_unused=True,
+    )
+    total_sq = 0.0
+    for grad in grads:
+        if grad is None:
+            continue
+        grad_tensor = grad.detach()
+        if grad_tensor.is_sparse:
+            grad_tensor = grad_tensor.coalesce().values()
+        total_sq += float(grad_tensor.float().pow(2).sum().item())
+    return math.sqrt(total_sq)
+
+
+def _collect_loss_grad_norm_metrics(outputs, parameters):
+    metrics = {
+        'train/grad_loss_norm/host': 0.0,
+        'train/grad_loss_norm/diag': 0.0,
+        'train/grad_loss_norm/semantic_pbt': 0.0,
+        'train/grad_loss_norm/semantic_hardneg_margin': 0.0,
+    }
+    if not parameters:
+        return metrics
+
+    loss_key_preferences = (
+        ('train/grad_loss_norm/host', ('loss_host_weighted', 'loss_host')),
+        ('train/grad_loss_norm/diag', ('loss_diag_weighted', 'loss_diag')),
+        ('train/grad_loss_norm/semantic_pbt', ('loss_semantic_pbt_weighted', 'loss_semantic_pbt')),
+        (
+            'train/grad_loss_norm/semantic_hardneg_margin',
+            ('loss_semantic_hardneg_margin_weighted', 'loss_semantic_hardneg_margin'),
+        ),
+    )
+    for metric_key, candidate_loss_keys in loss_key_preferences:
+        selected_loss = None
+        for loss_key in candidate_loss_keys:
+            candidate = outputs.get(loss_key)
+            if isinstance(candidate, torch.Tensor):
+                selected_loss = candidate
+                break
+        if selected_loss is None:
+            continue
+        metrics[metric_key] = _compute_grad_norm_from_loss(selected_loss, parameters)
+    return metrics
+
+
 def _unwrap_model(model):
     return model.module if hasattr(model, 'module') else model
 
@@ -461,6 +515,7 @@ def _do_train_runtime(
         )
         logger.info('Using training.freeze_schedule phases: %s', schedule_preview)
     total_training_steps = max(int(num_epoch) * max(len(train_loader), 1), 1)
+    wandb_log_interval = max(getattr(args, 'wandb_log_interval', log_period), 1)
 
     def _run_validation(eval_epoch: int) -> float:
         logger.info('Validation Results - Epoch: {}'.format(eval_epoch))
@@ -614,6 +669,11 @@ def _do_train_runtime(
         model.train()
         for n_iter, batch in enumerate(train_loader):
             current_steps += 1
+            should_log_wandb_step = (
+                experiment_tracker is not None
+                and get_rank() == 0
+                and current_steps % wandb_log_interval == 0
+            )
             batch = {key: value.to(device) for key, value in batch.items()}
             optimizer.zero_grad(set_to_none=True)
             with build_autocast_context(args, device):
@@ -625,6 +685,12 @@ def _do_train_runtime(
                     disable_proxy_losses=False,
                 )
                 total_loss = outputs['loss_total']
+            grad_loss_norm_metrics = None
+            if should_log_wandb_step:
+                trainable_parameters = tuple(
+                    parameter for parameter in model.parameters() if isinstance(parameter, torch.Tensor) and parameter.requires_grad
+                )
+                grad_loss_norm_metrics = _collect_loss_grad_norm_metrics(outputs, trainable_parameters)
 
             if scaler.is_enabled():
                 scaler.scale(total_loss).backward()
@@ -695,17 +761,18 @@ def _do_train_runtime(
                     meter.update(value, batch_size)
                     wandb_interval_meters[key].update(value, batch_size)
 
-            if experiment_tracker is not None and get_rank() == 0 and current_steps % max(getattr(args, 'wandb_log_interval', log_period), 1) == 0:
+            if should_log_wandb_step:
                 averaged_metrics = _meter_averages(wandb_interval_meters)
                 display_lr = _resolve_display_lr(optimizer, scheduler)
-                experiment_tracker.log(
-                    build_train_metrics_from_scalars(
-                        epoch=epoch,
-                        step=current_steps,
-                        scalar_metrics=averaged_metrics,
-                        lr=display_lr,
-                    )
+                train_metrics = build_train_metrics_from_scalars(
+                    epoch=epoch,
+                    step=current_steps,
+                    scalar_metrics=averaged_metrics,
+                    lr=display_lr,
                 )
+                if grad_loss_norm_metrics is not None:
+                    train_metrics.update(grad_loss_norm_metrics)
+                experiment_tracker.log(train_metrics)
                 for meter in wandb_interval_meters.values():
                     meter.reset()
 
@@ -831,7 +898,6 @@ def do_inference(model, test_img_loader, test_txt_loader, args):
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
-
 
 
 
