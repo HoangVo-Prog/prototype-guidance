@@ -1,3 +1,4 @@
+import copy
 import logging
 import math
 import time
@@ -609,13 +610,13 @@ def _do_train_runtime(
     eval_loss_loader=None,
     modular_checkpoint_manager=None,
     runtime_mode: str = None,
+    resume_state: Dict[str, Any] = None,
 ):
     log_period = args.log_period
     eval_period = args.eval_period
     grad_clip = float(getattr(args, 'grad_clip', 0.0) or 0.0)
     device = getattr(args, 'device', 'cuda')
     num_epoch = args.num_epoch
-    arguments = {'num_epoch': num_epoch, 'iteration': 0}
 
     logger = logging.getLogger('pas.train')
     logger.info('start training')
@@ -627,7 +628,10 @@ def _do_train_runtime(
     if hasattr(runtime_model, 'set_runtime_mode'):
         runtime_model.set_runtime_mode(resolved_runtime_mode)
     _apply_runtime_mode_trainability(runtime_model, resolved_runtime_mode, logger)
-    if resolved_runtime_mode != RUNTIME_MODE_JOINT_TRAINING:
+    resume_bundle = resume_state if isinstance(resume_state, dict) else {}
+    resume_optimizer_restored = bool(resume_bundle.get('optimizer_restored', False))
+    resume_scheduler_restored = bool(resume_bundle.get('scheduler_restored', False))
+    if resolved_runtime_mode != RUNTIME_MODE_JOINT_TRAINING and not resume_bundle:
         optimizer = build_optimizer(args, runtime_model)
         scheduler = build_lr_scheduler(args, optimizer)
         _rewind_scheduler_to_epoch(scheduler, start_epoch - 1)
@@ -635,6 +639,35 @@ def _do_train_runtime(
             'Rebuilt optimizer/scheduler for runtime_mode=%s to enforce explicit trainable boundary.',
             resolved_runtime_mode,
         )
+    elif resolved_runtime_mode != RUNTIME_MODE_JOINT_TRAINING and resume_bundle:
+        if not resume_optimizer_restored:
+            optimizer = build_optimizer(args, runtime_model)
+            logger.warning(
+                'Resume checkpoint did not restore optimizer state; rebuilt optimizer from config for runtime_mode=%s.',
+                resolved_runtime_mode,
+            )
+        if not resume_scheduler_restored:
+            scheduler = build_lr_scheduler(args, optimizer)
+            _rewind_scheduler_to_epoch(scheduler, start_epoch - 1)
+            logger.warning(
+                (
+                    'Resume checkpoint did not restore scheduler state; rebuilt and rewound scheduler to '
+                    'completed_epochs=%d for runtime_mode=%s.'
+                ),
+                int(start_epoch - 1),
+                resolved_runtime_mode,
+            )
+        logger.info(
+            (
+                'Resume requested in runtime_mode=%s; keeping currently loaded optimizer/scheduler objects '
+                '(optimizer_restored=%s scheduler_restored=%s).'
+            ),
+            resolved_runtime_mode,
+            resume_optimizer_restored,
+            resume_scheduler_restored,
+        )
+    checkpointer.optimizer = optimizer
+    checkpointer.scheduler = scheduler
     _log_scheduler_section_c(logger, optimizer, scheduler, epoch_label='train_start')
     if getattr(args, 'prototype_selection_metric', None):
         logger.warning(
@@ -645,6 +678,18 @@ def _do_train_runtime(
         raise ValueError('training.amp=true requires a CUDA device.')
     scaler = build_grad_scaler(args, device)
     scaler = _maybe_disable_grad_scaler_for_fp16_params(scaler, optimizer, logger)
+    resume_scaler_state = resume_bundle.get('scaler_state_dict')
+    if isinstance(resume_scaler_state, dict):
+        if scaler is not None and hasattr(scaler, 'load_state_dict') and scaler.is_enabled():
+            try:
+                scaler.load_state_dict(resume_scaler_state)
+                logger.info('Restored AMP GradScaler state from resume checkpoint.')
+            except Exception as exc:
+                logger.warning('Failed to restore AMP GradScaler state from resume checkpoint: %s', exc)
+        else:
+            logger.warning(
+                'Resume checkpoint contains AMP scaler state, but active scaler is disabled; skipping scaler restore.'
+            )
     logger.info(
         'Precision config: backbone_precision=%s, prototype_precision=%s, amp=%s, amp_dtype=%s',
         getattr(args, 'backbone_precision', 'fp16'),
@@ -660,8 +705,93 @@ def _do_train_runtime(
     current_steps = 0
     best_epoch = start_epoch
     last_epoch = start_epoch - 1
+    metric_name_for_ckpt = (
+        str(getattr(modular_checkpoint_manager, 'metric_name', 'R1')) if modular_checkpoint_manager is not None else 'R1'
+    )
+    metric_mode_for_ckpt = (
+        str(getattr(modular_checkpoint_manager, 'metric_mode', 'max')) if modular_checkpoint_manager is not None else 'max'
+    )
+    best_metric_state_current = {
+        'name': metric_name_for_ckpt,
+        'mode': metric_mode_for_ckpt,
+        'value': float(best_top1),
+        'best_epoch': int(best_epoch),
+        'selected_row': None,
+        'source_row': None,
+        'display_row': None,
+        'authority_bucket': None,
+        'selection_reason': None,
+    }
+    latest_metric_state_current = {
+        'name': metric_name_for_ckpt,
+        'mode': metric_mode_for_ckpt,
+        'value': None,
+        'epoch': None,
+        'selected_row': None,
+        'source_row': None,
+        'display_row': None,
+        'authority_bucket': None,
+        'selection_reason': None,
+    }
     early_stopping_cfg = _resolve_early_stopping_config(args)
     early_stopping_state = _initialize_early_stopping_state()
+    resume_training_state = resume_bundle.get('training_state', {}) if isinstance(resume_bundle, dict) else {}
+    if isinstance(resume_training_state, dict) and resume_training_state:
+        current_steps = int(resume_training_state.get('global_step', resume_bundle.get('global_step', 0) or 0))
+        epoch_completed = int(
+            resume_training_state.get(
+                'epoch_completed',
+                resume_training_state.get('epoch', max(start_epoch - 1, 0)),
+            )
+            or 0
+        )
+        last_epoch = max(epoch_completed, start_epoch - 1)
+        best_metric_payload = resume_training_state.get('best_metric_state')
+        if isinstance(best_metric_payload, dict):
+            best_metric_state_current = copy.deepcopy(best_metric_payload)
+            best_top1 = float(best_metric_payload.get('value', best_top1) or best_top1)
+            best_epoch = int(best_metric_payload.get('best_epoch', best_epoch) or best_epoch)
+        elif resume_training_state.get('best_top1') is not None:
+            best_top1 = float(resume_training_state.get('best_top1'))
+            best_epoch = int(resume_training_state.get('best_epoch', best_epoch) or best_epoch)
+        latest_metric_payload = resume_training_state.get('latest_metric_state')
+        if isinstance(latest_metric_payload, dict):
+            latest_metric_state_current = copy.deepcopy(latest_metric_payload)
+        early_stopping_payload = resume_training_state.get('early_stopping_state')
+        if isinstance(early_stopping_payload, dict):
+            merged_state = _initialize_early_stopping_state()
+            merged_state.update(copy.deepcopy(early_stopping_payload))
+            early_stopping_state = merged_state
+        modular_best_payload = resume_training_state.get('modular_best_metric_value_by_group')
+        if (
+            modular_checkpoint_manager is not None
+            and isinstance(modular_best_payload, dict)
+            and hasattr(modular_checkpoint_manager, 'best_metric_value_by_group')
+        ):
+            modular_checkpoint_manager.best_metric_value_by_group = {
+                str(key): float(value) for key, value in modular_best_payload.items()
+            }
+        logger.info(
+            (
+                'Applied training resume state: start_epoch=%d resumed_global_step=%d resumed_epoch_completed=%d '
+                'best_%s=%.4f best_epoch=%d early_stop_bad_epochs=%d'
+            ),
+            int(start_epoch),
+            int(current_steps),
+            int(epoch_completed),
+            metric_name_for_ckpt,
+            float(best_top1),
+            int(best_epoch),
+            int(early_stopping_state.get('bad_epochs', 0)),
+        )
+    elif resume_bundle:
+        logger.warning(
+            'Resume requested but checkpoint has no structured training_state. '
+            'Falling back to start_epoch=%d and global_step=%d.',
+            int(start_epoch),
+            int(resume_bundle.get('global_step', 0) or 0),
+        )
+        current_steps = int(resume_bundle.get('global_step', 0) or 0)
     if early_stopping_cfg['enabled']:
         logger.info(
             'Early stopping enabled: metric=%s mode=%s patience=%d min_delta=%.6f start_epoch=%d bucket=%s pattern=%s stop_on_nan=%s',
@@ -700,7 +830,38 @@ def _do_train_runtime(
     total_training_steps = max(int(num_epoch) * max(len(train_loader), 1), 1)
     wandb_log_interval = max(getattr(args, 'wandb_log_interval', log_period), 1)
 
+    def _save_training_resume_checkpoint(name: str, checkpoint_kind: str, epoch_completed: int, iteration_in_epoch: int = 0):
+        if get_rank() != 0:
+            return
+        config_snapshot = getattr(args, 'config_data', None)
+        modular_best_values = {}
+        if modular_checkpoint_manager is not None and hasattr(modular_checkpoint_manager, 'best_metric_value_by_group'):
+            modular_best_values = dict(modular_checkpoint_manager.best_metric_value_by_group)
+        additional_state = {
+            'last_epoch': int(epoch_completed),
+            'runtime_mode': str(resolved_runtime_mode),
+            'resume_source_path': str(getattr(args, 'resume_ckpt_file', '') or ''),
+        }
+        checkpointer.save_training_checkpoint(
+            name=name,
+            epoch=int(epoch_completed),
+            global_step=int(current_steps),
+            iteration_in_epoch=int(iteration_in_epoch),
+            checkpoint_kind=str(checkpoint_kind),
+            metric_name=str(metric_name_for_ckpt),
+            metric_mode=str(metric_mode_for_ckpt),
+            best_metric_state=copy.deepcopy(best_metric_state_current),
+            latest_metric_state=copy.deepcopy(latest_metric_state_current),
+            early_stopping_state=copy.deepcopy(early_stopping_state),
+            modular_best_metric_value_by_group=modular_best_values,
+            scaler=scaler,
+            config_snapshot=config_snapshot if isinstance(config_snapshot, dict) else None,
+            include_rng_state=True,
+            additional_training_state=additional_state,
+        )
+
     def _run_validation(eval_epoch: int) -> float:
+        nonlocal latest_metric_state_current
         logger.info('Validation Results - Epoch: {}'.format(eval_epoch))
         eval_loss_metrics = _compute_eval_loss_metrics(
             model.module if args.distributed else model,
@@ -715,19 +876,37 @@ def _do_train_runtime(
         else:
             top1_score = evaluator.eval(model.eval())
         torch.cuda.empty_cache()
+        authority_context = dict(getattr(evaluator, 'latest_authority', {}) or {})
+        selected_display_row = str(
+            evaluator.latest_metrics.get(
+                'val/top1_display_row',
+                evaluator.latest_metrics.get('val/top1_row', ''),
+            )
+            or ''
+        ) or None
+        selected_source_row = str(evaluator.latest_metrics.get('val/top1_source_row', '') or '') or None
+        selected_metric_row = (
+            str(authority_context.get('source_row', '') or '').strip()
+            or selected_source_row
+            or selected_display_row
+        )
+        authority_bucket = authority_context.get('selected_source_role')
+        latest_metric_state_current = {
+            'name': metric_name_for_ckpt,
+            'mode': metric_mode_for_ckpt,
+            'value': float(top1_score),
+            'epoch': int(eval_epoch),
+            'selected_row': selected_metric_row,
+            'source_row': selected_source_row,
+            'display_row': selected_display_row,
+            'authority_bucket': authority_bucket,
+            'selection_reason': 'authority_source_row' if authority_context.get('source_row') else 'display_row_fallback',
+        }
         if experiment_tracker is not None:
             validation_metrics = build_validation_metrics(eval_epoch, evaluator=evaluator, loss_metrics=eval_loss_metrics)
             experiment_tracker.log(validation_metrics)
         if modular_checkpoint_manager is not None:
             model_for_group_ckpt = model.module if hasattr(model, 'module') else model
-            authority_context = dict(getattr(evaluator, 'latest_authority', {}) or {})
-            selected_display_row = str(evaluator.latest_metrics.get('val/top1_row', '') or '') or None
-            selected_source_row = str(evaluator.latest_metrics.get('val/top1_source_row', '') or '') or None
-            selected_metric_row = (
-                str(authority_context.get('source_row', '') or '').strip()
-                or selected_source_row
-                or selected_display_row
-            )
             if (
                 selected_display_row is not None
                 and selected_source_row is not None
@@ -766,7 +945,13 @@ def _do_train_runtime(
         if best_top1 < top1_epoch0:
             best_top1 = top1_epoch0
             best_epoch = 0
-            arguments['epoch'] = 0
+            best_metric_state_current = {
+                **copy.deepcopy(latest_metric_state_current),
+                'name': metric_name_for_ckpt,
+                'mode': metric_mode_for_ckpt,
+                'value': float(best_top1),
+                'best_epoch': int(best_epoch),
+            }
 
     for epoch in range(start_epoch, num_epoch + 1):
         _log_scheduler_section_c(logger, optimizer, scheduler, epoch_label=f'epoch_start_{epoch}')
@@ -784,6 +969,8 @@ def _do_train_runtime(
 
             scheduler = build_lr_scheduler(args, optimizer)
             _rewind_scheduler_to_epoch(scheduler, epoch - 1)
+            checkpointer.optimizer = optimizer
+            checkpointer.scheduler = scheduler
             _log_scheduler_section_c(logger, optimizer, scheduler, epoch_label=f'phase_activate_{epoch}')
 
             optimizer_groups = summarize_optimizer_param_groups(optimizer)
@@ -1002,11 +1189,18 @@ def _do_train_runtime(
 
         if epoch % eval_period == 0 and get_rank() == 0:
             top1 = _run_validation(eval_epoch=epoch)
+            improved = False
             if best_top1 < top1:
                 best_top1 = top1
                 best_epoch = epoch
-                arguments['epoch'] = epoch
-                checkpointer.save('best', **arguments)
+                improved = True
+                best_metric_state_current = {
+                    **copy.deepcopy(latest_metric_state_current),
+                    'name': metric_name_for_ckpt,
+                    'mode': metric_mode_for_ckpt,
+                    'value': float(best_top1),
+                    'best_epoch': int(best_epoch),
+                }
             early_stopping_state = _update_early_stopping_monitor(
                 logger=logger,
                 eval_epoch=epoch,
@@ -1014,13 +1208,48 @@ def _do_train_runtime(
                 config=early_stopping_cfg,
                 state=early_stopping_state,
             )
+            _save_training_resume_checkpoint(
+                name='checkpoint_training_latest',
+                checkpoint_kind='latest',
+                epoch_completed=epoch,
+                iteration_in_epoch=0,
+            )
+            _save_training_resume_checkpoint(
+                name='last',
+                checkpoint_kind='latest',
+                epoch_completed=epoch,
+                iteration_in_epoch=0,
+            )
+            if improved:
+                _save_training_resume_checkpoint(
+                    name='checkpoint_training_best',
+                    checkpoint_kind='best',
+                    epoch_completed=epoch,
+                    iteration_in_epoch=0,
+                )
+                _save_training_resume_checkpoint(
+                    name='best',
+                    checkpoint_kind='best',
+                    epoch_completed=epoch,
+                    iteration_in_epoch=0,
+                )
             if early_stopping_state.get('should_stop', False):
                 break
 
     if get_rank() == 0:
         if last_epoch >= start_epoch:
-            arguments['epoch'] = last_epoch
-            checkpointer.save('last', **arguments)
+            _save_training_resume_checkpoint(
+                name='checkpoint_training_latest',
+                checkpoint_kind='latest',
+                epoch_completed=last_epoch,
+                iteration_in_epoch=0,
+            )
+            _save_training_resume_checkpoint(
+                name='last',
+                checkpoint_kind='last',
+                epoch_completed=last_epoch,
+                iteration_in_epoch=0,
+            )
         logger.info(f'best R1: {best_top1} at epoch {best_epoch}')
 
     tb_writer.close()
@@ -1053,6 +1282,7 @@ def do_train(
     experiment_tracker: ExperimentTracker = None,
     eval_loss_loader=None,
     modular_checkpoint_manager=None,
+    resume_state: Dict[str, Any] = None,
 ):
     resolved_runtime_mode = resolve_runtime_mode_from_args(args, for_training=True)
     if resolved_runtime_mode == RUNTIME_MODE_HOST_ONLY:
@@ -1068,6 +1298,7 @@ def do_train(
             experiment_tracker=experiment_tracker,
             eval_loss_loader=eval_loss_loader,
             modular_checkpoint_manager=modular_checkpoint_manager,
+            resume_state=resume_state,
         )
     return train_joint(
         start_epoch,
@@ -1081,6 +1312,7 @@ def do_train(
         experiment_tracker=experiment_tracker,
         eval_loss_loader=eval_loss_loader,
         modular_checkpoint_manager=modular_checkpoint_manager,
+        resume_state=resume_state,
     )
 
 
@@ -1090,9 +1322,3 @@ def do_inference(model, test_img_loader, test_txt_loader, args):
 
     evaluator = Evaluator(test_img_loader, test_txt_loader, args)
     _ = evaluator.eval(model.eval())
-
-
-
-
-
-

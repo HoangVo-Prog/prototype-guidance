@@ -317,6 +317,20 @@ def log_parameter_trainability(logger, model, args):
             )
 
 
+def _resolve_resume_checkpoint_path(args) -> str:
+    configured_path = str(getattr(args, 'resume_ckpt_file', '') or '').strip()
+    if configured_path:
+        return configured_path
+    candidate_paths = (
+        op.join(args.output_dir, 'checkpoint_training_latest.pth'),
+        op.join(args.output_dir, 'last.pth'),
+    )
+    for candidate in candidate_paths:
+        if op.exists(candidate):
+            return candidate
+    return ''
+
+
 if __name__ == '__main__':
     load_runtime_environment()
     args = get_args()
@@ -541,13 +555,58 @@ if __name__ == '__main__':
     evaluator = evaluator_class(val_img_loader, val_txt_loader, args)
 
     start_epoch = 1
+    resume_state = None
     if args.resume:
-        checkpoint = checkpointer.resume(args.resume_ckpt_file)
-        start_epoch = checkpoint.get('epoch', 1)
-        logger.info('Resuming from epoch %s', start_epoch)
+        resume_path = _resolve_resume_checkpoint_path(args)
+        if not resume_path:
+            raise FileNotFoundError(
+                'training.resume=true but no resume checkpoint path was provided and no default '
+                '`checkpoint_training_latest.pth` / `last.pth` was found in output_dir.'
+            )
+        restore_rng_on_this_rank = bool(getattr(args, 'resume_restore_rng', True))
+        if args.distributed and get_rank() != 0 and restore_rng_on_this_rank:
+            logger.warning(
+                'Skipping RNG restore on distributed rank=%d because checkpoint stores a single-process RNG snapshot '
+                '(saved by rank0).',
+                get_rank(),
+            )
+            restore_rng_on_this_rank = False
+        resume_state = checkpointer.resume_training(
+            resume_path,
+            strict=bool(getattr(args, 'resume_strict', False)),
+            restore_rng=restore_rng_on_this_rank,
+            scaler=None,
+        )
+        start_epoch = int(resume_state.get('start_epoch', 1) or 1)
+        training_state = resume_state.get('training_state', {}) if isinstance(resume_state, dict) else {}
+        best_metric_state = training_state.get('best_metric_state', {}) if isinstance(training_state, dict) else {}
+        logger.info(
+            (
+                'Resumed checkpoint path=%s start_epoch=%d global_step=%d best_%s=%s best_row=%s '
+                'optimizer_restored=%s scheduler_restored=%s scaler_restored=%s rng_restored=%s strict=%s'
+            ),
+            resume_path,
+            start_epoch,
+            int(resume_state.get('global_step', 0) or 0),
+            str(best_metric_state.get('name', 'R1')),
+            best_metric_state.get('value'),
+            best_metric_state.get('selected_row'),
+            bool(resume_state.get('optimizer_restored', False)),
+            bool(resume_state.get('scheduler_restored', False)),
+            bool(resume_state.get('scaler_restored', False)),
+            bool(resume_state.get('rng_restored', False)),
+            bool(getattr(args, 'resume_strict', False)),
+        )
+        if resume_state.get('warnings'):
+            logger.warning('Resume warnings for %s: %s', resume_path, resume_state.get('warnings'))
 
     try:
         if use_original_itself:
+            if resume_state is not None:
+                logger.warning(
+                    'Full resume state propagation is only implemented for the PAS runtime path. '
+                    'Original ITSELF adapter runtime will resume using loaded model/optimizer/scheduler/start_epoch only.'
+                )
             do_train_fn(
                 start_epoch,
                 args,
@@ -571,10 +630,9 @@ if __name__ == '__main__':
                 experiment_tracker=experiment_tracker,
                 eval_loss_loader=eval_loss_loader,
                 modular_checkpoint_manager=modular_checkpoint_manager,
+                resume_state=resume_state,
             )
     finally:
         if experiment_tracker is not None:
             experiment_tracker.finish()
-
-
 

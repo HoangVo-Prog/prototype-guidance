@@ -152,6 +152,8 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'prototype_selection_metric'): 'prototype_selection_metric',
     ('training', 'resume'): 'resume',
     ('training', 'resume_ckpt_file'): 'resume_ckpt_file',
+    ('training', 'resume_strict'): 'resume_strict',
+    ('training', 'resume_restore_rng'): 'resume_restore_rng',
     ('training', 'finetune'): 'finetune',
     ('training', 'pretrain'): 'pretrain',
     ('training', 'img_aug'): 'img_aug',

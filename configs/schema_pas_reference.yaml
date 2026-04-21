@@ -170,6 +170,8 @@ training:
   save_interval: 1
   resume: false
   resume_ckpt_file: ''
+  resume_strict: false
+  resume_restore_rng: true
   pretrain: ''
   img_aug: true
   txt_aug: true
