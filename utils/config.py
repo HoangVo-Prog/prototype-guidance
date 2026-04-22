@@ -408,6 +408,7 @@ SECTION_TEMPLATE = {
     'host': {},
     'prototype': {},
     'semantic_structure': {},
+    'hbr': {},
     'objectives': {
         'objectives': {},
         'lambda': {},
