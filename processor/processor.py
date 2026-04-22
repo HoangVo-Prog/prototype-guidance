@@ -514,6 +514,7 @@ def _collect_loss_grad_norm_metrics(outputs, parameters):
     metrics = {
         'train/grad_loss_norm/host': 0.0,
         'train/grad_loss_norm/diag': 0.0,
+        'train/grad_loss_norm/hbr': 0.0,
         'train/grad_loss_norm/semantic_pbt': 0.0,
         'train/grad_loss_norm/semantic_hardneg_margin': 0.0,
         'train/grad_loss_norm/semantic_hosthard_weighted': 0.0,
@@ -524,6 +525,7 @@ def _collect_loss_grad_norm_metrics(outputs, parameters):
     loss_key_preferences = (
         ('train/grad_loss_norm/host', ('loss_host_weighted', 'loss_host')),
         ('train/grad_loss_norm/diag', ('loss_diag_weighted', 'loss_diag')),
+        ('train/grad_loss_norm/hbr', ('loss_hbr_weighted', 'loss_hbr')),
         ('train/grad_loss_norm/semantic_pbt', ('loss_semantic_pbt_weighted', 'loss_semantic_pbt')),
         (
             'train/grad_loss_norm/semantic_hardneg_margin',
