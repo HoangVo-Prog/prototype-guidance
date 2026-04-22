@@ -1522,6 +1522,19 @@ class PrototypeConditionedTextHead(nn.Module):
         semantic_hardneg_margin_loss_scale = loss_scales['semantic_hardneg_margin']
         semantic_hosthard_weighted_loss_scale = loss_scales['semantic_hosthard_weighted']
         hbr_loss_scale = loss_scales['hbr']
+        hbr_basis_bank = basis_outputs['basis_bank']
+        if (
+            isinstance(hbr_basis_bank, torch.Tensor)
+            and hbr_basis_bank.ndim == 3
+            and hbr_basis_bank.size(-1) != exact_outputs['text_projected'].size(-1)
+        ):
+            # HBR proto-pair signal must live in the same feature space as exact text embeddings.
+            bsz, num_proto, _ = hbr_basis_bank.shape
+            hbr_basis_bank = self.text_projector(hbr_basis_bank.reshape(bsz * num_proto, -1)).reshape(
+                bsz,
+                num_proto,
+                -1,
+            )
         if not prototype_usage_enabled:
             loss_outputs = self._zero_loss_outputs(image_outputs['image_projected'])
         else:
@@ -1532,7 +1545,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 pids=pids,
                 prototypes=context['base_prototypes'],
                 routing_weights=image_outputs['routing_weights'],
-                basis_bank=basis_outputs['basis_bank'],
+                basis_bank=hbr_basis_bank,
                 surrogate_pairwise_logits=surrogate_pairwise_logits,
                 host_pairwise_logits=host_pairwise_logits,
                 host_pairwise_logits_global=host_pairwise_logits_global,

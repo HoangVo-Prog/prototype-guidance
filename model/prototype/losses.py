@@ -511,6 +511,8 @@ class PrototypeLosses(nn.Module):
         routed = routing_weights.float()
         basis = basis_bank.float()
         exact_norm = F.normalize(exact_text_embeddings.detach().float(), dim=-1)
+        if basis.size(-1) != exact_norm.size(-1):
+            return outputs
 
         hard_basis = basis.index_select(0, hard_indices.reshape(-1)).view(
             batch_size,
@@ -671,6 +673,7 @@ class PrototypeLosses(nn.Module):
             and routing_weights.size(0) == batch_size
             and basis_bank.size(0) == batch_size
             and routing_weights.size(1) == basis_bank.size(1)
+            and basis_bank.size(-1) == exact_text_embeddings.size(-1)
         )
         if proto_signal_available:
             proto_gate = torch.sigmoid(
