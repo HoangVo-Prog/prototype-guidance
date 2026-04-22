@@ -125,7 +125,7 @@ objectives:
     semantic_pbt: 0.0
     semantic_hardneg_margin: 0.0
     semantic_hosthard_weighted: 0.0
-    hbr: 10.0
+    hbr: 100.0
     balance: 0.0
     diversity: 0.0
   semantic_hardneg_margin: 0.05

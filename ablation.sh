@@ -31,42 +31,27 @@ BASE_CMD=(
     --epochs 20
 )
 
-# 1) host_only_baseline
-run_cmd "${BASE_CMD[@]}" \
-    --runtime_mode host_only \
-    --use_hbr false \
-    --lambda_hbr 0.0
 
-# 2) host_plus_diag_only (no HBR)
+# hbr_proto_weight_shuffled
 run_cmd "${BASE_CMD[@]}" \
-    --runtime_mode joint_training \
-    --use_hbr false \
-    --lambda_hbr 0.0
-
-# 3) full hbr_proto_weight
-run_cmd "${BASE_CMD[@]}" \
-    --runtime_mode joint_training \
-    --use_hbr true \
-    --lambda_hbr 1.0 \
-    --hbr_control_mode proto_weight
-
-# 4) hbr_host_only_weight
-run_cmd "${BASE_CMD[@]}" \
-    --runtime_mode joint_training \
-    --use_hbr true \
-    --lambda_hbr 1.0 \
-    --hbr_control_mode host_only_weight
-
-# 5) hbr_proto_weight_shuffled
-run_cmd "${BASE_CMD[@]}" \
-    --runtime_mode joint_training \
-    --use_hbr true \
-    --lambda_hbr 1.0 \
     --hbr_control_mode proto_weight_shuffled
 
-# 6) hbr_random_matched_weight
+# hbr_random_matched_weight
 run_cmd "${BASE_CMD[@]}" \
-    --runtime_mode joint_training \
-    --use_hbr true \
-    --lambda_hbr 1.0 \
     --hbr_control_mode random_matched_weight
+
+run_cmd "${BASE_CMD[@]}" \
+    --hbr_control_mode proto_weight_shuffled \
+    --hbr_inner_tail_weight_mode sigmoid_proto
+
+run_cmd "${BASE_CMD[@]}" \
+    --hbr_control_mode proto_weight_shuffled \
+    --hbr_inner_tail_weight_mode softmax_proto
+
+run_cmd "${BASE_CMD[@]}" \
+    --hbr_control_mode random_matched_weight
+    --hbr_inner_tail_weight_mode sigmoid_proto
+
+run_cmd "${BASE_CMD[@]}" \
+    --hbr_control_mode random_matched_weight
+    --hbr_inner_tail_weight_mode softmax_proto
