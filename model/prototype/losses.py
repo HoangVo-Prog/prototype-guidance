@@ -47,6 +47,14 @@ class PrototypeLosses(nn.Module):
         hbr_stopgrad_proto_signal: bool = True,
         hbr_control_mode: str = 'none',
         hbr_proto_adaptive_margin_weight: float = 0.0,
+        hbr_tail_selection_mode: str = 'bottomk',
+        hbr_tail_bottomk: Optional[int] = None,
+        hbr_tail_margin_threshold: Optional[float] = None,
+        hbr_inner_tail_weight_mode: str = 'uniform',
+        hbr_proto_inner_tau: float = 0.1,
+        hbr_proto_inner_center: float = 0.0,
+        hbr_adaptive_margin_enabled: bool = False,
+        hbr_adaptive_margin_lambda: float = 0.0,
         prototype_method_role: str = 'retrieval_branch',
         prototype_semantic_enabled: bool = False,
         semantic_structure_enabled: bool = False,
@@ -115,6 +123,16 @@ class PrototypeLosses(nn.Module):
         self.hbr_stopgrad_proto_signal = bool(hbr_stopgrad_proto_signal)
         self.hbr_control_mode = str(hbr_control_mode).lower()
         self.hbr_proto_adaptive_margin_weight = float(hbr_proto_adaptive_margin_weight)
+        self.hbr_tail_selection_mode = str(hbr_tail_selection_mode).lower()
+        self.hbr_tail_bottomk = int(hbr_topk_hard_negatives) if hbr_tail_bottomk is None else int(hbr_tail_bottomk)
+        self.hbr_tail_margin_threshold = (
+            None if hbr_tail_margin_threshold is None else float(hbr_tail_margin_threshold)
+        )
+        self.hbr_inner_tail_weight_mode = str(hbr_inner_tail_weight_mode).lower()
+        self.hbr_proto_inner_tau = float(hbr_proto_inner_tau)
+        self.hbr_proto_inner_center = float(hbr_proto_inner_center)
+        self.hbr_adaptive_margin_enabled = bool(hbr_adaptive_margin_enabled)
+        self.hbr_adaptive_margin_lambda = float(hbr_adaptive_margin_lambda)
         self.prototype_method_role = str(prototype_method_role).lower()
         self.prototype_semantic_enabled = bool(prototype_semantic_enabled)
         self.semantic_structure_enabled = bool(semantic_structure_enabled)
@@ -152,6 +170,22 @@ class PrototypeLosses(nn.Module):
             raise ValueError('hbr_host_gate_temperature must be positive.')
         if self.hbr_proto_signal_temperature <= 0.0:
             raise ValueError('hbr_proto_signal_temperature must be positive.')
+        if self.hbr_tail_selection_mode not in {'bottomk', 'threshold'}:
+            raise ValueError(
+                f'Unsupported hbr_tail_selection_mode={self.hbr_tail_selection_mode!r}. '
+                'Allowed values: ["bottomk", "threshold"].'
+            )
+        if self.hbr_tail_bottomk <= 0:
+            raise ValueError('hbr_tail_bottomk must be positive.')
+        if self.hbr_tail_selection_mode == 'threshold' and self.hbr_tail_margin_threshold is None:
+            raise ValueError('hbr_tail_margin_threshold must be set when hbr_tail_selection_mode="threshold".')
+        if self.hbr_inner_tail_weight_mode not in {'uniform', 'sigmoid_proto', 'softmax_proto'}:
+            raise ValueError(
+                f'Unsupported hbr_inner_tail_weight_mode={self.hbr_inner_tail_weight_mode!r}. '
+                'Allowed values: ["uniform", "sigmoid_proto", "softmax_proto"].'
+            )
+        if self.hbr_proto_inner_tau <= 0.0:
+            raise ValueError('hbr_proto_inner_tau must be positive.')
         if self.hbr_control_mode not in {
             'none',
             'host_only_weight',
@@ -481,14 +515,18 @@ class PrototypeLosses(nn.Module):
         exact_text_embeddings: torch.Tensor,
         routing_weights: Optional[torch.Tensor],
         basis_bank: Optional[torch.Tensor],
-        hard_indices: torch.Tensor,
+        hard_indices: Optional[torch.Tensor],
         easy_mask: Optional[torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        batch_size, hard_k = hard_indices.shape
+        batch_size = int(exact_text_embeddings.size(0))
+        hard_k = int(hard_indices.size(1)) if isinstance(hard_indices, torch.Tensor) and hard_indices.ndim == 2 else 0
         zero = exact_text_embeddings.new_zeros(())
         zeros = exact_text_embeddings.new_zeros((batch_size, hard_k))
+        pair_signal_matrix = exact_text_embeddings.new_zeros((batch_size, batch_size))
         outputs = {
             'hard_signal': zeros,
+            'pair_signal_matrix': pair_signal_matrix,
+            'available': False,
             'mean': zero.detach(),
             'std': zero.detach(),
             'max': zero.detach(),
@@ -514,28 +552,21 @@ class PrototypeLosses(nn.Module):
         if basis.size(-1) != exact_norm.size(-1):
             return outputs
 
-        hard_basis = basis.index_select(0, hard_indices.reshape(-1)).view(
-            batch_size,
-            hard_k,
-            basis.size(1),
-            basis.size(2),
-        )
-        pair_surrogate = (
-            routed.unsqueeze(1).unsqueeze(-1) * hard_basis
-        ).sum(dim=2)
-        hard_signal = (
-            F.normalize(pair_surrogate, dim=-1) * exact_norm.unsqueeze(1)
-        ).sum(dim=-1)
-
         all_pair_surrogate = torch.einsum('in,jnd->ijd', routed, basis)
         all_signal = (
             F.normalize(all_pair_surrogate, dim=-1) * exact_norm.unsqueeze(1)
         ).sum(dim=-1)
+        if isinstance(hard_indices, torch.Tensor) and hard_indices.ndim == 2 and hard_indices.size(0) == batch_size and hard_indices.numel() > 0:
+            hard_signal = all_signal.gather(1, hard_indices)
+        else:
+            hard_signal = zeros
         offdiag_mask = ~torch.eye(batch_size, device=all_signal.device, dtype=torch.bool)
         offdiag_values = all_signal.masked_select(offdiag_mask)
         outputs.update(
             {
                 'hard_signal': hard_signal,
+                'pair_signal_matrix': all_signal,
+                'available': True,
                 'mean': offdiag_values.mean().detach() if offdiag_values.numel() > 0 else zero.detach(),
                 'std': offdiag_values.std(unbiased=False).detach() if offdiag_values.numel() > 0 else zero.detach(),
                 'max': offdiag_values.max().detach() if offdiag_values.numel() > 0 else zero.detach(),
@@ -578,6 +609,7 @@ class PrototypeLosses(nn.Module):
             'omega': exact_text_embeddings.new_empty((0,)),
             'routing_entropy': exact_text_embeddings.new_empty((0,)),
             'routing_top1_top2_gap': exact_text_embeddings.new_empty((0,)),
+            'host_tail_selected': exact_text_embeddings.new_empty((0,)),
         }
         outputs = {
             'loss': zero,
@@ -608,6 +640,22 @@ class PrototypeLosses(nn.Module):
             'proto_signal_vs_host_margin_corr': zero.detach(),
             'proto_signal_vs_global_margin_corr': zero.detach(),
             'proto_signal_vs_local_margin_corr': zero.detach(),
+            'host_tail_size_mean': zero.detach(),
+            'host_tail_margin_mean': zero.detach(),
+            'host_tail_margin_p10': zero.detach(),
+            'top_weight_overlap_with_bottom_host_margin': zero.detach(),
+            'top_weight_in_host_tail_fraction': zero.detach(),
+            'proto_signal_vs_host_margin_corr_in_tail': zero.detach(),
+            'proto_signal_mean_in_tail': zero.detach(),
+            'proto_signal_std_in_tail': zero.detach(),
+            'omega_mean_in_tail': zero.detach(),
+            'omega_max_in_tail': zero.detach(),
+            'omega_entropy_in_tail': zero.detach(),
+            'nonzero_omega_fraction': zero.detach(),
+            'active_pairs_per_anchor': zero.detach(),
+            'hardest_tail_margin_mean': zero.detach(),
+            'hardest_tail_margin_p10': zero.detach(),
+            'hbr_loss_active_mean': zero.detach(),
             'pairwise_export': default_export,
         }
         if not isinstance(host_pairwise_logits, torch.Tensor):
@@ -618,110 +666,183 @@ class PrototypeLosses(nn.Module):
         if batch_size <= 1 or host_pairwise_logits.size(1) != batch_size:
             return outputs
 
-        hard_k = min(max(int(self.hbr_topk_hard_negatives), 1), batch_size - 1)
         host_scores = host_pairwise_logits.float()
-        host_scores_for_mining = host_scores.detach()
         offdiag_mask = ~torch.eye(batch_size, device=host_scores.device, dtype=torch.bool)
-        mined_scores = host_scores_for_mining.masked_fill(~offdiag_mask, float('-inf'))
-        hard_neg_scores_detached, hard_indices = mined_scores.topk(k=hard_k, dim=1)
         pos_scores = host_scores.diagonal().unsqueeze(1)
-        neg_scores = host_scores.gather(1, hard_indices)
-        margin_host = pos_scores - neg_scores
+        host_margin_matrix = pos_scores - host_scores
 
-        easy_mask = offdiag_mask.clone()
-        easy_mask.scatter_(1, hard_indices, False)
-        host_margin_matrix = host_scores.diagonal().unsqueeze(1) - host_scores
-        easy_margins = host_margin_matrix.masked_select(easy_mask)
+        tail_selection_mode = self.hbr_tail_selection_mode
+        tail_bottomk = min(max(int(self.hbr_tail_bottomk), 1), batch_size - 1)
+        if tail_selection_mode == 'bottomk':
+            margins_for_tail = host_margin_matrix.detach().masked_fill(~offdiag_mask, float('inf'))
+            _, tail_indices = margins_for_tail.topk(k=tail_bottomk, dim=1, largest=False)
+            tail_mask = torch.zeros_like(offdiag_mask)
+            tail_mask.scatter_(1, tail_indices, True)
+            tail_mask = tail_mask & offdiag_mask
+            rank_position_matrix = torch.zeros((batch_size, batch_size), device=host_scores.device, dtype=torch.long)
+            rank_values = torch.arange(1, tail_bottomk + 1, device=host_scores.device, dtype=torch.long).unsqueeze(0).expand(batch_size, -1)
+            rank_position_matrix.scatter_(1, tail_indices, rank_values)
+        elif tail_selection_mode == 'threshold':
+            threshold = float(self.hbr_tail_margin_threshold) if self.hbr_tail_margin_threshold is not None else float(self.hbr_host_gate_margin)
+            tail_mask = offdiag_mask & (host_margin_matrix.detach() < threshold)
+            tail_indices = None
+            rank_position_matrix = torch.zeros((batch_size, batch_size), device=host_scores.device, dtype=torch.long)
+            detached_margins = host_margin_matrix.detach()
+            for row_index in range(batch_size):
+                row_mask = tail_mask[row_index]
+                if not bool(row_mask.any()):
+                    continue
+                row_negative_indices = torch.nonzero(row_mask, as_tuple=False).squeeze(1)
+                row_margins = detached_margins[row_index, row_negative_indices]
+                row_order = torch.argsort(row_margins, dim=0)
+                row_ranks = torch.arange(1, row_negative_indices.numel() + 1, device=host_scores.device, dtype=torch.long)
+                rank_position_matrix[row_index, row_negative_indices[row_order]] = row_ranks
+        else:
+            raise ValueError(
+                f'Unsupported hbr_tail_selection_mode={tail_selection_mode!r}. '
+                'Allowed values: ["bottomk", "threshold"].'
+            )
 
-        gate_host = torch.sigmoid(
-            (self.hbr_host_gate_margin - margin_host.detach()) / self.hbr_host_gate_temperature
+        easy_mask = offdiag_mask & (~tail_mask)
+        hard_margins_flat = host_margin_matrix.detach().masked_select(tail_mask)
+        easy_margins = host_margin_matrix.detach().masked_select(easy_mask)
+
+        gate_host_matrix = torch.sigmoid(
+            (self.hbr_host_gate_margin - host_margin_matrix.detach()) / self.hbr_host_gate_temperature
         ).detach()
 
-        margin_global = torch.zeros_like(margin_host)
-        margin_local = torch.zeros_like(margin_host)
-        gate_global = torch.zeros_like(margin_host)
-        gate_local = torch.zeros_like(margin_host)
+        margin_global_matrix = torch.zeros_like(host_margin_matrix)
+        margin_local_matrix = torch.zeros_like(host_margin_matrix)
+        gate_global_matrix = torch.zeros_like(host_margin_matrix)
+        gate_local_matrix = torch.zeros_like(host_margin_matrix)
         if self.hbr_use_global_local_decomposition and isinstance(host_pairwise_logits_global, torch.Tensor):
             if host_pairwise_logits_global.ndim == 2 and tuple(host_pairwise_logits_global.shape) == (batch_size, batch_size):
                 global_scores = host_pairwise_logits_global.detach().float()
-                margin_global = global_scores.diagonal().unsqueeze(1) - global_scores.gather(1, hard_indices)
-                gate_global = torch.sigmoid(
-                    (self.hbr_global_gate_margin - margin_global) / self.hbr_host_gate_temperature
+                margin_global_matrix = global_scores.diagonal().unsqueeze(1) - global_scores
+                gate_global_matrix = torch.sigmoid(
+                    (self.hbr_global_gate_margin - margin_global_matrix) / self.hbr_host_gate_temperature
                 ).detach()
         if self.hbr_use_global_local_decomposition and isinstance(host_pairwise_logits_local, torch.Tensor):
             if host_pairwise_logits_local.ndim == 2 and tuple(host_pairwise_logits_local.shape) == (batch_size, batch_size):
                 local_scores = host_pairwise_logits_local.detach().float()
-                margin_local = local_scores.diagonal().unsqueeze(1) - local_scores.gather(1, hard_indices)
-                gate_local = torch.sigmoid(
-                    (self.hbr_local_gate_margin - margin_local) / self.hbr_host_gate_temperature
+                margin_local_matrix = local_scores.diagonal().unsqueeze(1) - local_scores
+                gate_local_matrix = torch.sigmoid(
+                    (self.hbr_local_gate_margin - margin_local_matrix) / self.hbr_host_gate_temperature
                 ).detach()
 
         proto_signal_info = self._compute_proto_pair_signal(
             exact_text_embeddings=exact_text_embeddings,
             routing_weights=routing_weights,
             basis_bank=basis_bank,
-            hard_indices=hard_indices,
+            hard_indices=tail_indices,
             easy_mask=easy_mask,
         )
-        proto_signal = proto_signal_info['hard_signal']
-        proto_signal_available = (
-            self.hbr_use_prototype_pair_signal
-            and isinstance(routing_weights, torch.Tensor)
-            and isinstance(basis_bank, torch.Tensor)
-            and routing_weights.ndim == 2
-            and basis_bank.ndim == 3
-            and routing_weights.size(0) == batch_size
-            and basis_bank.size(0) == batch_size
-            and routing_weights.size(1) == basis_bank.size(1)
-            and basis_bank.size(-1) == exact_text_embeddings.size(-1)
+        proto_signal_available = bool(proto_signal_info.get('available', False))
+        proto_signal_matrix = (
+            proto_signal_info['pair_signal_matrix']
+            if proto_signal_available and isinstance(proto_signal_info.get('pair_signal_matrix'), torch.Tensor)
+            else torch.zeros_like(host_margin_matrix)
         )
-        if proto_signal_available:
-            proto_gate = torch.sigmoid(
-                (proto_signal - self.hbr_proto_signal_center) / self.hbr_proto_signal_temperature
-            )
-        else:
-            proto_gate = torch.ones_like(proto_signal)
-        if self.hbr_stopgrad_proto_signal:
-            proto_gate = proto_gate.detach()
+        proto_signal_for_weight = proto_signal_matrix
 
         mode = str(control_mode).lower()
-        if mode in {'none', 'proto_weight'}:
-            pass
-        elif mode == 'host_only_weight':
-            proto_gate = torch.ones_like(proto_gate)
-        elif mode == 'proto_weight_shuffled':
-            proto_gate = self._bucketized_shuffle(proto_gate, margin_host.detach())
-        elif mode == 'random_matched_weight':
-            flat = proto_gate.reshape(-1)
+        if mode == 'proto_weight_shuffled' and tail_mask.any():
+            shuffled_values = self._bucketized_shuffle(
+                proto_signal_for_weight.masked_select(tail_mask),
+                host_margin_matrix.detach().masked_select(tail_mask),
+            )
+            proto_signal_for_weight = proto_signal_for_weight.clone()
+            proto_signal_for_weight[tail_mask] = shuffled_values
+        elif mode == 'random_matched_weight' and tail_mask.any():
+            flat = proto_signal_for_weight.masked_select(tail_mask)
             if flat.numel() > 1:
                 permutation = torch.randperm(flat.numel(), device=flat.device)
-                proto_gate = flat[permutation].reshape_as(proto_gate)
-        elif mode == 'proto_adaptive_margin':
-            pass
+                proto_signal_for_weight = proto_signal_for_weight.clone()
+                proto_signal_for_weight[tail_mask] = flat[permutation]
+
+        inner_weight_mode = self.hbr_inner_tail_weight_mode
+        if mode == 'host_only_weight':
+            inner_weight_mode = 'uniform'
+        if not proto_signal_available and inner_weight_mode != 'uniform':
+            inner_weight_mode = 'uniform'
+
+        proto_gate_matrix = torch.ones_like(host_margin_matrix)
+        if inner_weight_mode == 'sigmoid_proto':
+            proto_gate_matrix = torch.sigmoid(
+                (proto_signal_for_weight - self.hbr_proto_inner_center) / self.hbr_proto_inner_tau
+            )
+        elif inner_weight_mode == 'softmax_proto':
+            normalized_scores = proto_signal_for_weight / self.hbr_proto_inner_tau
+            normalized_scores = normalized_scores.masked_fill(~tail_mask, float('-inf'))
+            proto_gate_matrix = torch.zeros_like(normalized_scores)
+            valid_rows = tail_mask.any(dim=1)
+            if valid_rows.any():
+                proto_gate_matrix[valid_rows] = F.softmax(normalized_scores[valid_rows], dim=1)
+        elif inner_weight_mode == 'uniform':
+            proto_gate_matrix = torch.ones_like(host_margin_matrix)
         else:
-            proto_gate = torch.ones_like(proto_gate)
+            raise ValueError(
+                f'Unsupported hbr_inner_tail_weight_mode={inner_weight_mode!r}. '
+                'Allowed values: ["uniform", "sigmoid_proto", "softmax_proto"].'
+            )
 
-        pair_weight = gate_host * (
-            1.0
-            + self.hbr_global_gate_weight * gate_global
-            + self.hbr_local_gate_weight * gate_local
-        ) * proto_gate
-        target_margin = margin_host.new_full(margin_host.shape, self.hbr_base_margin)
+        if self.hbr_stopgrad_proto_signal:
+            proto_gate_matrix = proto_gate_matrix.detach()
+
+        pair_weight = tail_mask.float() * proto_gate_matrix
+        outside_tail_weight = pair_weight.masked_select(~tail_mask)
+        if outside_tail_weight.numel() > 0 and outside_tail_weight.abs().max().item() > 1e-6:
+            raise AssertionError('HBR invariant violated: pairs outside host tail received non-zero omega.')
+
+        if inner_weight_mode == 'uniform':
+            valid_rows = tail_mask.any(dim=1)
+            for row_index in torch.nonzero(valid_rows, as_tuple=False).reshape(-1).tolist():
+                row_weights = pair_weight[row_index].masked_select(tail_mask[row_index])
+                if row_weights.numel() > 1 and (row_weights.max() - row_weights.min()).abs().item() > 1e-6:
+                    raise AssertionError('HBR invariant violated: uniform tail mode produced non-uniform in-tail weights.')
+
+        if inner_weight_mode == 'softmax_proto':
+            valid_rows = tail_mask.any(dim=1)
+            if valid_rows.any():
+                row_sums = pair_weight.sum(dim=1)
+                max_deviation = (row_sums[valid_rows] - 1.0).abs().max().item()
+                if max_deviation > 1e-5:
+                    raise AssertionError('HBR invariant violated: softmax tail weights do not sum to 1 per anchor.')
+
+        adaptive_margin_enabled = bool(self.hbr_adaptive_margin_enabled)
+        adaptive_margin_lambda = float(self.hbr_adaptive_margin_lambda)
         if mode == 'proto_adaptive_margin' and abs(self.hbr_proto_adaptive_margin_weight) > 0.0:
-            adaptive = proto_signal.detach() if self.hbr_stopgrad_proto_signal else proto_signal
-            target_margin = target_margin + self.hbr_proto_adaptive_margin_weight * adaptive
-        hinge = F.relu(target_margin - margin_host)
-        loss = (pair_weight * hinge).sum() / float(batch_size)
+            adaptive_margin_enabled = True
+            if adaptive_margin_lambda == 0.0:
+                adaptive_margin_lambda = float(self.hbr_proto_adaptive_margin_weight)
 
-        hard_margins_flat = margin_host.detach().reshape(-1)
+        target_margin = host_margin_matrix.new_full(host_margin_matrix.shape, self.hbr_base_margin)
+        if adaptive_margin_enabled and proto_signal_available and abs(adaptive_margin_lambda) > 0.0:
+            adaptive_signal = proto_signal_matrix.detach() if self.hbr_stopgrad_proto_signal else proto_signal_matrix
+            target_margin = target_margin + adaptive_margin_lambda * adaptive_signal
+        if not adaptive_margin_enabled:
+            if not torch.allclose(
+                target_margin,
+                host_margin_matrix.new_full(host_margin_matrix.shape, self.hbr_base_margin),
+                atol=1e-7,
+                rtol=0.0,
+            ):
+                raise AssertionError('HBR invariant violated: adaptive margin is disabled but target margin changed.')
+
+        hinge = F.relu(target_margin - host_margin_matrix)
+        weighted_hinge = pair_weight * hinge
+        loss = weighted_hinge.sum() / float(batch_size)
+
         quantiles = self._quantiles(
             hard_margins_flat,
-            torch.tensor([0.1, 0.5, 0.9], device=margin_host.device, dtype=margin_host.dtype),
+            torch.tensor([0.1, 0.5, 0.9], device=host_margin_matrix.device, dtype=host_margin_matrix.dtype),
             zero.detach(),
         )
-        active_mask = pair_weight.detach() > 1e-6
-        num_hard_pairs = float(batch_size * hard_k)
-        num_active_pairs = active_mask.float().sum().detach()
+        tail_omega = pair_weight.detach().masked_select(tail_mask)
+        active_tail_mask = tail_omega > 1e-6
+        num_hard_pairs_tensor = tail_mask.float().sum().detach()
+        num_hard_pairs = float(num_hard_pairs_tensor.item())
+        num_active_pairs = active_tail_mask.float().sum().detach()
         routing_entropy = None
         routing_top1_top2_gap = None
         if isinstance(routing_weights, torch.Tensor) and routing_weights.ndim == 2 and routing_weights.size(0) == batch_size and routing_weights.size(1) > 0:
@@ -730,69 +851,188 @@ class PrototypeLosses(nn.Module):
             top_vals = torch.topk(alpha, k=min(2, alpha.size(1)), dim=-1).values
             routing_top1_top2_gap = top_vals[:, 0] - (top_vals[:, 1] if top_vals.size(1) > 1 else torch.zeros_like(top_vals[:, 0]))
         if routing_entropy is None:
-            routing_entropy = margin_host.new_zeros((batch_size,))
+            routing_entropy = host_margin_matrix.new_zeros((batch_size,))
         if routing_top1_top2_gap is None:
-            routing_top1_top2_gap = margin_host.new_zeros((batch_size,))
+            routing_top1_top2_gap = host_margin_matrix.new_zeros((batch_size,))
 
-        anchor_indices = torch.arange(batch_size, device=margin_host.device, dtype=torch.long).unsqueeze(1).expand(-1, hard_k)
-        rank_position = torch.arange(1, hard_k + 1, device=margin_host.device, dtype=torch.long).unsqueeze(0).expand(batch_size, -1)
-        export = {
-            'anchor_index': anchor_indices.reshape(-1).detach(),
-            'negative_index': hard_indices.reshape(-1).detach(),
-            'rank_position': rank_position.reshape(-1).detach(),
-            's_pos_host': pos_scores.expand(-1, hard_k).reshape(-1).detach(),
-            's_neg_host': neg_scores.reshape(-1).detach(),
-            'margin_host': margin_host.reshape(-1).detach(),
-            'margin_global': margin_global.reshape(-1).detach(),
-            'margin_local': margin_local.reshape(-1).detach(),
-            'gate_host': gate_host.reshape(-1).detach(),
-            'gate_global': gate_global.reshape(-1).detach(),
-            'gate_local': gate_local.reshape(-1).detach(),
-            'proto_pair_signal': proto_signal.reshape(-1).detach(),
-            'proto_gate': proto_gate.reshape(-1).detach(),
-            'omega': pair_weight.reshape(-1).detach(),
-            'routing_entropy': routing_entropy.unsqueeze(1).expand(-1, hard_k).reshape(-1).detach(),
-            'routing_top1_top2_gap': routing_top1_top2_gap.unsqueeze(1).expand(-1, hard_k).reshape(-1).detach(),
-        }
+        host_margin_tail_q10 = (
+            torch.quantile(hard_margins_flat, q=0.1).detach()
+            if hard_margins_flat.numel() > 0
+            else zero.detach()
+        )
+        hardest_tail = (
+            hard_margins_flat[hard_margins_flat <= host_margin_tail_q10]
+            if hard_margins_flat.numel() > 0
+            else hard_margins_flat
+        )
+        hardest_tail_margin_mean = (
+            hardest_tail.mean().detach()
+            if isinstance(hardest_tail, torch.Tensor) and hardest_tail.numel() > 0
+            else zero.detach()
+        )
+        hardest_tail_margin_p10 = (
+            torch.quantile(hardest_tail, q=0.1).detach()
+            if isinstance(hardest_tail, torch.Tensor) and hardest_tail.numel() > 0
+            else zero.detach()
+        )
+
+        proto_signal_tail = proto_signal_matrix.detach().masked_select(tail_mask)
+        if proto_signal_tail.numel() > 0:
+            proto_signal_mean_in_tail = proto_signal_tail.mean().detach()
+            proto_signal_std_in_tail = proto_signal_tail.std(unbiased=False).detach()
+            proto_signal_vs_host_margin_corr_in_tail = self._pairwise_correlation(
+                proto_signal_tail,
+                hard_margins_flat,
+            ).detach()
+        else:
+            proto_signal_mean_in_tail = zero.detach()
+            proto_signal_std_in_tail = zero.detach()
+            proto_signal_vs_host_margin_corr_in_tail = zero.detach()
+
+        if tail_omega.numel() > 0:
+            omega_mean_in_tail = tail_omega.mean().detach()
+            omega_max_in_tail = tail_omega.max().detach()
+            nonzero_omega_fraction = active_tail_mask.float().mean().detach()
+        else:
+            omega_mean_in_tail = zero.detach()
+            omega_max_in_tail = zero.detach()
+            nonzero_omega_fraction = zero.detach()
+
+        entropy_values = []
+        for row_index in range(batch_size):
+            row_tail = tail_mask[row_index]
+            if not bool(row_tail.any()):
+                continue
+            row_weights = pair_weight[row_index].detach().masked_select(row_tail)
+            row_weight_sum = row_weights.sum()
+            if row_weight_sum <= 1e-12:
+                entropy_values.append(zero.detach())
+                continue
+            probs = row_weights / row_weight_sum
+            entropy_values.append((-(probs * probs.clamp_min(1e-12).log()).sum()).detach())
+        if entropy_values:
+            omega_entropy_in_tail = torch.stack(entropy_values).mean().detach()
+        else:
+            omega_entropy_in_tail = zero.detach()
+
+        overlap_values = []
+        in_tail_values = []
+        for row_index in range(batch_size):
+            row_offdiag_mask = offdiag_mask[row_index]
+            row_offdiag_indices = torch.nonzero(row_offdiag_mask, as_tuple=False).squeeze(1)
+            if row_offdiag_indices.numel() <= 0:
+                continue
+            row_tail_count = int(tail_mask[row_index].sum().item())
+            if row_tail_count <= 0:
+                continue
+            k_metric = min(tail_bottomk, row_tail_count, row_offdiag_indices.numel())
+            if k_metric <= 0:
+                continue
+            row_weights = pair_weight[row_index, row_offdiag_indices].detach()
+            row_margins = host_margin_matrix[row_index, row_offdiag_indices].detach()
+            top_weight_pos = torch.topk(row_weights, k=k_metric, largest=True).indices
+            bottom_margin_pos = torch.topk(row_margins, k=k_metric, largest=False).indices
+            top_weight_indices = row_offdiag_indices[top_weight_pos]
+            bottom_margin_indices = row_offdiag_indices[bottom_margin_pos]
+            top_weight_set = set(int(item) for item in top_weight_indices.cpu().tolist())
+            bottom_margin_set = set(int(item) for item in bottom_margin_indices.cpu().tolist())
+            overlap_count = float(len(top_weight_set & bottom_margin_set))
+            overlap_values.append(host_margin_matrix.new_tensor(overlap_count / float(k_metric)).detach())
+            top_in_tail = tail_mask[row_index, top_weight_indices].float().mean().detach()
+            in_tail_values.append(top_in_tail)
+
+        if overlap_values:
+            top_weight_overlap_with_bottom_host_margin = torch.stack(overlap_values).mean().detach()
+            top_weight_in_host_tail_fraction = torch.stack(in_tail_values).mean().detach()
+        else:
+            top_weight_overlap_with_bottom_host_margin = zero.detach()
+            top_weight_in_host_tail_fraction = zero.detach()
+
+        active_pair_mask_matrix = tail_mask & (pair_weight.detach() > 1e-6)
+        active_losses = weighted_hinge.detach().masked_select(active_pair_mask_matrix)
+        hbr_loss_active_mean = active_losses.mean().detach() if active_losses.numel() > 0 else zero.detach()
+
+        tail_pair_indices = torch.nonzero(tail_mask, as_tuple=False)
+        if tail_pair_indices.numel() > 0:
+            anchor_indices = tail_pair_indices[:, 0]
+            negative_indices = tail_pair_indices[:, 1]
+            export = {
+                'anchor_index': anchor_indices.detach(),
+                'negative_index': negative_indices.detach(),
+                'rank_position': rank_position_matrix[anchor_indices, negative_indices].detach(),
+                's_pos_host': host_scores.diagonal().index_select(0, anchor_indices).detach(),
+                's_neg_host': host_scores[anchor_indices, negative_indices].detach(),
+                'margin_host': host_margin_matrix[anchor_indices, negative_indices].detach(),
+                'margin_global': margin_global_matrix[anchor_indices, negative_indices].detach(),
+                'margin_local': margin_local_matrix[anchor_indices, negative_indices].detach(),
+                'gate_host': gate_host_matrix[anchor_indices, negative_indices].detach(),
+                'gate_global': gate_global_matrix[anchor_indices, negative_indices].detach(),
+                'gate_local': gate_local_matrix[anchor_indices, negative_indices].detach(),
+                'proto_pair_signal': proto_signal_matrix[anchor_indices, negative_indices].detach(),
+                'proto_gate': proto_gate_matrix[anchor_indices, negative_indices].detach(),
+                'omega': pair_weight[anchor_indices, negative_indices].detach(),
+                'routing_entropy': routing_entropy.index_select(0, anchor_indices).detach(),
+                'routing_top1_top2_gap': routing_top1_top2_gap.index_select(0, anchor_indices).detach(),
+                'host_tail_selected': torch.ones(anchor_indices.shape[0], device=anchor_indices.device, dtype=host_scores.dtype).detach(),
+            }
+        else:
+            export = default_export
 
         outputs.update(
             {
                 'loss': loss,
-                'num_hard_pairs': margin_host.new_tensor(num_hard_pairs).detach(),
+                'loss_weighted': loss,
+                'num_hard_pairs': num_hard_pairs_tensor,
                 'num_active_pairs': num_active_pairs,
                 'active_ratio': (num_active_pairs / max(num_hard_pairs, 1.0)).detach(),
-                'omega_mean': pair_weight.detach().mean(),
-                'omega_std': pair_weight.detach().std(unbiased=False),
-                'omega_max': pair_weight.detach().max(),
-                'host_margin_hard_mean': hard_margins_flat.mean(),
-                'host_margin_hard_min': hard_margins_flat.min(),
+                'omega_mean': omega_mean_in_tail,
+                'omega_std': tail_omega.std(unbiased=False).detach() if tail_omega.numel() > 0 else zero.detach(),
+                'omega_max': omega_max_in_tail,
+                'host_margin_hard_mean': hard_margins_flat.mean().detach() if hard_margins_flat.numel() > 0 else zero.detach(),
+                'host_margin_hard_min': hard_margins_flat.min().detach() if hard_margins_flat.numel() > 0 else zero.detach(),
                 'host_margin_hard_p10': quantiles[0],
                 'host_margin_hard_p50': quantiles[1],
                 'host_margin_hard_p90': quantiles[2],
                 'host_margin_easy_mean': easy_margins.mean().detach() if easy_margins.numel() > 0 else zero.detach(),
-                'host_margin_global_hard_mean': margin_global.mean().detach(),
-                'host_margin_local_hard_mean': margin_local.mean().detach(),
-                'host_global_gate_mean': gate_global.mean().detach(),
-                'host_local_gate_mean': gate_local.mean().detach(),
+                'host_margin_global_hard_mean': margin_global_matrix.detach().masked_select(tail_mask).mean().detach() if tail_mask.any() else zero.detach(),
+                'host_margin_local_hard_mean': margin_local_matrix.detach().masked_select(tail_mask).mean().detach() if tail_mask.any() else zero.detach(),
+                'host_global_gate_mean': gate_global_matrix.detach().masked_select(tail_mask).mean().detach() if tail_mask.any() else zero.detach(),
+                'host_local_gate_mean': gate_local_matrix.detach().masked_select(tail_mask).mean().detach() if tail_mask.any() else zero.detach(),
                 'proto_pair_signal_mean': proto_signal_info['mean'],
                 'proto_pair_signal_std': proto_signal_info['std'],
                 'proto_pair_signal_max': proto_signal_info['max'],
-                'proto_pair_signal_hard_mean': proto_signal_info['hard_mean'],
+                'proto_pair_signal_hard_mean': proto_signal_mean_in_tail,
                 'proto_pair_signal_easy_mean': proto_signal_info['easy_mean'],
-                'proto_gate_mean': proto_gate.detach().mean(),
-                'proto_gate_active_ratio': (proto_gate.detach() > 0.5).float().mean(),
+                'proto_gate_mean': proto_gate_matrix.detach().masked_select(tail_mask).mean().detach() if tail_mask.any() else zero.detach(),
+                'proto_gate_active_ratio': (proto_gate_matrix.detach().masked_select(tail_mask) > 0.5).float().mean().detach() if tail_mask.any() else zero.detach(),
                 'proto_signal_vs_host_margin_corr': self._pairwise_correlation(
-                    proto_signal.detach(),
-                    margin_host.detach(),
+                    proto_signal_tail,
+                    hard_margins_flat,
                 ).detach(),
                 'proto_signal_vs_global_margin_corr': self._pairwise_correlation(
-                    proto_signal.detach(),
-                    margin_global.detach(),
+                    proto_signal_matrix.detach().masked_select(tail_mask),
+                    margin_global_matrix.detach().masked_select(tail_mask),
                 ).detach(),
                 'proto_signal_vs_local_margin_corr': self._pairwise_correlation(
-                    proto_signal.detach(),
-                    margin_local.detach(),
+                    proto_signal_matrix.detach().masked_select(tail_mask),
+                    margin_local_matrix.detach().masked_select(tail_mask),
                 ).detach(),
+                'host_tail_size_mean': tail_mask.float().sum(dim=1).mean().detach(),
+                'host_tail_margin_mean': hard_margins_flat.mean().detach() if hard_margins_flat.numel() > 0 else zero.detach(),
+                'host_tail_margin_p10': host_margin_tail_q10,
+                'top_weight_overlap_with_bottom_host_margin': top_weight_overlap_with_bottom_host_margin,
+                'top_weight_in_host_tail_fraction': top_weight_in_host_tail_fraction,
+                'proto_signal_vs_host_margin_corr_in_tail': proto_signal_vs_host_margin_corr_in_tail,
+                'proto_signal_mean_in_tail': proto_signal_mean_in_tail,
+                'proto_signal_std_in_tail': proto_signal_std_in_tail,
+                'omega_mean_in_tail': omega_mean_in_tail,
+                'omega_max_in_tail': omega_max_in_tail,
+                'omega_entropy_in_tail': omega_entropy_in_tail,
+                'nonzero_omega_fraction': nonzero_omega_fraction,
+                'active_pairs_per_anchor': (num_active_pairs / float(batch_size)).detach(),
+                'hardest_tail_margin_mean': hardest_tail_margin_mean,
+                'hardest_tail_margin_p10': hardest_tail_margin_p10,
+                'hbr_loss_active_mean': hbr_loss_active_mean,
                 'pairwise_export': export,
             }
         )
@@ -1570,6 +1810,22 @@ class PrototypeLosses(nn.Module):
                 'proto_signal_vs_host_margin_corr': hbr_info['proto_signal_vs_host_margin_corr'],
                 'proto_signal_vs_global_margin_corr': hbr_info['proto_signal_vs_global_margin_corr'],
                 'proto_signal_vs_local_margin_corr': hbr_info['proto_signal_vs_local_margin_corr'],
+                'hbr_host_tail_size_mean': hbr_info['host_tail_size_mean'],
+                'hbr_host_tail_margin_mean': hbr_info['host_tail_margin_mean'],
+                'hbr_host_tail_margin_p10': hbr_info['host_tail_margin_p10'],
+                'hbr_top_weight_overlap_with_bottom_host_margin': hbr_info['top_weight_overlap_with_bottom_host_margin'],
+                'hbr_top_weight_in_host_tail_fraction': hbr_info['top_weight_in_host_tail_fraction'],
+                'hbr_proto_signal_vs_host_margin_corr_in_tail': hbr_info['proto_signal_vs_host_margin_corr_in_tail'],
+                'hbr_proto_signal_mean_in_tail': hbr_info['proto_signal_mean_in_tail'],
+                'hbr_proto_signal_std_in_tail': hbr_info['proto_signal_std_in_tail'],
+                'hbr_omega_mean_in_tail': hbr_info['omega_mean_in_tail'],
+                'hbr_omega_max_in_tail': hbr_info['omega_max_in_tail'],
+                'hbr_omega_entropy_in_tail': hbr_info['omega_entropy_in_tail'],
+                'hbr_nonzero_omega_fraction': hbr_info['nonzero_omega_fraction'],
+                'hbr_active_pairs_per_anchor': hbr_info['active_pairs_per_anchor'],
+                'hbr_hardest_tail_margin_mean': hbr_info['hardest_tail_margin_mean'],
+                'hbr_hardest_tail_margin_p10': hbr_info['hardest_tail_margin_p10'],
+                'hbr_hbr_loss_active_mean': hbr_info['hbr_loss_active_mean'],
                 'semantic_assignment_entropy_image': semantic_info['assignment_entropy_image'],
                 'semantic_assignment_entropy_teacher': semantic_info['assignment_entropy_teacher'],
                 'semantic_target_entropy': semantic_info['target_entropy'],

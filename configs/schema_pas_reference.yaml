@@ -157,6 +157,14 @@ objectives:
 
 hbr:
   topk_hard_negatives: 5
+  tail_selection_mode: bottomk
+  tail_bottomk: 5
+  tail_margin_threshold:
+  inner_tail_weight_mode: uniform
+  proto_inner_tau: 0.1
+  proto_inner_center: 0.0
+  adaptive_margin_enabled: false
+  adaptive_margin_lambda: 0.0
   base_margin: 0.1
   host_gate_margin: 0.1
   host_gate_temperature: 0.1

@@ -177,6 +177,19 @@ def build_parser():
         choices=['none', 'host_only_weight', 'proto_weight', 'proto_weight_shuffled', 'random_matched_weight', 'proto_adaptive_margin'],
     )
     parser.add_argument('--hbr_proto_adaptive_margin_weight', type=float, default=0.0)
+    parser.add_argument('--hbr_tail_selection_mode', type=str, default='bottomk', choices=['bottomk', 'threshold'])
+    parser.add_argument('--hbr_tail_bottomk', type=int, default=5)
+    parser.add_argument('--hbr_tail_margin_threshold', type=float, default=None)
+    parser.add_argument(
+        '--hbr_inner_tail_weight_mode',
+        type=str,
+        default='uniform',
+        choices=['uniform', 'sigmoid_proto', 'softmax_proto'],
+    )
+    parser.add_argument('--hbr_proto_inner_tau', type=float, default=0.1)
+    parser.add_argument('--hbr_proto_inner_center', type=float, default=0.0)
+    parser.add_argument('--hbr_adaptive_margin_enabled', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--hbr_adaptive_margin_lambda', type=float, default=0.0)
     parser.add_argument('--img_size', type=int, nargs=2, default=(384, 128))
     parser.add_argument('--stride_size', type=int, default=16)
     parser.add_argument('--text_length', type=int, default=77)
@@ -659,6 +672,18 @@ def _finalize_args(args):
     args.hbr_stopgrad_proto_signal = bool(getattr(args, 'hbr_stopgrad_proto_signal', True))
     args.hbr_control_mode = str(getattr(args, 'hbr_control_mode', 'none')).lower()
     args.hbr_proto_adaptive_margin_weight = float(getattr(args, 'hbr_proto_adaptive_margin_weight', 0.0))
+    args.hbr_tail_selection_mode = str(getattr(args, 'hbr_tail_selection_mode', 'bottomk')).lower()
+    args.hbr_tail_bottomk = int(getattr(args, 'hbr_tail_bottomk', args.hbr_topk_hard_negatives))
+    tail_margin_threshold = getattr(args, 'hbr_tail_margin_threshold', None)
+    if tail_margin_threshold in ('', None):
+        args.hbr_tail_margin_threshold = None
+    else:
+        args.hbr_tail_margin_threshold = float(tail_margin_threshold)
+    args.hbr_inner_tail_weight_mode = str(getattr(args, 'hbr_inner_tail_weight_mode', 'uniform')).lower()
+    args.hbr_proto_inner_tau = float(getattr(args, 'hbr_proto_inner_tau', args.hbr_proto_signal_temperature))
+    args.hbr_proto_inner_center = float(getattr(args, 'hbr_proto_inner_center', args.hbr_proto_signal_center))
+    args.hbr_adaptive_margin_enabled = bool(getattr(args, 'hbr_adaptive_margin_enabled', False))
+    args.hbr_adaptive_margin_lambda = float(getattr(args, 'hbr_adaptive_margin_lambda', 0.0))
     args.export_pairwise_hard_samples = bool(getattr(args, 'export_pairwise_hard_samples', False))
     args.pairwise_export_max_rows_per_epoch = max(int(getattr(args, 'pairwise_export_max_rows_per_epoch', 2000)), 0)
     args.track_proto_contribution_metrics = bool(getattr(args, 'track_proto_contribution_metrics', True))

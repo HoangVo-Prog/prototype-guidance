@@ -102,6 +102,18 @@ def build_prototype_head(
     hbr_stopgrad_proto_signal = bool(getattr(args, 'hbr_stopgrad_proto_signal', True))
     hbr_control_mode = str(getattr(args, 'hbr_control_mode', 'none')).lower()
     hbr_proto_adaptive_margin_weight = float(getattr(args, 'hbr_proto_adaptive_margin_weight', 0.0))
+    hbr_tail_selection_mode = str(getattr(args, 'hbr_tail_selection_mode', 'bottomk')).lower()
+    hbr_tail_bottomk = int(getattr(args, 'hbr_tail_bottomk', hbr_topk_hard_negatives))
+    hbr_tail_margin_threshold = getattr(args, 'hbr_tail_margin_threshold', None)
+    if hbr_tail_margin_threshold in ('', None):
+        hbr_tail_margin_threshold = None
+    else:
+        hbr_tail_margin_threshold = float(hbr_tail_margin_threshold)
+    hbr_inner_tail_weight_mode = str(getattr(args, 'hbr_inner_tail_weight_mode', 'uniform')).lower()
+    hbr_proto_inner_tau = float(getattr(args, 'hbr_proto_inner_tau', hbr_proto_signal_temperature))
+    hbr_proto_inner_center = float(getattr(args, 'hbr_proto_inner_center', hbr_proto_signal_center))
+    hbr_adaptive_margin_enabled = bool(getattr(args, 'hbr_adaptive_margin_enabled', False))
+    hbr_adaptive_margin_lambda = float(getattr(args, 'hbr_adaptive_margin_lambda', 0.0))
 
     common_kwargs = dict(
         input_dim=input_dim,
@@ -154,6 +166,14 @@ def build_prototype_head(
         hbr_stopgrad_proto_signal=hbr_stopgrad_proto_signal,
         hbr_control_mode=hbr_control_mode,
         hbr_proto_adaptive_margin_weight=hbr_proto_adaptive_margin_weight,
+        hbr_tail_selection_mode=hbr_tail_selection_mode,
+        hbr_tail_bottomk=hbr_tail_bottomk,
+        hbr_tail_margin_threshold=hbr_tail_margin_threshold,
+        hbr_inner_tail_weight_mode=hbr_inner_tail_weight_mode,
+        hbr_proto_inner_tau=hbr_proto_inner_tau,
+        hbr_proto_inner_center=hbr_proto_inner_center,
+        hbr_adaptive_margin_enabled=hbr_adaptive_margin_enabled,
+        hbr_adaptive_margin_lambda=hbr_adaptive_margin_lambda,
         prototype_method_role=prototype_method_role,
         prototype_semantic_enabled=prototype_semantic_enabled,
         semantic_structure_enabled=semantic_structure_enabled,
@@ -283,6 +303,14 @@ def build_prototype_head(
         hbr_stopgrad_proto_signal=hbr_stopgrad_proto_signal,
         hbr_control_mode=hbr_control_mode,
         hbr_proto_adaptive_margin_weight=hbr_proto_adaptive_margin_weight,
+        hbr_tail_selection_mode=hbr_tail_selection_mode,
+        hbr_tail_bottomk=hbr_tail_bottomk,
+        hbr_tail_margin_threshold=hbr_tail_margin_threshold,
+        hbr_inner_tail_weight_mode=hbr_inner_tail_weight_mode,
+        hbr_proto_inner_tau=hbr_proto_inner_tau,
+        hbr_proto_inner_center=hbr_proto_inner_center,
+        hbr_adaptive_margin_enabled=hbr_adaptive_margin_enabled,
+        hbr_adaptive_margin_lambda=hbr_adaptive_margin_lambda,
         use_diversity_loss=getattr(args, 'use_diversity_loss', True),
         diversity_loss_weight=diversity_loss_weight,
         use_balance_loss=use_balancing_loss,

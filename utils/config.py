@@ -155,6 +155,14 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('hbr', 'stopgrad_proto_signal'): 'hbr_stopgrad_proto_signal',
     ('hbr', 'control_mode'): 'hbr_control_mode',
     ('hbr', 'proto_adaptive_margin_weight'): 'hbr_proto_adaptive_margin_weight',
+    ('hbr', 'tail_selection_mode'): 'hbr_tail_selection_mode',
+    ('hbr', 'tail_bottomk'): 'hbr_tail_bottomk',
+    ('hbr', 'tail_margin_threshold'): 'hbr_tail_margin_threshold',
+    ('hbr', 'inner_tail_weight_mode'): 'hbr_inner_tail_weight_mode',
+    ('hbr', 'proto_inner_tau'): 'hbr_proto_inner_tau',
+    ('hbr', 'proto_inner_center'): 'hbr_proto_inner_center',
+    ('hbr', 'adaptive_margin_enabled'): 'hbr_adaptive_margin_enabled',
+    ('hbr', 'adaptive_margin_lambda'): 'hbr_adaptive_margin_lambda',
     ('objectives', 'objectives', 'use_hbr'): 'use_hbr',
     ('objectives', 'lambda', 'hbr'): 'lambda_hbr',
 
@@ -173,6 +181,14 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('hbr', 'stopgrad_proto_signal'): 'hbr_stopgrad_proto_signal',
     ('hbr', 'control_mode'): 'hbr_control_mode',
     ('hbr', 'proto_adaptive_margin_weight'): 'hbr_proto_adaptive_margin_weight',
+    ('hbr', 'tail_selection_mode'): 'hbr_tail_selection_mode',
+    ('hbr', 'tail_bottomk'): 'hbr_tail_bottomk',
+    ('hbr', 'tail_margin_threshold'): 'hbr_tail_margin_threshold',
+    ('hbr', 'inner_tail_weight_mode'): 'hbr_inner_tail_weight_mode',
+    ('hbr', 'proto_inner_tau'): 'hbr_proto_inner_tau',
+    ('hbr', 'proto_inner_center'): 'hbr_proto_inner_center',
+    ('hbr', 'adaptive_margin_enabled'): 'hbr_adaptive_margin_enabled',
+    ('hbr', 'adaptive_margin_lambda'): 'hbr_adaptive_margin_lambda',
 
     ('text_pooling', 'token_policy'): 'token_policy',
     ('text_pooling', 'scoring_type'): 'token_scoring_type',
@@ -1023,6 +1039,15 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     hbr_host_gate_temperature = float(flat.get('hbr_host_gate_temperature', 0.1))
     hbr_proto_signal_temperature = float(flat.get('hbr_proto_signal_temperature', 0.1))
     hbr_control_mode = str(flat.get('hbr_control_mode', 'none')).lower()
+    hbr_tail_selection_mode = str(flat.get('hbr_tail_selection_mode', 'bottomk')).lower()
+    hbr_tail_bottomk = int(flat.get('hbr_tail_bottomk', hbr_topk_hard_negatives))
+    hbr_tail_margin_threshold = flat.get('hbr_tail_margin_threshold', None)
+    if hbr_tail_margin_threshold not in (None, ''):
+        hbr_tail_margin_threshold = float(hbr_tail_margin_threshold)
+    else:
+        hbr_tail_margin_threshold = None
+    hbr_inner_tail_weight_mode = str(flat.get('hbr_inner_tail_weight_mode', 'uniform')).lower()
+    hbr_proto_inner_tau = float(flat.get('hbr_proto_inner_tau', hbr_proto_signal_temperature))
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -1075,6 +1100,19 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         raise ValueError('hbr.host_gate_temperature must be positive.')
     if hbr_proto_signal_temperature <= 0.0:
         raise ValueError('hbr.proto_signal_temperature must be positive.')
+    if hbr_tail_selection_mode not in {'bottomk', 'threshold'}:
+        raise ValueError('hbr.tail_selection_mode must be one of ["bottomk", "threshold"].')
+    if hbr_tail_bottomk <= 0:
+        raise ValueError('hbr.tail_bottomk must be a positive integer.')
+    if hbr_tail_selection_mode == 'threshold' and hbr_tail_margin_threshold is None:
+        raise ValueError('hbr.tail_margin_threshold must be set when hbr.tail_selection_mode="threshold".')
+    if hbr_inner_tail_weight_mode not in {'uniform', 'sigmoid_proto', 'softmax_proto'}:
+        raise ValueError(
+            'hbr.inner_tail_weight_mode must be one of '
+            '["uniform", "sigmoid_proto", "softmax_proto"].'
+        )
+    if hbr_proto_inner_tau <= 0.0:
+        raise ValueError('hbr.proto_inner_tau must be positive.')
     if hbr_control_mode not in {
         'none',
         'host_only_weight',
@@ -1199,6 +1237,15 @@ def validate_runtime_args_namespace(args) -> None:
     hbr_host_gate_temperature = float(getattr(args, 'hbr_host_gate_temperature', 0.1))
     hbr_proto_signal_temperature = float(getattr(args, 'hbr_proto_signal_temperature', 0.1))
     hbr_control_mode = str(getattr(args, 'hbr_control_mode', 'none')).lower()
+    hbr_tail_selection_mode = str(getattr(args, 'hbr_tail_selection_mode', 'bottomk')).lower()
+    hbr_tail_bottomk = int(getattr(args, 'hbr_tail_bottomk', hbr_topk_hard_negatives))
+    hbr_tail_margin_threshold = getattr(args, 'hbr_tail_margin_threshold', None)
+    if hbr_tail_margin_threshold not in (None, ''):
+        hbr_tail_margin_threshold = float(hbr_tail_margin_threshold)
+    else:
+        hbr_tail_margin_threshold = None
+    hbr_inner_tail_weight_mode = str(getattr(args, 'hbr_inner_tail_weight_mode', 'uniform')).lower()
+    hbr_proto_inner_tau = float(getattr(args, 'hbr_proto_inner_tau', hbr_proto_signal_temperature))
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -1250,6 +1297,19 @@ def validate_runtime_args_namespace(args) -> None:
         raise ValueError('hbr_host_gate_temperature must be positive.')
     if hbr_proto_signal_temperature <= 0.0:
         raise ValueError('hbr_proto_signal_temperature must be positive.')
+    if hbr_tail_selection_mode not in {'bottomk', 'threshold'}:
+        raise ValueError('hbr_tail_selection_mode must be one of ["bottomk", "threshold"].')
+    if hbr_tail_bottomk <= 0:
+        raise ValueError('hbr_tail_bottomk must be a positive integer.')
+    if hbr_tail_selection_mode == 'threshold' and hbr_tail_margin_threshold is None:
+        raise ValueError('hbr_tail_margin_threshold must be set when hbr_tail_selection_mode="threshold".')
+    if hbr_inner_tail_weight_mode not in {'uniform', 'sigmoid_proto', 'softmax_proto'}:
+        raise ValueError(
+            'hbr_inner_tail_weight_mode must be one of '
+            '["uniform", "sigmoid_proto", "softmax_proto"].'
+        )
+    if hbr_proto_inner_tau <= 0.0:
+        raise ValueError('hbr_proto_inner_tau must be positive.')
     if hbr_control_mode not in {
         'none',
         'host_only_weight',

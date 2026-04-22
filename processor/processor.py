@@ -76,6 +76,7 @@ PAIRWISE_HARD_EXPORT_COLUMNS = (
     'proto_pair_signal',
     'proto_gate',
     'omega',
+    'host_tail_selected',
     'routing_entropy',
     'routing_top1_top2_gap',
     'diag_cos_full',
@@ -168,6 +169,7 @@ def _append_hbr_pairwise_rows(
         'proto_pair_signal',
         'proto_gate',
         'omega',
+        'host_tail_selected',
         'routing_entropy',
         'routing_top1_top2_gap',
     ):
@@ -220,6 +222,7 @@ def _append_hbr_pairwise_rows(
             'proto_pair_signal': _value_at('proto_pair_signal', selected_index),
             'proto_gate': _value_at('proto_gate', selected_index),
             'omega': _value_at('omega', selected_index),
+            'host_tail_selected': _value_at('host_tail_selected', selected_index, default=1.0),
             'routing_entropy': _value_at('routing_entropy', selected_index),
             'routing_top1_top2_gap': _value_at('routing_top1_top2_gap', selected_index),
             'diag_cos_full': float(diag_cos_full),
