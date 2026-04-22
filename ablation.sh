@@ -25,32 +25,48 @@ run_cmd() {
     echo "-----------------------------"
 }
 
-run_cmd \
-    python /home/vhoang/prototype-guidance/train.py \
-    --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
-    --lambda_semantic_pbt 20.0 \
-    --epochs 20 \
-    --lambda_semantic_hardneg_margin 100.0 \
-    --semantic_recompute_interval 2.0 \
-    --semantic_recompute_start_epoch 0 \
-    --semantic_loss_ramp_start_epoch 0
+BASE_CMD=(
+    python /home/vhoang/prototype-guidance/train.py
+    --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml
+    --epochs 20
+)
 
-run_cmd \
-    python /home/vhoang/prototype-guidance/train.py \
-    --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
-    --lambda_semantic_pbt 20.0 \
-    --epochs 20 \
-    --lambda_semantic_hardneg_margin 500.0 \
-    --semantic_recompute_interval 2.0 \
-    --semantic_recompute_start_epoch 0 \
-    --semantic_loss_ramp_start_epoch 0
+# 1) host_only_baseline
+run_cmd "${BASE_CMD[@]}" \
+    --runtime_mode host_only \
+    --use_hbr false \
+    --lambda_hbr 0.0
 
-run_cmd \
-    python /home/vhoang/prototype-guidance/train.py \
-    --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
-    --lambda_semantic_pbt 20.0 \
-    --epochs 20 \
-    --lambda_semantic_hardneg_margin 1000.0 \
-    --semantic_recompute_interval 2.0 \
-    --semantic_recompute_start_epoch 0 \
-    --semantic_loss_ramp_start_epoch 0
+# 2) host_plus_diag_only (no HBR)
+run_cmd "${BASE_CMD[@]}" \
+    --runtime_mode joint_training \
+    --use_hbr false \
+    --lambda_hbr 0.0
+
+# 3) full hbr_proto_weight
+run_cmd "${BASE_CMD[@]}" \
+    --runtime_mode joint_training \
+    --use_hbr true \
+    --lambda_hbr 1.0 \
+    --hbr_control_mode proto_weight
+
+# 4) hbr_host_only_weight
+run_cmd "${BASE_CMD[@]}" \
+    --runtime_mode joint_training \
+    --use_hbr true \
+    --lambda_hbr 1.0 \
+    --hbr_control_mode host_only_weight
+
+# 5) hbr_proto_weight_shuffled
+run_cmd "${BASE_CMD[@]}" \
+    --runtime_mode joint_training \
+    --use_hbr true \
+    --lambda_hbr 1.0 \
+    --hbr_control_mode proto_weight_shuffled
+
+# 6) hbr_random_matched_weight
+run_cmd "${BASE_CMD[@]}" \
+    --runtime_mode joint_training \
+    --use_hbr true \
+    --lambda_hbr 1.0 \
+    --hbr_control_mode random_matched_weight

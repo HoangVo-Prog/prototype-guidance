@@ -294,7 +294,7 @@ class Evaluator:
             raise FloatingPointError(f'{field_name} contains NaN or Inf values after evaluation.')
         return similarity.float().cpu()
 
-    def _compute_eval_debug_metrics(self, model, similarity, text_ids, image_ids, image_features):
+    def _compute_eval_debug_metrics(self, model, similarity, text_ids, image_ids, image_features, text_features):
         if not bool(getattr(self.args, 'log_debug_metrics', True)):
             return {}
         metrics = {}
@@ -306,13 +306,43 @@ class Evaluator:
         metrics['eval_positive_gallery_count_min'] = float(positive_counts.min().item())
         metrics['eval_positive_gallery_count_mean'] = float(positive_counts.float().mean().item())
 
-        first_positive = positive_mask.to(dtype=torch.int64).argmax(dim=1)
-        positive_scores = similarity.gather(1, first_positive.view(-1, 1)).squeeze(1)
-        negative_mask = ~positive_mask
-        hardest_negative = similarity.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+        valid_queries = positive_counts > 0
+        if not valid_queries.any():
+            metrics['eval_positive_exact_cosine_mean'] = 0.0
+            metrics['eval_hardest_negative_exact_cosine_mean'] = 0.0
+            metrics['eval_exact_margin_mean'] = 0.0
+            return build_validation_debug_metrics(metrics)
+
+        positive_mask_valid = positive_mask[valid_queries]
+        similarity_valid = similarity[valid_queries]
+        first_positive = positive_mask_valid.to(dtype=torch.int64).argmax(dim=1)
+        positive_scores = similarity_valid.gather(1, first_positive.view(-1, 1)).squeeze(1)
+        negative_mask = ~positive_mask_valid
+        hardest_negative = similarity_valid.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
         metrics['eval_positive_exact_cosine_mean'] = float(positive_scores.mean().item())
         metrics['eval_hardest_negative_exact_cosine_mean'] = float(hardest_negative.mean().item())
         metrics['eval_exact_margin_mean'] = float((positive_scores - hardest_negative).mean().item())
+
+        hard_topk = 1
+        hard_neg_indices = None
+        if bool(getattr(self.args, 'track_hard_pair_repair_metrics', True)):
+            hard_topk = max(int(getattr(self.args, 'hbr_topk_hard_negatives', 5)), 1)
+            hard_topk = min(hard_topk, max(int(similarity_valid.size(1)) - 1, 1))
+            neg_scores = similarity_valid.masked_fill(~negative_mask, float('-inf'))
+            hard_neg_scores, hard_neg_indices = neg_scores.topk(k=hard_topk, dim=1)
+            hard_margins = positive_scores.unsqueeze(1) - hard_neg_scores
+            hard_margins_flat = hard_margins.reshape(-1)
+            hard_quantiles = torch.quantile(
+                hard_margins_flat,
+                torch.tensor([0.1, 0.5, 0.9], dtype=hard_margins_flat.dtype),
+            )
+            metrics['eval_hard_pair_margin_eval_mean'] = float(hard_margins_flat.mean().item())
+            metrics['eval_hard_pair_margin_eval_p10'] = float(hard_quantiles[0].item())
+            metrics['eval_hard_pair_margin_eval_p50'] = float(hard_quantiles[1].item())
+            metrics['eval_hard_pair_margin_eval_p90'] = float(hard_quantiles[2].item())
+            metrics['eval_hard_pair_rank_error_rate'] = float((hard_margins[:, 0] < 0.0).float().mean().item())
+            metrics['eval_hard_pair_repair_rate'] = float((hard_margins[:, 0] > 0.0).float().mean().item())
+            metrics['eval_hard_pair_escape_rate_topk'] = float((hard_margins < 0.0).any(dim=1).float().mean().item())
 
         image_projected = None
         if isinstance(image_features, dict):
@@ -327,6 +357,35 @@ class Evaluator:
             retrieval_temperature = core_model.host_head.losses.get_retrieval_temperature().detach().float().cpu()
             metrics['eval_logit_scale'] = float(logit_scale.item())
             metrics['eval_retrieval_temperature'] = float(retrieval_temperature.item())
+
+        global_image = image_features.get('global_image_embedding') if isinstance(image_features, dict) else None
+        global_text = text_features.get('global_text_embedding') if isinstance(text_features, dict) else None
+        local_image = image_features.get('grab_image_embedding') if isinstance(image_features, dict) else None
+        local_text = text_features.get('grab_text_embedding') if isinstance(text_features, dict) else None
+        if (
+            isinstance(global_image, torch.Tensor)
+            and isinstance(global_text, torch.Tensor)
+            and hard_neg_indices is not None
+        ):
+            sims_global = self._normalize_similarity(global_text, global_image).float().cpu()
+            sims_global = sims_global[valid_queries]
+            global_margins = (
+                sims_global.gather(1, first_positive.view(-1, 1)).squeeze(1).unsqueeze(1)
+                - sims_global.gather(1, hard_neg_indices)
+            )
+            metrics['eval_margin_global_hard_mean'] = float(global_margins.mean().item())
+        if (
+            isinstance(local_image, torch.Tensor)
+            and isinstance(local_text, torch.Tensor)
+            and hard_neg_indices is not None
+        ):
+            sims_local = self._normalize_similarity(local_text, local_image).float().cpu()
+            sims_local = sims_local[valid_queries]
+            local_margins = (
+                sims_local.gather(1, first_positive.view(-1, 1)).squeeze(1).unsqueeze(1)
+                - sims_local.gather(1, hard_neg_indices)
+            )
+            metrics['eval_margin_local_hard_mean'] = float(local_margins.mean().item())
 
         return build_validation_debug_metrics(metrics)
 
@@ -369,7 +428,14 @@ class Evaluator:
 
         expected_shape = (int(text_ids.numel()), int(image_ids.numel()))
         similarity = self._check_similarity_matrix(similarity, expected_shape, field_name='Host retrieval similarity')
-        debug_metrics = self._compute_eval_debug_metrics(model, similarity, text_ids, image_ids, image_features)
+        debug_metrics = self._compute_eval_debug_metrics(
+            model,
+            similarity,
+            text_ids,
+            image_ids,
+            image_features,
+            text_features,
+        )
         return similarity, text_ids, image_ids, debug_metrics, image_features, text_features
 
     def _itself_ablation_active(self) -> bool:

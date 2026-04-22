@@ -27,6 +27,8 @@ class HostPluginInterface:
     special_token_positions: Dict[str, torch.Tensor]
     image_local_tokens: Optional[torch.Tensor] = None
     host_pairwise_logits: Optional[torch.Tensor] = None
+    host_pairwise_logits_global: Optional[torch.Tensor] = None
+    host_pairwise_logits_local: Optional[torch.Tensor] = None
     version: str = HOST_EXPORT_INTERFACE_VERSION
     metadata: Dict[str, object] = field(default_factory=dict)
 
@@ -51,13 +53,20 @@ class HostPluginInterface:
                 raise ValueError('HostPluginInterface.image_local_tokens must have shape [B, T, D] when provided.')
             if self.image_local_tokens.size(0) != self.image_embeddings.size(0):
                 raise ValueError('HostPluginInterface.image_local_tokens batch dimension must match image_embeddings.')
-        if self.host_pairwise_logits is not None:
-            if not isinstance(self.host_pairwise_logits, torch.Tensor) or self.host_pairwise_logits.ndim != 2:
-                raise ValueError('HostPluginInterface.host_pairwise_logits must have shape [B, B] when provided.')
-            batch_size = self.image_embeddings.size(0)
-            if tuple(self.host_pairwise_logits.shape) != (batch_size, batch_size):
+        batch_size = self.image_embeddings.size(0)
+        for field_name in (
+            'host_pairwise_logits',
+            'host_pairwise_logits_global',
+            'host_pairwise_logits_local',
+        ):
+            field_value = getattr(self, field_name)
+            if field_value is None:
+                continue
+            if not isinstance(field_value, torch.Tensor) or field_value.ndim != 2:
+                raise ValueError(f'HostPluginInterface.{field_name} must have shape [B, B] when provided.')
+            if tuple(field_value.shape) != (batch_size, batch_size):
                 raise ValueError(
-                    'HostPluginInterface.host_pairwise_logits must have shape [B, B] where B matches image/text batch.'
+                    f'HostPluginInterface.{field_name} must have shape [B, B] where B matches image/text batch.'
                 )
         version = str(self.version).strip()
         if version not in HOST_EXPORT_INTERFACE_SUPPORTED_VERSIONS:
@@ -77,6 +86,12 @@ class HostPluginInterface:
             special_token_positions={key: value.detach() for key, value in self.special_token_positions.items()},
             image_local_tokens=None if self.image_local_tokens is None else self.image_local_tokens.detach(),
             host_pairwise_logits=None if self.host_pairwise_logits is None else self.host_pairwise_logits.detach(),
+            host_pairwise_logits_global=(
+                None if self.host_pairwise_logits_global is None else self.host_pairwise_logits_global.detach()
+            ),
+            host_pairwise_logits_local=(
+                None if self.host_pairwise_logits_local is None else self.host_pairwise_logits_local.detach()
+            ),
             version=self.version,
             metadata=dict(self.metadata),
         )
@@ -91,15 +106,26 @@ def build_host_plugin_interface(
     special_token_positions: Dict[str, torch.Tensor],
     image_local_tokens: Optional[torch.Tensor],
     host_pairwise_logits: Optional[torch.Tensor],
+    host_pairwise_logits_global: Optional[torch.Tensor],
+    host_pairwise_logits_local: Optional[torch.Tensor],
     policy: HostExportPolicy,
     metadata: Optional[Dict[str, object]] = None,
 ) -> HostPluginInterface:
-    if (not bool(policy.allow_host_pairwise_logits)) and host_pairwise_logits is not None:
+    if (
+        (not bool(policy.allow_host_pairwise_logits))
+        and (
+            host_pairwise_logits is not None
+            or host_pairwise_logits_global is not None
+            or host_pairwise_logits_local is not None
+        )
+    ):
         raise ValueError(
             'HostExportPolicy forbids exporting host_pairwise_logits in this mode, '
-            'but host_pairwise_logits was provided.'
+            'but host pairwise logits were provided.'
         )
     exported_logits = host_pairwise_logits if bool(policy.allow_host_pairwise_logits) else None
+    exported_logits_global = host_pairwise_logits_global if bool(policy.allow_host_pairwise_logits) else None
+    exported_logits_local = host_pairwise_logits_local if bool(policy.allow_host_pairwise_logits) else None
     exported_local_tokens = image_local_tokens if bool(policy.include_image_local_tokens) else None
     interface = HostPluginInterface(
         image_embeddings=image_embeddings,
@@ -109,6 +135,8 @@ def build_host_plugin_interface(
         special_token_positions=dict(special_token_positions),
         image_local_tokens=exported_local_tokens,
         host_pairwise_logits=exported_logits,
+        host_pairwise_logits_global=exported_logits_global,
+        host_pairwise_logits_local=exported_logits_local,
         metadata=dict(metadata or {}),
     )
     interface.validate()

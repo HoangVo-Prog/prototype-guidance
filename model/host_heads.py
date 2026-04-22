@@ -270,11 +270,14 @@ class CLIPHostAdapter(nn.Module):
             text_embeddings=text_output.projected_pooled,
             return_debug=return_debug,
         )
+        host_logits = outputs.get('surrogate_pairwise_logits')
         outputs['global_image_embedding'] = image_output.projected_pooled.float()
         outputs['global_text_embedding'] = text_output.projected_pooled.float()
         outputs['grab_image_embedding'] = None
         outputs['grab_text_embedding'] = None
-        outputs['host_similarity_logits'] = outputs.get('surrogate_pairwise_logits')
+        outputs['host_similarity_logits'] = host_logits
+        outputs['host_pairwise_logits_global'] = host_logits
+        outputs['host_pairwise_logits_local'] = None
         return outputs
 
 
@@ -747,7 +750,23 @@ class ITSELFHostHead(nn.Module):
             total_steps=total_steps,
         )
 
-        similarity = self.compute_similarity_matrix(image_features, text_features)
+        global_similarity = cosine_similarity_matrix(
+            image_features["global_image_embedding"],
+            text_features["global_text_embedding"],
+        )
+        grab_similarity = None
+        if (
+            not self.only_global
+            and image_features.get("grab_image_embedding") is not None
+            and text_features.get("grab_text_embedding") is not None
+        ):
+            grab_similarity = cosine_similarity_matrix(
+                image_features["grab_image_embedding"],
+                text_features["grab_text_embedding"],
+            )
+            similarity = (self.score_weight_global * global_similarity) + ((1.0 - self.score_weight_global) * grab_similarity)
+        else:
+            similarity = global_similarity
 
         base_tensor = image_features["global_image_embedding"]
         zero = base_tensor.new_zeros(())
@@ -947,6 +966,8 @@ class ITSELFHostHead(nn.Module):
             "debug": dict(debug_metrics),
             "surrogate_pairwise_logits": similarity,
             "host_similarity_logits": similarity,
+            "host_pairwise_logits_global": global_similarity,
+            "host_pairwise_logits_local": grab_similarity,
             "global_image_embedding": image_features["global_image_embedding"],
             "global_text_embedding": text_features["global_text_embedding"],
             "grab_image_embedding": image_features.get("grab_image_embedding"),

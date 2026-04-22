@@ -1,8 +1,10 @@
 import copy
+import csv
 import logging
 import math
+import os
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -55,6 +57,195 @@ _CONSOLE_LOSS_SKIP_KEYS = {
 CONSOLE_LOSS_LOG_KEYS = tuple(
     key for key in TRAIN_LOSS_KEYS if key in METER_KEYS and key not in _CONSOLE_LOSS_SKIP_KEYS
 )
+
+PAIRWISE_HARD_EXPORT_COLUMNS = (
+    'epoch',
+    'step',
+    'anchor_id',
+    'negative_id',
+    'is_positive',
+    'rank_position',
+    's_pos_host',
+    's_neg_host',
+    'margin_host',
+    'margin_global',
+    'margin_local',
+    'gate_host',
+    'gate_global',
+    'gate_local',
+    'proto_pair_signal',
+    'proto_gate',
+    'omega',
+    'routing_entropy',
+    'routing_top1_top2_gap',
+    'diag_cos_full',
+    'split',
+    'method_variant',
+)
+
+_HBR_CONTROL_MODE_TO_METHOD_VARIANT = {
+    'host_only_weight': 'hbr_host_only_weight',
+    'proto_weight': 'hbr_proto_weight',
+    'none': 'hbr_proto_weight',
+    'proto_weight_shuffled': 'hbr_proto_weight_shuffled',
+    'random_matched_weight': 'hbr_random_matched_weight',
+    'proto_adaptive_margin': 'hbr_proto_adaptive_margin',
+}
+
+
+def _to_python_float(value, default: float = 0.0) -> float:
+    if value is None:
+        return float(default)
+    if isinstance(value, (float, int, bool)):
+        return float(value)
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return float(default)
+        return float(value.detach().float().reshape(-1)[0].cpu().item())
+    return float(default)
+
+
+def _resolve_method_variant(args, runtime_mode: str) -> str:
+    mode = normalize_runtime_mode(runtime_mode)
+    use_prototype_branch = bool(getattr(args, 'use_prototype_branch', False))
+    use_hbr = bool(getattr(args, 'use_hbr', False))
+    if mode == RUNTIME_MODE_HOST_ONLY or not use_prototype_branch:
+        return 'host_only_baseline'
+    if not use_hbr:
+        return 'host_plus_diag_only'
+    control_mode = str(getattr(args, 'hbr_control_mode', 'none') or 'none').lower()
+    return _HBR_CONTROL_MODE_TO_METHOD_VARIANT.get(control_mode, f'hbr_{control_mode}')
+
+
+def _append_hbr_pairwise_rows(
+    *,
+    rows: List[Dict[str, object]],
+    outputs: Dict[str, object],
+    batch: Dict[str, torch.Tensor],
+    epoch: int,
+    step: int,
+    max_rows: int,
+    method_variant: str,
+) -> None:
+    if max_rows <= 0 or len(rows) >= max_rows:
+        return
+    export = outputs.get('hbr_pairwise_export')
+    if not isinstance(export, dict):
+        return
+
+    anchor_index = export.get('anchor_index')
+    negative_index = export.get('negative_index')
+    rank_position = export.get('rank_position')
+    if not all(isinstance(tensor, torch.Tensor) for tensor in (anchor_index, negative_index, rank_position)):
+        return
+
+    anchor_index = anchor_index.detach().long().reshape(-1).cpu()
+    negative_index = negative_index.detach().long().reshape(-1).cpu()
+    rank_position = rank_position.detach().long().reshape(-1).cpu()
+    pair_count = int(min(anchor_index.numel(), negative_index.numel(), rank_position.numel()))
+    if pair_count <= 0:
+        return
+
+    image_ids = batch.get('image_ids')
+    if isinstance(image_ids, torch.Tensor):
+        image_ids = image_ids.detach().long().reshape(-1).cpu()
+    else:
+        image_ids = None
+
+    debug_dict = outputs.get('debug', {}) if isinstance(outputs.get('debug', {}), dict) else {}
+    diag_cos_full = _to_python_float(debug_dict.get('diag_cos_full', 0.0), default=0.0)
+
+    flat_tensors: Dict[str, torch.Tensor] = {}
+    for key in (
+        's_pos_host',
+        's_neg_host',
+        'margin_host',
+        'margin_global',
+        'margin_local',
+        'gate_host',
+        'gate_global',
+        'gate_local',
+        'proto_pair_signal',
+        'proto_gate',
+        'omega',
+        'routing_entropy',
+        'routing_top1_top2_gap',
+    ):
+        value = export.get(key)
+        if isinstance(value, torch.Tensor):
+            flat_tensors[key] = value.detach().reshape(-1).cpu()
+
+    order = torch.arange(pair_count, dtype=torch.long)
+    omega_values = flat_tensors.get('omega')
+    if isinstance(omega_values, torch.Tensor) and omega_values.numel() >= pair_count:
+        order = torch.argsort(omega_values[:pair_count].float(), descending=True)
+
+    remaining = int(max_rows - len(rows))
+    selected = order[:remaining]
+
+    def _value_at(key: str, index: int, default: float = 0.0) -> float:
+        tensor = flat_tensors.get(key)
+        if not isinstance(tensor, torch.Tensor) or index >= tensor.numel():
+            return float(default)
+        return float(tensor[index].float().item())
+
+    for selected_index in selected.tolist():
+        anchor = int(anchor_index[selected_index].item())
+        negative = int(negative_index[selected_index].item())
+
+        if isinstance(image_ids, torch.Tensor) and 0 <= anchor < image_ids.numel():
+            anchor_id = int(image_ids[anchor].item())
+        else:
+            anchor_id = anchor
+        if isinstance(image_ids, torch.Tensor) and 0 <= negative < image_ids.numel():
+            negative_id = int(image_ids[negative].item())
+        else:
+            negative_id = negative
+
+        row = {
+            'epoch': int(epoch),
+            'step': int(step),
+            'anchor_id': int(anchor_id),
+            'negative_id': int(negative_id),
+            'is_positive': int(anchor_id == negative_id),
+            'rank_position': int(rank_position[selected_index].item()),
+            's_pos_host': _value_at('s_pos_host', selected_index),
+            's_neg_host': _value_at('s_neg_host', selected_index),
+            'margin_host': _value_at('margin_host', selected_index),
+            'margin_global': _value_at('margin_global', selected_index),
+            'margin_local': _value_at('margin_local', selected_index),
+            'gate_host': _value_at('gate_host', selected_index),
+            'gate_global': _value_at('gate_global', selected_index),
+            'gate_local': _value_at('gate_local', selected_index),
+            'proto_pair_signal': _value_at('proto_pair_signal', selected_index),
+            'proto_gate': _value_at('proto_gate', selected_index),
+            'omega': _value_at('omega', selected_index),
+            'routing_entropy': _value_at('routing_entropy', selected_index),
+            'routing_top1_top2_gap': _value_at('routing_top1_top2_gap', selected_index),
+            'diag_cos_full': float(diag_cos_full),
+            'split': 'train',
+            'method_variant': str(method_variant),
+        }
+        rows.append(row)
+
+
+def _write_pairwise_hard_rows(
+    *,
+    output_dir: str,
+    epoch: int,
+    rows: List[Dict[str, object]],
+    logger,
+) -> None:
+    if not rows:
+        return
+    export_dir = os.path.join(str(output_dir), 'pairwise_hard_samples')
+    os.makedirs(export_dir, exist_ok=True)
+    export_path = os.path.join(export_dir, f'pairwise_hard_samples_epoch_{int(epoch):04d}.csv')
+    with open(export_path, 'w', newline='', encoding='utf-8') as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(PAIRWISE_HARD_EXPORT_COLUMNS))
+        writer.writeheader()
+        writer.writerows(rows)
+    logger.info('Exported %d pairwise hard samples to %s', len(rows), export_path)
 
 
 def _format_ratio(trainable: int, total: int):
@@ -812,6 +1003,9 @@ def _do_train_runtime(
     else:
         logger.info('Early stopping disabled.')
     log_debug_metrics = bool(getattr(args, 'log_debug_metrics', True))
+    export_pairwise_hard_samples = bool(getattr(args, 'export_pairwise_hard_samples', False)) and get_rank() == 0
+    pairwise_export_max_rows_per_epoch = max(int(getattr(args, 'pairwise_export_max_rows_per_epoch', 2000)), 0)
+    method_variant = _resolve_method_variant(args, resolved_runtime_mode)
     coverage_tracker = RoutingCoverageTracker() if log_debug_metrics else None
     if resolved_runtime_mode == RUNTIME_MODE_JOINT_TRAINING:
         freeze_schedule_phases = parse_freeze_schedule_config(
@@ -1038,6 +1232,7 @@ def _do_train_runtime(
 
         last_epoch = epoch
         start_time = time.time()
+        pairwise_hard_rows: List[Dict[str, object]] = []
         for meter in meters.values():
             meter.reset()
 
@@ -1128,6 +1323,17 @@ def _do_train_runtime(
                         )
                         debug_dict.update(prototype_metrics)
 
+            if export_pairwise_hard_samples and pairwise_export_max_rows_per_epoch > 0:
+                _append_hbr_pairwise_rows(
+                    rows=pairwise_hard_rows,
+                    outputs=outputs,
+                    batch=batch,
+                    epoch=epoch,
+                    step=current_steps,
+                    max_rows=pairwise_export_max_rows_per_epoch,
+                    method_variant=method_variant,
+                )
+
             scalar_metrics = collect_scalar_metrics(outputs, include_debug_metrics=log_debug_metrics)
             batch_size = batch['images'].shape[0]
             for key, meter in meters.items():
@@ -1179,6 +1385,13 @@ def _do_train_runtime(
             )
         if coverage_tracker is not None:
             coverage_tracker.reset_epoch()
+        if export_pairwise_hard_samples and pairwise_export_max_rows_per_epoch > 0:
+            _write_pairwise_hard_rows(
+                output_dir=args.output_dir,
+                epoch=epoch,
+                rows=pairwise_hard_rows,
+                logger=logger,
+            )
 
         scheduler.step()
         if get_rank() == 0:

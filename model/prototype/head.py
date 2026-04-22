@@ -101,6 +101,23 @@ class PrototypeConditionedTextHead(nn.Module):
         semantic_hosthard_tau: float = 0.1,
         semantic_hosthard_eps: float = 1e-8,
         semantic_hosthard_normalize_weights: bool = True,
+        use_loss_hbr: bool = False,
+        lambda_hbr: float = 0.0,
+        hbr_topk_hard_negatives: int = 5,
+        hbr_base_margin: float = 0.1,
+        hbr_host_gate_margin: float = 0.1,
+        hbr_host_gate_temperature: float = 0.1,
+        hbr_use_global_local_decomposition: bool = True,
+        hbr_global_gate_margin: float = 0.1,
+        hbr_local_gate_margin: float = 0.1,
+        hbr_global_gate_weight: float = 1.0,
+        hbr_local_gate_weight: float = 1.0,
+        hbr_use_prototype_pair_signal: bool = True,
+        hbr_proto_signal_temperature: float = 0.1,
+        hbr_proto_signal_center: float = 0.0,
+        hbr_stopgrad_proto_signal: bool = True,
+        hbr_control_mode: str = 'none',
+        hbr_proto_adaptive_margin_weight: float = 0.0,
         use_diversity_loss: bool = False,
         diversity_loss_weight: float = 0.0,
         use_balance_loss: bool = False,
@@ -309,6 +326,23 @@ class PrototypeConditionedTextHead(nn.Module):
             semantic_hosthard_tau=semantic_hosthard_tau,
             semantic_hosthard_eps=semantic_hosthard_eps,
             semantic_hosthard_normalize_weights=semantic_hosthard_normalize_weights,
+            use_loss_hbr=use_loss_hbr,
+            lambda_hbr=lambda_hbr,
+            hbr_topk_hard_negatives=hbr_topk_hard_negatives,
+            hbr_base_margin=hbr_base_margin,
+            hbr_host_gate_margin=hbr_host_gate_margin,
+            hbr_host_gate_temperature=hbr_host_gate_temperature,
+            hbr_use_global_local_decomposition=hbr_use_global_local_decomposition,
+            hbr_global_gate_margin=hbr_global_gate_margin,
+            hbr_local_gate_margin=hbr_local_gate_margin,
+            hbr_global_gate_weight=hbr_global_gate_weight,
+            hbr_local_gate_weight=hbr_local_gate_weight,
+            hbr_use_prototype_pair_signal=hbr_use_prototype_pair_signal,
+            hbr_proto_signal_temperature=hbr_proto_signal_temperature,
+            hbr_proto_signal_center=hbr_proto_signal_center,
+            hbr_stopgrad_proto_signal=hbr_stopgrad_proto_signal,
+            hbr_control_mode=hbr_control_mode,
+            hbr_proto_adaptive_margin_weight=hbr_proto_adaptive_margin_weight,
             prototype_method_role=prototype_method_role,
             prototype_semantic_enabled=prototype_semantic_enabled,
             semantic_structure_enabled=semantic_structure_enabled,
@@ -552,6 +586,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 'semantic_pbt': 0.0,
                 'semantic_hardneg_margin': 0.0,
                 'semantic_hosthard_weighted': 0.0,
+                'hbr': 0.0,
             }
         return {
             'prototype': float(ramp_scale),
@@ -561,6 +596,7 @@ class PrototypeConditionedTextHead(nn.Module):
             'semantic_hosthard_weighted': (
                 float(ramp_scale) if self.semantic_ramp_loss_semantic_hosthard_weighted else 1.0
             ),
+            'hbr': float(ramp_scale),
         }
 
     def _zero_loss_outputs(self, reference: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -574,12 +610,14 @@ class PrototypeConditionedTextHead(nn.Module):
             'loss_semantic_hosthard_weighted': zero,
             'loss_semantic_hosthard_weighted_image': zero,
             'loss_semantic_hosthard_weighted_text': zero,
+            'loss_hbr': zero,
             'loss_diag': zero,
             'loss_diversity': zero,
             'loss_balance': zero,
             'loss_semantic_pbt_weighted': zero,
             'loss_semantic_hardneg_margin_weighted': zero,
             'loss_semantic_hosthard_weighted_weighted': zero,
+            'loss_hbr_weighted': zero,
             'loss_diag_weighted': zero,
             'loss_diversity_weighted': zero,
             'loss_balance_weighted': zero,
@@ -595,13 +633,17 @@ class PrototypeConditionedTextHead(nn.Module):
             'semantic_hosthard_tau': zero,
             'semantic_hosthard_eps': zero,
             'semantic_hosthard_normalize_weights': zero,
+            'use_loss_hbr': zero,
+            'lambda_hbr': zero,
             'prototype_loss_scale': zero,
             'prototype_loss_ramp_scale': zero,
             'loss_diag_scale': zero,
             'loss_semantic_pbt_scale': zero,
             'loss_semantic_hardneg_margin_scale': zero,
             'loss_semantic_hosthard_weighted_scale': zero,
+            'loss_hbr_scale': zero,
             'semantic_loss_scale': zero,
+            'hbr_control_mode': 'none',
             'use_loss_diag': zero,
             'lambda_diag': zero,
             'lambda_div': zero,
@@ -610,6 +652,24 @@ class PrototypeConditionedTextHead(nn.Module):
             'diag_temperature': zero,
             'retrieval_temperature': zero,
             'logit_scale': zero,
+            'hbr_pairwise_export': {
+                'anchor_index': reference.new_empty((0,), dtype=torch.long),
+                'negative_index': reference.new_empty((0,), dtype=torch.long),
+                'rank_position': reference.new_empty((0,), dtype=torch.long),
+                's_pos_host': reference.new_empty((0,)),
+                's_neg_host': reference.new_empty((0,)),
+                'margin_host': reference.new_empty((0,)),
+                'margin_global': reference.new_empty((0,)),
+                'margin_local': reference.new_empty((0,)),
+                'gate_host': reference.new_empty((0,)),
+                'gate_global': reference.new_empty((0,)),
+                'gate_local': reference.new_empty((0,)),
+                'proto_pair_signal': reference.new_empty((0,)),
+                'proto_gate': reference.new_empty((0,)),
+                'omega': reference.new_empty((0,)),
+                'routing_entropy': reference.new_empty((0,)),
+                'routing_top1_top2_gap': reference.new_empty((0,)),
+            },
             'debug_metrics': {},
         }
 
@@ -1320,6 +1380,8 @@ class PrototypeConditionedTextHead(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         host_pairwise_logits: Optional[torch.Tensor] = None,
+        host_pairwise_logits_global: Optional[torch.Tensor] = None,
+        host_pairwise_logits_local: Optional[torch.Tensor] = None,
         epoch: Optional[int] = None,
         current_step: Optional[int] = None,
         return_debug: bool = False,
@@ -1459,6 +1521,7 @@ class PrototypeConditionedTextHead(nn.Module):
         semantic_pbt_loss_scale = loss_scales['semantic_pbt']
         semantic_hardneg_margin_loss_scale = loss_scales['semantic_hardneg_margin']
         semantic_hosthard_weighted_loss_scale = loss_scales['semantic_hosthard_weighted']
+        hbr_loss_scale = loss_scales['hbr']
         if not prototype_usage_enabled:
             loss_outputs = self._zero_loss_outputs(image_outputs['image_projected'])
         else:
@@ -1469,8 +1532,11 @@ class PrototypeConditionedTextHead(nn.Module):
                 pids=pids,
                 prototypes=context['base_prototypes'],
                 routing_weights=image_outputs['routing_weights'],
+                basis_bank=basis_outputs['basis_bank'],
                 surrogate_pairwise_logits=surrogate_pairwise_logits,
                 host_pairwise_logits=host_pairwise_logits,
+                host_pairwise_logits_global=host_pairwise_logits_global,
+                host_pairwise_logits_local=host_pairwise_logits_local,
                 semantic_image_student_embeddings=image_outputs['image_projected'],
                 semantic_text_student_embeddings=surrogate_text_projected,
                 semantic_text_teacher_embeddings=exact_outputs['text_projected'],
@@ -1479,6 +1545,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 semantic_pbt_loss_scale=semantic_pbt_loss_scale,
                 semantic_hardneg_margin_loss_scale=semantic_hardneg_margin_loss_scale,
                 semantic_hosthard_weighted_loss_scale=semantic_hosthard_weighted_loss_scale,
+                hbr_loss_scale=hbr_loss_scale,
                 return_debug=return_debug,
                 disable_proxy_losses=disable_proxy_losses,
             )
@@ -1541,6 +1608,7 @@ class PrototypeConditionedTextHead(nn.Module):
             'loss_semantic_hosthard_weighted_scale': image_outputs['image_projected'].new_tensor(
                 float(semantic_hosthard_weighted_loss_scale)
             ),
+            'loss_hbr_scale': image_outputs['image_projected'].new_tensor(float(hbr_loss_scale)),
             # Backward-compatible alias for existing logs/consumers.
             'semantic_loss_scale': image_outputs['image_projected'].new_tensor(float(semantic_pbt_loss_scale)),
             'losses': loss_outputs,

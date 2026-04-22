@@ -1,11 +1,11 @@
 experiment:
-  name: itself_semantic_structure
+  name: itself_hbr
   output_dir: runs
   seed: 1
 
 model:
   runtime_mode: joint_training 
-  variant: itself_semantic_structure
+  variant: itself_hbr
   temperature: 0.07
 
   pretrain_choice: ViT-B/16
@@ -103,27 +103,29 @@ semantic_structure:
   loss_ramp_epochs: 0
   loss_ramp_steps: 0
   ramp_loss_diag: true
-  ramp_loss_semantic_pbt: true
-  ramp_loss_semantic_hardneg_margin: true
-  ramp_loss_semantic_hosthard_weighted: true
+  ramp_loss_semantic_pbt: false
+  ramp_loss_semantic_hardneg_margin: false
+  ramp_loss_semantic_hosthard_weighted: false
   ramp_use_prototype: true
 
 objectives:
   objectives:
     use_host_loss: true
     use_loss_diag: true
-    use_loss_semantic_pbt: true
-    use_loss_semantic_hardneg_margin: true
+    use_loss_semantic_pbt: false
+    use_loss_semantic_hardneg_margin: false
     use_loss_semantic_hosthard_weighted: false
+    use_hbr: true
     retrieval_mode: clip_bidirectional
     use_balancing_loss: false
     use_diversity_loss: false
   lambda:
     host: 1.0
     diag: 4.0
-    semantic_pbt: 1.0
-    semantic_hardneg_margin: 1.0
+    semantic_pbt: 0.0
+    semantic_hardneg_margin: 0.0
     semantic_hosthard_weighted: 0.0
+    hbr: 1.0
     balance: 0.0
     diversity: 0.0
   semantic_hardneg_margin: 0.05
@@ -132,6 +134,23 @@ objectives:
   semantic_hosthard_tau: 0.1
   semantic_hosthard_eps: 1.0e-8
   semantic_hosthard_normalize_weights: true
+
+hbr:
+  topk_hard_negatives: 5
+  base_margin: 0.1
+  host_gate_margin: 0.1
+  host_gate_temperature: 0.1
+  use_global_local_decomposition: true
+  global_gate_margin: 0.1
+  local_gate_margin: 0.1
+  global_gate_weight: 1.0
+  local_gate_weight: 1.0
+  use_prototype_pair_signal: true
+  proto_signal_temperature: 0.1
+  proto_signal_center: 0.0
+  stopgrad_proto_signal: true
+  control_mode: proto_weight
+  proto_adaptive_margin_weight: 0.0
 
 text_pooling:
   token_policy: content_only
@@ -228,16 +247,20 @@ dataset:
 
 logging:
   use_wandb: true
-  project: itself_semantic_structure
+  project: itself_hbr
   entity:
   run_name:
-  group: itself_semantic_structure
+  group: itself_hbr
   mode: online
-  tags: [itself, semantic_structure]
+  tags: [itself, hbr]
   notes: 
   log_interval: 50
   log_code: false
   log_debug_metrics: true
+  export_pairwise_hard_samples: true
+  pairwise_export_max_rows_per_epoch: 2000
+  track_proto_contribution_metrics: true
+  track_hard_pair_repair_metrics: true
 
 evaluation:
   checkpoint_path: ''

@@ -133,6 +133,46 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('objectives', 'semantic_hosthard_tau'): 'semantic_hosthard_tau',
     ('objectives', 'semantic_hosthard_eps'): 'semantic_hosthard_eps',
     ('objectives', 'semantic_hosthard_normalize_weights'): 'semantic_hosthard_normalize_weights',
+    ('objectives', 'objectives', 'use_hbr'): 'use_hbr',
+    ('objectives', 'lambda', 'hbr'): 'lambda_hbr',
+    ('loss', 'use_hbr'): 'use_hbr',
+    ('loss', 'lambda_hbr'): 'lambda_hbr',
+    ('losses', 'use_hbr'): 'use_hbr',
+    ('losses', 'lambda_hbr'): 'lambda_hbr',
+    ('losses', 'lambda_host'): 'lambda_host',
+    ('hbr', 'topk_hard_negatives'): 'hbr_topk_hard_negatives',
+    ('hbr', 'base_margin'): 'hbr_base_margin',
+    ('hbr', 'host_gate_margin'): 'hbr_host_gate_margin',
+    ('hbr', 'host_gate_temperature'): 'hbr_host_gate_temperature',
+    ('hbr', 'use_global_local_decomposition'): 'hbr_use_global_local_decomposition',
+    ('hbr', 'global_gate_margin'): 'hbr_global_gate_margin',
+    ('hbr', 'local_gate_margin'): 'hbr_local_gate_margin',
+    ('hbr', 'global_gate_weight'): 'hbr_global_gate_weight',
+    ('hbr', 'local_gate_weight'): 'hbr_local_gate_weight',
+    ('hbr', 'use_prototype_pair_signal'): 'hbr_use_prototype_pair_signal',
+    ('hbr', 'proto_signal_temperature'): 'hbr_proto_signal_temperature',
+    ('hbr', 'proto_signal_center'): 'hbr_proto_signal_center',
+    ('hbr', 'stopgrad_proto_signal'): 'hbr_stopgrad_proto_signal',
+    ('hbr', 'control_mode'): 'hbr_control_mode',
+    ('hbr', 'proto_adaptive_margin_weight'): 'hbr_proto_adaptive_margin_weight',
+    ('objectives', 'objectives', 'use_hbr'): 'use_hbr',
+    ('objectives', 'lambda', 'hbr'): 'lambda_hbr',
+
+    ('hbr', 'topk_hard_negatives'): 'hbr_topk_hard_negatives',
+    ('hbr', 'base_margin'): 'hbr_base_margin',
+    ('hbr', 'host_gate_margin'): 'hbr_host_gate_margin',
+    ('hbr', 'host_gate_temperature'): 'hbr_host_gate_temperature',
+    ('hbr', 'use_global_local_decomposition'): 'hbr_use_global_local_decomposition',
+    ('hbr', 'global_gate_margin'): 'hbr_global_gate_margin',
+    ('hbr', 'local_gate_margin'): 'hbr_local_gate_margin',
+    ('hbr', 'global_gate_weight'): 'hbr_global_gate_weight',
+    ('hbr', 'local_gate_weight'): 'hbr_local_gate_weight',
+    ('hbr', 'use_prototype_pair_signal'): 'hbr_use_prototype_pair_signal',
+    ('hbr', 'proto_signal_temperature'): 'hbr_proto_signal_temperature',
+    ('hbr', 'proto_signal_center'): 'hbr_proto_signal_center',
+    ('hbr', 'stopgrad_proto_signal'): 'hbr_stopgrad_proto_signal',
+    ('hbr', 'control_mode'): 'hbr_control_mode',
+    ('hbr', 'proto_adaptive_margin_weight'): 'hbr_proto_adaptive_margin_weight',
 
     ('text_pooling', 'token_policy'): 'token_policy',
     ('text_pooling', 'scoring_type'): 'token_scoring_type',
@@ -236,6 +276,10 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('logging', 'log_interval'): 'wandb_log_interval',
     ('logging', 'log_code'): 'wandb_log_code',
     ('logging', 'log_debug_metrics'): 'log_debug_metrics',
+    ('logging', 'export_pairwise_hard_samples'): 'export_pairwise_hard_samples',
+    ('logging', 'pairwise_export_max_rows_per_epoch'): 'pairwise_export_max_rows_per_epoch',
+    ('logging', 'track_proto_contribution_metrics'): 'track_proto_contribution_metrics',
+    ('logging', 'track_hard_pair_repair_metrics'): 'track_hard_pair_repair_metrics',
 
     ('evaluation', 'checkpoint_path'): 'checkpoint',
     ('evaluation', 'device'): 'device',
@@ -972,6 +1016,12 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     semantic_hardneg_eps = float(flat.get('semantic_hardneg_eps', 1e-8))
     semantic_hosthard_tau = float(flat.get('semantic_hosthard_tau', 0.1))
     semantic_hosthard_eps = float(flat.get('semantic_hosthard_eps', 1e-8))
+    use_hbr = bool(flat.get('use_hbr', False))
+    lambda_hbr = float(flat.get('lambda_hbr', 0.0))
+    hbr_topk_hard_negatives = int(flat.get('hbr_topk_hard_negatives', 5))
+    hbr_host_gate_temperature = float(flat.get('hbr_host_gate_temperature', 0.1))
+    hbr_proto_signal_temperature = float(flat.get('hbr_proto_signal_temperature', 0.1))
+    hbr_control_mode = str(flat.get('hbr_control_mode', 'none')).lower()
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -1018,6 +1068,25 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         raise ValueError('objectives.semantic_hosthard_tau must be positive.')
     if semantic_hosthard_eps <= 0.0:
         raise ValueError('objectives.semantic_hosthard_eps must be positive.')
+    if hbr_topk_hard_negatives <= 0:
+        raise ValueError('hbr.topk_hard_negatives must be a positive integer.')
+    if hbr_host_gate_temperature <= 0.0:
+        raise ValueError('hbr.host_gate_temperature must be positive.')
+    if hbr_proto_signal_temperature <= 0.0:
+        raise ValueError('hbr.proto_signal_temperature must be positive.')
+    if hbr_control_mode not in {
+        'none',
+        'host_only_weight',
+        'proto_weight',
+        'proto_weight_shuffled',
+        'random_matched_weight',
+        'proto_adaptive_margin',
+    }:
+        raise ValueError(
+            'hbr.control_mode must be one of '
+            '["none", "host_only_weight", "proto_weight", "proto_weight_shuffled", '
+            '"random_matched_weight", "proto_adaptive_margin"].'
+        )
     if use_loss_semantic_pbt and not use_prototype_branch:
         raise ValueError('loss.use_loss_semantic_pbt requires model.use_prototype_branch=true.')
     if use_loss_semantic_hardneg_margin and not use_prototype_branch:
@@ -1042,6 +1111,16 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
             'host-only runtime disables prototype loss computation. '
             'Use model.runtime_mode=joint_training.'
         )
+    if use_hbr and not use_prototype_branch:
+        raise ValueError('hbr.use_hbr requires model.use_prototype_branch=true.')
+    if use_hbr and runtime_mode == 'host_only':
+        raise ValueError(
+            'hbr.use_hbr is incompatible with model.runtime_mode=host_only because '
+            'host-only runtime disables prototype loss computation. '
+            'Use model.runtime_mode=joint_training.'
+        )
+    if not use_hbr and abs(lambda_hbr) > 0.0:
+        raise ValueError('hbr.lambda_hbr must be 0 when hbr.use_hbr is false.')
 
     training_config = config_data.get('training', {})
     if isinstance(training_config, dict) and 'freeze_schedule' in training_config:
@@ -1113,6 +1192,12 @@ def validate_runtime_args_namespace(args) -> None:
     semantic_hardneg_eps = float(getattr(args, 'semantic_hardneg_eps', 1e-8))
     semantic_hosthard_tau = float(getattr(args, 'semantic_hosthard_tau', 0.1))
     semantic_hosthard_eps = float(getattr(args, 'semantic_hosthard_eps', 1e-8))
+    use_hbr = bool(getattr(args, 'use_hbr', False))
+    lambda_hbr = float(getattr(args, 'lambda_hbr', 0.0))
+    hbr_topk_hard_negatives = int(getattr(args, 'hbr_topk_hard_negatives', 5))
+    hbr_host_gate_temperature = float(getattr(args, 'hbr_host_gate_temperature', 0.1))
+    hbr_proto_signal_temperature = float(getattr(args, 'hbr_proto_signal_temperature', 0.1))
+    hbr_control_mode = str(getattr(args, 'hbr_control_mode', 'none')).lower()
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -1158,6 +1243,25 @@ def validate_runtime_args_namespace(args) -> None:
         raise ValueError('semantic_hosthard_tau must be positive.')
     if semantic_hosthard_eps <= 0.0:
         raise ValueError('semantic_hosthard_eps must be positive.')
+    if hbr_topk_hard_negatives <= 0:
+        raise ValueError('hbr_topk_hard_negatives must be a positive integer.')
+    if hbr_host_gate_temperature <= 0.0:
+        raise ValueError('hbr_host_gate_temperature must be positive.')
+    if hbr_proto_signal_temperature <= 0.0:
+        raise ValueError('hbr_proto_signal_temperature must be positive.')
+    if hbr_control_mode not in {
+        'none',
+        'host_only_weight',
+        'proto_weight',
+        'proto_weight_shuffled',
+        'random_matched_weight',
+        'proto_adaptive_margin',
+    }:
+        raise ValueError(
+            'hbr_control_mode must be one of '
+            '["none", "host_only_weight", "proto_weight", "proto_weight_shuffled", '
+            '"random_matched_weight", "proto_adaptive_margin"].'
+        )
     if use_loss_semantic_pbt and not use_prototype_branch:
         raise ValueError('use_loss_semantic_pbt requires use_prototype_branch=true.')
     if use_loss_semantic_hardneg_margin and not use_prototype_branch:
@@ -1179,6 +1283,15 @@ def validate_runtime_args_namespace(args) -> None:
             'use_loss_semantic_hosthard_weighted is incompatible with runtime_mode=host_only because host-only runtime '
             'disables prototype loss computation. Use runtime_mode=joint_training.'
         )
+    if use_hbr and not use_prototype_branch:
+        raise ValueError('use_hbr requires use_prototype_branch=true.')
+    if use_hbr and runtime_mode == 'host_only':
+        raise ValueError(
+            'use_hbr is incompatible with runtime_mode=host_only because host-only runtime disables prototype loss '
+            'computation. Use runtime_mode=joint_training.'
+        )
+    if not use_hbr and abs(lambda_hbr) > 0.0:
+        raise ValueError('lambda_hbr must be 0 when use_hbr is false.')
 
 
 

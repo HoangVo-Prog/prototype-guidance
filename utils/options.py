@@ -155,6 +155,28 @@ def build_parser():
     parser.add_argument('--semantic_hosthard_tau', type=float, default=0.1)
     parser.add_argument('--semantic_hosthard_eps', type=float, default=1e-8)
     parser.add_argument('--semantic_hosthard_normalize_weights', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--use_hbr', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--lambda_hbr', type=float, default=0.0)
+    parser.add_argument('--hbr_topk_hard_negatives', type=int, default=5)
+    parser.add_argument('--hbr_base_margin', type=float, default=0.1)
+    parser.add_argument('--hbr_host_gate_margin', type=float, default=0.1)
+    parser.add_argument('--hbr_host_gate_temperature', type=float, default=0.1)
+    parser.add_argument('--hbr_use_global_local_decomposition', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--hbr_global_gate_margin', type=float, default=0.1)
+    parser.add_argument('--hbr_local_gate_margin', type=float, default=0.1)
+    parser.add_argument('--hbr_global_gate_weight', type=float, default=1.0)
+    parser.add_argument('--hbr_local_gate_weight', type=float, default=1.0)
+    parser.add_argument('--hbr_use_prototype_pair_signal', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--hbr_proto_signal_temperature', type=float, default=0.1)
+    parser.add_argument('--hbr_proto_signal_center', type=float, default=0.0)
+    parser.add_argument('--hbr_stopgrad_proto_signal', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument(
+        '--hbr_control_mode',
+        type=str,
+        default='none',
+        choices=['none', 'host_only_weight', 'proto_weight', 'proto_weight_shuffled', 'random_matched_weight', 'proto_adaptive_margin'],
+    )
+    parser.add_argument('--hbr_proto_adaptive_margin_weight', type=float, default=0.0)
     parser.add_argument('--img_size', type=int, nargs=2, default=(384, 128))
     parser.add_argument('--stride_size', type=int, default=16)
     parser.add_argument('--text_length', type=int, default=77)
@@ -338,6 +360,10 @@ def build_parser():
     parser.add_argument('--wandb_log_interval', type=int, default=50)
     parser.add_argument('--wandb_log_code', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--log_debug_metrics', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--export_pairwise_hard_samples', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--pairwise_export_max_rows_per_epoch', type=int, default=2000)
+    parser.add_argument('--track_proto_contribution_metrics', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--track_hard_pair_repair_metrics', type=_str2bool, nargs='?', const=True, default=True)
 
     parser.set_defaults(special_token_ids=None)
     return parser
@@ -616,6 +642,27 @@ def _finalize_args(args):
     args.semantic_hosthard_tau = float(getattr(args, 'semantic_hosthard_tau', 0.1))
     args.semantic_hosthard_eps = float(getattr(args, 'semantic_hosthard_eps', 1e-8))
     args.semantic_hosthard_normalize_weights = bool(getattr(args, 'semantic_hosthard_normalize_weights', True))
+    args.use_hbr = bool(getattr(args, 'use_hbr', False))
+    args.lambda_hbr = float(getattr(args, 'lambda_hbr', 0.0))
+    args.hbr_topk_hard_negatives = int(getattr(args, 'hbr_topk_hard_negatives', 5))
+    args.hbr_base_margin = float(getattr(args, 'hbr_base_margin', 0.1))
+    args.hbr_host_gate_margin = float(getattr(args, 'hbr_host_gate_margin', 0.1))
+    args.hbr_host_gate_temperature = float(getattr(args, 'hbr_host_gate_temperature', 0.1))
+    args.hbr_use_global_local_decomposition = bool(getattr(args, 'hbr_use_global_local_decomposition', True))
+    args.hbr_global_gate_margin = float(getattr(args, 'hbr_global_gate_margin', 0.1))
+    args.hbr_local_gate_margin = float(getattr(args, 'hbr_local_gate_margin', 0.1))
+    args.hbr_global_gate_weight = float(getattr(args, 'hbr_global_gate_weight', 1.0))
+    args.hbr_local_gate_weight = float(getattr(args, 'hbr_local_gate_weight', 1.0))
+    args.hbr_use_prototype_pair_signal = bool(getattr(args, 'hbr_use_prototype_pair_signal', True))
+    args.hbr_proto_signal_temperature = float(getattr(args, 'hbr_proto_signal_temperature', 0.1))
+    args.hbr_proto_signal_center = float(getattr(args, 'hbr_proto_signal_center', 0.0))
+    args.hbr_stopgrad_proto_signal = bool(getattr(args, 'hbr_stopgrad_proto_signal', True))
+    args.hbr_control_mode = str(getattr(args, 'hbr_control_mode', 'none')).lower()
+    args.hbr_proto_adaptive_margin_weight = float(getattr(args, 'hbr_proto_adaptive_margin_weight', 0.0))
+    args.export_pairwise_hard_samples = bool(getattr(args, 'export_pairwise_hard_samples', False))
+    args.pairwise_export_max_rows_per_epoch = max(int(getattr(args, 'pairwise_export_max_rows_per_epoch', 2000)), 0)
+    args.track_proto_contribution_metrics = bool(getattr(args, 'track_proto_contribution_metrics', True))
+    args.track_hard_pair_repair_metrics = bool(getattr(args, 'track_hard_pair_repair_metrics', True))
     semantic_loss_explicit = (
         ('use_loss_semantic_pbt' in cli_dests)
         or _has_override_path('loss', 'use_loss_semantic_pbt')
@@ -636,6 +683,8 @@ def _finalize_args(args):
         args.lambda_semantic_hardneg_margin = 0.0
     if not args.use_loss_semantic_hosthard_weighted:
         args.lambda_semantic_hosthard_weighted = 0.0
+    if not args.use_hbr:
+        args.lambda_hbr = 0.0
 
     args.prototype_routing_source = str(getattr(args, 'prototype_routing_source', 'global')).lower()
     args.prototype_local_routing_temperature = getattr(args, 'prototype_local_routing_temperature', None)

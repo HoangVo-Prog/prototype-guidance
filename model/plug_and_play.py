@@ -258,6 +258,8 @@ class HostCore(nn.Module):
         text_output: EncoderOutput,
         token_ids: torch.Tensor,
         host_pairwise_logits: Optional[torch.Tensor],
+        host_pairwise_logits_global: Optional[torch.Tensor],
+        host_pairwise_logits_local: Optional[torch.Tensor],
         policy: HostExportPolicy,
         metadata: Optional[Dict[str, object]] = None,
     ) -> HostPluginInterface:
@@ -269,6 +271,8 @@ class HostCore(nn.Module):
             special_token_positions=text_output.special_token_positions,
             image_local_tokens=image_output.projected_tokens,
             host_pairwise_logits=host_pairwise_logits,
+            host_pairwise_logits_global=host_pairwise_logits_global,
+            host_pairwise_logits_local=host_pairwise_logits_local,
             policy=policy,
             metadata=metadata,
         )
@@ -328,6 +332,8 @@ class PrototypePlugin(nn.Module):
             attention_mask=interface.attention_mask,
             special_token_positions=interface.special_token_positions,
             host_pairwise_logits=interface.host_pairwise_logits,
+            host_pairwise_logits_global=interface.host_pairwise_logits_global,
+            host_pairwise_logits_local=interface.host_pairwise_logits_local,
             epoch=epoch,
             current_step=current_step,
             return_debug=return_debug,
@@ -580,12 +586,14 @@ class PASRuntimeModel(nn.Module):
             'loss_semantic_hosthard_weighted': zero,
             'loss_semantic_hosthard_weighted_image': zero,
             'loss_semantic_hosthard_weighted_text': zero,
+            'loss_hbr': zero,
             'loss_diag': zero,
             'loss_diversity': zero,
             'loss_balance': zero,
             'loss_semantic_pbt_weighted': zero,
             'loss_semantic_hardneg_margin_weighted': zero,
             'loss_semantic_hosthard_weighted_weighted': zero,
+            'loss_hbr_weighted': zero,
             'loss_diag_weighted': zero,
             'loss_diversity_weighted': zero,
             'loss_balance_weighted': zero,
@@ -597,6 +605,8 @@ class PASRuntimeModel(nn.Module):
             'semantic_hardneg_eps': zero,
             'use_loss_semantic_hosthard_weighted': zero,
             'lambda_semantic_hosthard_weighted': zero,
+            'use_loss_hbr': zero,
+            'lambda_hbr': zero,
             'semantic_hosthard_margin_ref': zero,
             'semantic_hosthard_tau': zero,
             'semantic_hosthard_eps': zero,
@@ -606,7 +616,9 @@ class PASRuntimeModel(nn.Module):
             'loss_diag_scale': zero,
             'loss_semantic_pbt_scale': zero,
             'loss_semantic_hosthard_weighted_scale': zero,
+            'loss_hbr_scale': zero,
             'semantic_loss_scale': zero,
+            'hbr_control_mode': 'none',
             'use_loss_diag': zero,
             'lambda_diag': zero,
             'lambda_div': zero,
@@ -615,6 +627,24 @@ class PASRuntimeModel(nn.Module):
             'diag_temperature': zero,
             'retrieval_temperature': zero,
             'logit_scale': zero,
+            'hbr_pairwise_export': {
+                'anchor_index': reference.new_empty((0,), dtype=torch.long),
+                'negative_index': reference.new_empty((0,), dtype=torch.long),
+                'rank_position': reference.new_empty((0,), dtype=torch.long),
+                's_pos_host': reference.new_empty((0,)),
+                's_neg_host': reference.new_empty((0,)),
+                'margin_host': reference.new_empty((0,)),
+                'margin_global': reference.new_empty((0,)),
+                'margin_local': reference.new_empty((0,)),
+                'gate_host': reference.new_empty((0,)),
+                'gate_global': reference.new_empty((0,)),
+                'gate_local': reference.new_empty((0,)),
+                'proto_pair_signal': reference.new_empty((0,)),
+                'proto_gate': reference.new_empty((0,)),
+                'omega': reference.new_empty((0,)),
+                'routing_entropy': reference.new_empty((0,)),
+                'routing_top1_top2_gap': reference.new_empty((0,)),
+            },
             'debug_metrics': {},
         }
 
@@ -808,14 +838,26 @@ class PASRuntimeModel(nn.Module):
             host_pairwise_logits_for_plugin = (
                 host_outputs.get('surrogate_pairwise_logits') if policy.allow_host_pairwise_logits else None
             )
+            host_pairwise_logits_global_for_plugin = (
+                host_outputs.get('host_pairwise_logits_global') if policy.allow_host_pairwise_logits else None
+            )
+            host_pairwise_logits_local_for_plugin = (
+                host_outputs.get('host_pairwise_logits_local') if policy.allow_host_pairwise_logits else None
+            )
             if isinstance(host_pairwise_logits_for_plugin, torch.Tensor) and self.host_type == 'itself':
                 # ITSELF host similarity is returned as [text, image]; semantic hard-neg mining expects [image, text].
                 host_pairwise_logits_for_plugin = host_pairwise_logits_for_plugin.t().contiguous()
+            if isinstance(host_pairwise_logits_global_for_plugin, torch.Tensor) and self.host_type == 'itself':
+                host_pairwise_logits_global_for_plugin = host_pairwise_logits_global_for_plugin.t().contiguous()
+            if isinstance(host_pairwise_logits_local_for_plugin, torch.Tensor) and self.host_type == 'itself':
+                host_pairwise_logits_local_for_plugin = host_pairwise_logits_local_for_plugin.t().contiguous()
             interface = self.host_core.build_plugin_interface(
                 image_output=image_output,
                 text_output=text_output,
                 token_ids=batch['caption_ids'],
                 host_pairwise_logits=host_pairwise_logits_for_plugin,
+                host_pairwise_logits_global=host_pairwise_logits_global_for_plugin,
+                host_pairwise_logits_local=host_pairwise_logits_local_for_plugin,
                 policy=policy,
                 metadata={
                     'runtime_mode': mode,
@@ -871,6 +913,7 @@ class PASRuntimeModel(nn.Module):
             'loss_semantic_hosthard_weighted': prototype_losses.get('loss_semantic_hosthard_weighted', metric_zero),
             'loss_semantic_hosthard_weighted_image': prototype_losses.get('loss_semantic_hosthard_weighted_image', metric_zero),
             'loss_semantic_hosthard_weighted_text': prototype_losses.get('loss_semantic_hosthard_weighted_text', metric_zero),
+            'loss_hbr': prototype_losses.get('loss_hbr', metric_zero),
             'loss_diag': prototype_losses['loss_diag'],
             'loss_diversity': prototype_losses['loss_diversity'],
             'loss_balance': prototype_losses['loss_balance'],
@@ -880,6 +923,7 @@ class PASRuntimeModel(nn.Module):
                 'loss_semantic_hosthard_weighted_weighted',
                 metric_zero,
             ),
+            'loss_hbr_weighted': prototype_losses.get('loss_hbr_weighted', metric_zero),
             'loss_diag_weighted': prototype_losses['loss_diag_weighted'],
             'loss_diversity_weighted': prototype_losses['loss_diversity_weighted'],
             'loss_balance_weighted': prototype_losses['loss_balance_weighted'],
@@ -899,6 +943,8 @@ class PASRuntimeModel(nn.Module):
                 'lambda_semantic_hosthard_weighted',
                 metric_zero,
             ),
+            'use_loss_hbr': prototype_losses.get('use_loss_hbr', metric_zero),
+            'lambda_hbr': prototype_losses.get('lambda_hbr', metric_zero),
             'semantic_hosthard_margin_ref': prototype_losses.get('semantic_hosthard_margin_ref', metric_zero),
             'semantic_hosthard_tau': prototype_losses.get('semantic_hosthard_tau', metric_zero),
             'semantic_hosthard_eps': prototype_losses.get('semantic_hosthard_eps', metric_zero),
@@ -923,7 +969,12 @@ class PASRuntimeModel(nn.Module):
                 'loss_semantic_hosthard_weighted_scale',
                 prototype_losses.get('semantic_loss_scale', metric_zero.new_ones(())),
             ),
+            'loss_hbr_scale': prototype_losses.get(
+                'loss_hbr_scale',
+                prototype_losses.get('semantic_loss_scale', metric_zero.new_ones(())),
+            ),
             'semantic_loss_scale': prototype_losses.get('semantic_loss_scale', metric_zero),
+            'hbr_control_mode': prototype_losses.get('hbr_control_mode', 'none'),
             'lambda_diag': prototype_losses['lambda_diag'],
             'lambda_div': prototype_losses['lambda_div'],
             'lambda_bal': prototype_losses['lambda_bal'],
@@ -939,6 +990,9 @@ class PASRuntimeModel(nn.Module):
             'z_t_exact_diag': prototype_outputs['exact_text_projected'],
             'surrogate_pairwise_logits': prototype_outputs.get('surrogate_pairwise_logits'),
             'host_pairwise_logits': host_outputs.get('surrogate_pairwise_logits'),
+            'host_pairwise_logits_global': host_outputs.get('host_pairwise_logits_global'),
+            'host_pairwise_logits_local': host_outputs.get('host_pairwise_logits_local'),
+            'hbr_pairwise_export': prototype_losses.get('hbr_pairwise_export'),
             'debug': dict(host_outputs.get('metrics', {})),
         }
         outputs['debug'].update(prototype_outputs.get('metrics', {}))
