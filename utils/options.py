@@ -258,6 +258,16 @@ def build_parser():
     parser.add_argument('--normalize_for_token_scoring', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--tau_t', '--token_pooling_temperature', dest='token_pooling_temperature', type=float, default=0.07)
     parser.add_argument('--error_on_empty_kept_tokens', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument(
+        '--special_token_ids',
+        '--text_pooling.special_token_ids',
+        dest='special_token_ids',
+        type=int,
+        nargs=3,
+        metavar=('BOS_ID', 'EOS_ID', 'PAD_ID'),
+        default=None,
+        help='Override text_pooling.special_token_ids as three ints in order: bos_token_id eos_token_id pad_token_id.',
+    )
 
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--stage', '--training_stage', dest='training_stage', type=str, default='joint')
@@ -725,6 +735,18 @@ def _finalize_args(args):
     else:
         args.prototype_local_routing_adapter_dim = int(local_adapter_dim)
     args.prototype_local_routing_normalize_inputs = bool(getattr(args, 'prototype_local_routing_normalize_inputs', True))
+    special_token_ids = getattr(args, 'special_token_ids', None)
+    if isinstance(special_token_ids, (list, tuple)):
+        if len(special_token_ids) != 3:
+            raise ValueError(
+                'text_pooling.special_token_ids CLI override requires exactly three values: '
+                'bos_token_id eos_token_id pad_token_id.'
+            )
+        args.special_token_ids = {
+            'bos_token_id': int(special_token_ids[0]),
+            'eos_token_id': int(special_token_ids[1]),
+            'pad_token_id': int(special_token_ids[2]),
+        }
     args.image_backbone = args.image_backbone or args.pretrain_choice
     args.text_backbone = args.text_backbone or 'clip_text_transformer'
     return args

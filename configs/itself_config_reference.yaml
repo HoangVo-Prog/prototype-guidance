@@ -1,0 +1,1558 @@
+# What: controls `experiment` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+experiment:
+  # What: controls `experiment.name` runtime/config behavior.
+  # CLI: --name
+  # Options/Type: type=str; default=pas_v1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  name: itself_hbr
+  # What: controls `experiment.output_dir` runtime/config behavior.
+  # CLI: --output_dir
+  # Options/Type: type=str; default=runs
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  output_dir: runs
+  # What: controls `experiment.seed` runtime/config behavior.
+  # CLI: --seed
+  # Options/Type: type=int; default=1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  seed: 1
+  # What: controls `experiment.local_rank` runtime/config behavior.
+  # CLI: --local_rank
+  # Options/Type: type=int; default=0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  local_rank: 0
+# What: controls `model` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+model:
+  # What: controls `model.runtime_mode` runtime/config behavior.
+  # CLI: --runtime_mode
+  # Options/Type: choices=auto | host_only | joint_training; type=str; default=auto
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  runtime_mode: joint_training
+  # What: controls `model.variant` runtime/config behavior.
+  # CLI: --model_variant
+  # Options/Type: type=str; default=pas_v1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  variant: itself_hbr
+  # What: controls `model.temperature` runtime/config behavior.
+  # CLI: --temperature
+  # Options/Type: type=float; default=0.07
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  temperature: 0.02
+  # What: controls `model.pretrain_choice` runtime/config behavior.
+  # CLI: --pretrain_choice
+  # Options/Type: type=str; default=ViT-B/16
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  pretrain_choice: ViT-B/16
+  # What: controls `model.image_backbone` runtime/config behavior.
+  # CLI: --image_backbone
+  # Options/Type: type=str; default=clip_visual
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  image_backbone: clip_visual
+  # What: controls `model.text_backbone` runtime/config behavior.
+  # CLI: --text_backbone
+  # Options/Type: type=str; default=clip_text_transformer
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  text_backbone: clip_text_transformer
+  # What: controls `model.embedding_dim` runtime/config behavior.
+  # CLI: --embedding_dim
+  # Options/Type: type=int; default=512
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  embedding_dim: 512
+  # What: controls `model.projection_dim` runtime/config behavior.
+  # CLI: --projector_output_dim, --projection_dim
+  # Options/Type: type=int; default=256
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  projection_dim: 256
+  # What: controls `model.projector_hidden_dim` runtime/config behavior.
+  # CLI: --projector_hidden_dim
+  # Options/Type: type=int; default=512
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  projector_hidden_dim: 512
+  # What: controls `model.projector_dropout` runtime/config behavior.
+  # CLI: --projector_dropout
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  projector_dropout: 0.0
+  # What: controls `model.projector_type` runtime/config behavior.
+  # CLI: --projector_type
+  # Options/Type: choices=mlp2 | linear; type=str; default=mlp2
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  projector_type: mlp2
+  # What: controls `model.normalize_projector_outputs` runtime/config behavior.
+  # CLI: --normalize_projector_outputs
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  normalize_projector_outputs: true
+  # What: controls `model.use_custom_projector` runtime/config behavior.
+  # CLI: --use_custom_projector
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  use_custom_projector: true
+  # What: controls `model.backbone_precision` runtime/config behavior.
+  # CLI: --backbone_precision
+  # Options/Type: choices=fp16 | float16 | half | fp32 | float32 | full; type=str; default=fp16
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  backbone_precision: fp32
+  # What: controls `model.prototype_precision` runtime/config behavior.
+  # CLI: --prototype_precision
+  # Options/Type: choices=fp16 | float16 | half | fp32 | float32 | full; type=str; default=fp32
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_precision: fp32
+  # What: controls `model.img_size` runtime/config behavior.
+  # CLI: --img_size
+  # Options/Type: type=int, nargs=2; default=(384, 128)
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  img_size: [384, 128]
+  # What: controls `model.stride_size` runtime/config behavior.
+  # CLI: --stride_size
+  # Options/Type: type=int; default=16
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  stride_size: 16
+  # What: controls `model.text_length` runtime/config behavior.
+  # CLI: --text_length
+  # Options/Type: type=int; default=77
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  text_length: 77
+  # What: controls `model.vocab_size` runtime/config behavior.
+  # CLI: --vocab_size
+  # Options/Type: type=int; default=49408
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  vocab_size: 49408
+  # What: controls `model.use_prototype_branch` runtime/config behavior.
+  # CLI: --use_prototype_branch
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  use_prototype_branch: true
+  # What: controls `model.use_prototype_bank` runtime/config behavior.
+  # CLI: --use_prototype_bank
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  use_prototype_bank: true
+  # What: controls `model.use_image_conditioned_pooling` runtime/config behavior.
+  # CLI: --use_image_conditioned_pooling
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  use_image_conditioned_pooling: true
+  # What: controls `model.return_debug_outputs` runtime/config behavior.
+  # CLI: --return_debug_outputs
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  return_debug_outputs: false
+  # What: controls `model.prototype_method_role` runtime/config behavior.
+  # CLI: --prototype_method_role
+  # Options/Type: choices=semantic_structure; type=str; default=semantic_structure
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_method_role: semantic_structure
+  # What: controls `model.prototype_semantic_enabled` runtime/config behavior.
+  # CLI: --prototype_semantic_enabled
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_semantic_enabled: true
+  # What: controls `model.prototype_recompute_enabled` runtime/config behavior.
+  # CLI: --prototype_recompute_enabled
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_recompute_enabled: true
+  # What: controls `model.name` runtime/config behavior.
+  # CLI: --model_name
+  # Options/Type: type=str; default=PAS
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  name: PAS
+  # What: controls `model.training_mode` runtime/config behavior.
+  # CLI: --training_mode
+  # Options/Type: choices=pas | vanilla_clip; type=str; default=pas
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  training_mode: pas
+# What: controls `host` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+host:
+  # What: controls `host.type` runtime/config behavior.
+  # CLI: --host_type
+  # Options/Type: choices=clip | itself; type=str; default=clip
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  type: itself
+  # What: controls `host.freeze_projectors` runtime/config behavior.
+  # CLI: none
+  # Options/Type: type=yaml_native; default=current_yaml_value
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  freeze_projectors: false
+  # What: controls `host.itself_loss_names` runtime/config behavior.
+  # CLI: --itself_loss_names, --loss_names
+  # Options/Type: type=str; default=tal+cid
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_loss_names: tal+cid
+  # What: controls `host.itself_only_global` runtime/config behavior.
+  # CLI: --itself_only_global, --only_global
+  # Options/Type: type=str, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_only_global: false
+  # What: controls `host.itself_select_ratio` runtime/config behavior.
+  # CLI: --itself_select_ratio, --select_ratio
+  # Options/Type: type=float; default=0.4
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_select_ratio: 0.4
+  # What: controls `host.itself_grab_embed_dim` runtime/config behavior.
+  # CLI: --itself_grab_embed_dim
+  # Options/Type: type=int; default=4096
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_grab_embed_dim: 4096
+  # What: controls `host.itself_score_weight_global` runtime/config behavior.
+  # CLI: --itself_score_weight_global
+  # Options/Type: type=float; default=0.68
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_score_weight_global: 0.32
+  # What: controls `host.itself_tau` runtime/config behavior.
+  # CLI: --itself_tau, --tau
+  # Options/Type: type=float; default=0.015
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_tau: 0.015
+  # What: controls `host.itself_margin` runtime/config behavior.
+  # CLI: --itself_margin, --margin
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_margin: 0.1
+  # What: controls `host.itself_return_all` runtime/config behavior.
+  # CLI: --itself_return_all, --return_all
+  # Options/Type: type=str, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_return_all: true
+  # What: controls `host.itself_topk_type` runtime/config behavior.
+  # CLI: --itself_topk_type, --topk_type
+  # Options/Type: choices=mean | std | layer_index | custom; type=str; default=mean
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_topk_type: custom
+  # What: controls `host.itself_layer_index` runtime/config behavior.
+  # CLI: --itself_layer_index, --layer_index
+  # Options/Type: type=int; default=-1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_layer_index: -1
+  # What: controls `host.itself_average_attn_weights` runtime/config behavior.
+  # CLI: --itself_average_attn_weights, --average_attn_weights
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_average_attn_weights: true
+  # What: controls `host.itself_modify_k` runtime/config behavior.
+  # CLI: --itself_modify_k, --modify_k
+  # Options/Type: type=str, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_modify_k: true
+  # What: controls `host.itself_lambda1_weight` runtime/config behavior.
+  # CLI: --lambda1_weight
+  # Options/Type: type=float; default=0.5
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  itself_lambda1_weight: 0.5
+  # What: controls `host.itself_lambda2_weight` runtime/config behavior.
+  # CLI: --lambda2_weight
+  # Options/Type: type=float; default=3.5
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  itself_lambda2_weight: 3.5
+# What: controls `prototype` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+prototype:
+  # What: controls `prototype.num_prototypes` runtime/config behavior.
+  # CLI: --prototype_num_prototypes
+  # Options/Type: type=int; default=32
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  num_prototypes: 32
+  # What: controls `prototype.prototype_dim` runtime/config behavior.
+  # CLI: --prototype_dim
+  # Options/Type: type=int; default=512
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_dim: 512
+  # What: controls `prototype.prototype_init` runtime/config behavior.
+  # CLI: --prototype_init
+  # Options/Type: choices=normalized_random | sampled_image_embeddings | kmeans_centroids | orthogonal_normalized_random | spherical_kmeans_centroids | hybrid_spherical_kmeans_random; type=str; default=normalized_random
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_init: kmeans_centroids
+  # What: controls `prototype.prototype_init_hybrid_ratio` runtime/config behavior.
+  # CLI: --prototype_init_hybrid_ratio
+  # Options/Type: type=float; default=0.5
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_init_hybrid_ratio: 0.5
+  # What: controls `prototype.prototype_init_max_iters` runtime/config behavior.
+  # CLI: --prototype_init_max_iters
+  # Options/Type: type=int; default=50
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_init_max_iters: 50
+  # What: controls `prototype.prototype_init_tol` runtime/config behavior.
+  # CLI: --prototype_init_tol
+  # Options/Type: type=float; default=0.0001
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_init_tol: 1.0e-4
+  # What: controls `prototype.routing_type` runtime/config behavior.
+  # CLI: --routing_similarity, --prototype_routing_type
+  # Options/Type: choices=cosine | dot; type=str; default=cosine
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  routing_type: cosine
+  # What: controls `prototype.routing_temperature` runtime/config behavior.
+  # CLI: --tau_p, --prototype_temperature
+  # Options/Type: type=float; default=0.07
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  routing_temperature: 0.07
+  # What: controls `prototype.local_routing_temperature` runtime/config behavior.
+  # CLI: --prototype_local_routing_temperature
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  local_routing_temperature: 0.07
+  # What: controls `prototype.local_routing_pooling` runtime/config behavior.
+  # CLI: --prototype_local_routing_pooling
+  # Options/Type: type=str; default=logsumexp
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  local_routing_pooling: logsumexp
+  # What: controls `prototype.local_routing_use_adapter` runtime/config behavior.
+  # CLI: --prototype_local_routing_use_adapter
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  local_routing_use_adapter: true
+  # What: controls `prototype.local_routing_adapter_dim` runtime/config behavior.
+  # CLI: --prototype_local_routing_adapter_dim
+  # Options/Type: type=int; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  local_routing_adapter_dim: 
+  # What: controls `prototype.local_routing_normalize_inputs` runtime/config behavior.
+  # CLI: --prototype_local_routing_normalize_inputs
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  local_routing_normalize_inputs: true
+  # What: controls `prototype.contextualization_enabled` runtime/config behavior.
+  # CLI: --prototype_contextualization_enabled
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  contextualization_enabled: false
+  # What: controls `prototype.contextualization_type` runtime/config behavior.
+  # CLI: --prototype_contextualization_type
+  # Options/Type: choices=self_attention | dense_self_attention | none; type=str; default=self_attention
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  contextualization_type: self_attention
+  # What: controls `prototype.contextualization_residual` runtime/config behavior.
+  # CLI: --prototype_contextualization_residual
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  contextualization_residual: false
+  # What: controls `prototype.bank_source` runtime/config behavior.
+  # CLI: --prototype_bank_source
+  # Options/Type: choices=learnable_legacy | recomputed_kmeans | auto; type=str; default=learnable_legacy
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  bank_source: recomputed_kmeans
+  # What: controls `prototype.use_base_for_semantic_targets` runtime/config behavior.
+  # CLI: --prototype_use_base_for_semantic_targets
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  use_base_for_semantic_targets: true
+  # What: controls `prototype.normalize_for_self_interaction` runtime/config behavior.
+  # CLI: --normalize_for_self_interaction
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  normalize_for_self_interaction: true
+  # What: controls `prototype.normalize_for_routing` runtime/config behavior.
+  # CLI: --normalize_for_routing
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  normalize_for_routing: true
+  # What: controls `prototype.dead_prototype_threshold` runtime/config behavior.
+  # CLI: --prototype_dead_threshold
+  # Options/Type: type=float; default=0.005
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  dead_prototype_threshold: 0.005
+  # What: controls `prototype.routing_source` runtime/config behavior.
+  # CLI: --prototype_routing_source
+  # Options/Type: type=str; default=global
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  routing_source: global
+  # What: controls `prototype.prototype_init_path` runtime/config behavior.
+  # CLI: --prototype_init_path
+  # Options/Type: type=str; default=''
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  prototype_init_path: ''
+  # What: controls `prototype.prototype_init_seed` runtime/config behavior.
+  # CLI: --prototype_init_seed
+  # Options/Type: type=int; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  prototype_init_seed: 
+# What: controls `semantic_structure` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+semantic_structure:
+  # What: controls `semantic_structure.enabled` runtime/config behavior.
+  # CLI: --semantic_structure_enabled
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  enabled: true
+  # What: controls `semantic_structure.feature_space` runtime/config behavior.
+  # CLI: --semantic_feature_space
+  # Options/Type: type=str; default=prototype_projected
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  feature_space: prototype_projected
+  # What: controls `semantic_structure.pbt_enabled` runtime/config behavior.
+  # CLI: --semantic_pbt_enabled
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  pbt_enabled: true
+  # What: controls `semantic_structure.soft_target_enabled` runtime/config behavior.
+  # CLI: --semantic_soft_target_enabled
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  soft_target_enabled: true
+  # What: controls `semantic_structure.target_temperature` runtime/config behavior.
+  # CLI: --semantic_target_temperature
+  # Options/Type: type=float; default=0.01
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  target_temperature: 0.01
+  # What: controls `semantic_structure.pred_temperature` runtime/config behavior.
+  # CLI: --semantic_pred_temperature
+  # Options/Type: type=float; default=0.07
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  pred_temperature: 0.07
+  # What: controls `semantic_structure.recompute_schedule` runtime/config behavior.
+  # CLI: --semantic_recompute_schedule
+  # Options/Type: choices=epoch | steps | stage; type=str; default=epoch
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  recompute_schedule: epoch
+  # What: controls `semantic_structure.recompute_interval` runtime/config behavior.
+  # CLI: --semantic_recompute_interval
+  # Options/Type: type=int; default=1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  recompute_interval: 2
+  # What: controls `semantic_structure.min_cluster_count_for_pbt` runtime/config behavior.
+  # CLI: --semantic_min_cluster_count_for_pbt
+  # Options/Type: type=float; default=1.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  min_cluster_count_for_pbt: 1.0
+  # What: controls `semantic_structure.empty_cluster_policy` runtime/config behavior.
+  # CLI: --semantic_empty_cluster_policy
+  # Options/Type: choices=skip | reseed; type=str; default=skip
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  empty_cluster_policy: skip
+  # What: controls `semantic_structure.text_teacher_source` runtime/config behavior.
+  # CLI: --semantic_text_teacher_source
+  # Options/Type: choices=exact_diagonal; type=str; default=exact_diagonal
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  text_teacher_source: exact_diagonal
+  # What: controls `semantic_structure.text_student_source` runtime/config behavior.
+  # CLI: --semantic_text_student_source
+  # Options/Type: choices=surrogate_diagonal; type=str; default=surrogate_diagonal
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  text_student_source: surrogate_diagonal
+  # What: controls `semantic_structure.image_student_source` runtime/config behavior.
+  # CLI: --semantic_image_student_source
+  # Options/Type: choices=image_semantic_feature; type=str; default=image_semantic_feature
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  image_student_source: image_semantic_feature
+  # What: controls `semantic_structure.recompute_start_epoch` runtime/config behavior.
+  # CLI: --semantic_recompute_start_epoch
+  # Options/Type: type=int; default=0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  recompute_start_epoch: 0
+  # What: controls `semantic_structure.recompute_start_step` runtime/config behavior.
+  # CLI: --semantic_recompute_start_step
+  # Options/Type: type=int; default=0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  recompute_start_step: 0
+  # What: controls `semantic_structure.loss_ramp_start_epoch` runtime/config behavior.
+  # CLI: --semantic_loss_ramp_start_epoch
+  # Options/Type: type=int; default=0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  loss_ramp_start_epoch: 0
+  # What: controls `semantic_structure.loss_ramp_start_step` runtime/config behavior.
+  # CLI: --semantic_loss_ramp_start_step
+  # Options/Type: type=int; default=0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  loss_ramp_start_step: 0
+  # What: controls `semantic_structure.loss_ramp_epochs` runtime/config behavior.
+  # CLI: --semantic_loss_ramp_epochs
+  # Options/Type: type=int; default=0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  loss_ramp_epochs: 0
+  # What: controls `semantic_structure.loss_ramp_steps` runtime/config behavior.
+  # CLI: --semantic_loss_ramp_steps
+  # Options/Type: type=int; default=0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  loss_ramp_steps: 0
+  # What: controls `semantic_structure.ramp_loss_diag` runtime/config behavior.
+  # CLI: --semantic_ramp_loss_diag
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  ramp_loss_diag: true
+  # What: controls `semantic_structure.ramp_loss_semantic_pbt` runtime/config behavior.
+  # CLI: --semantic_ramp_loss_semantic_pbt
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  ramp_loss_semantic_pbt: false
+  # What: controls `semantic_structure.ramp_loss_semantic_hardneg_margin` runtime/config behavior.
+  # CLI: --semantic_ramp_loss_semantic_hardneg_margin
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  ramp_loss_semantic_hardneg_margin: false
+  # What: controls `semantic_structure.ramp_loss_semantic_hosthard_weighted` runtime/config behavior.
+  # CLI: --semantic_ramp_loss_semantic_hosthard_weighted
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  ramp_loss_semantic_hosthard_weighted: false
+  # What: controls `semantic_structure.ramp_use_prototype` runtime/config behavior.
+  # CLI: --semantic_ramp_use_prototype
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  ramp_use_prototype: true
+# What: controls `objectives` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+objectives:
+  # What: controls `objectives.objectives` runtime/config behavior.
+  # CLI: none
+  # Options/Type: type=yaml_native; default=current_yaml_value
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  objectives:
+    # What: controls `objectives.objectives.use_host_loss` runtime/config behavior.
+    # CLI: --use_host_loss
+    # Options/Type: type=_str2bool, nargs=?; default=True
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    use_host_loss: true
+    # What: controls `objectives.objectives.use_loss_diag` runtime/config behavior.
+    # CLI: --use_loss_diag
+    # Options/Type: type=_str2bool, nargs=?; default=True
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    use_loss_diag: true
+    # What: controls `objectives.objectives.use_loss_semantic_pbt` runtime/config behavior.
+    # CLI: --use_loss_semantic_pbt
+    # Options/Type: type=_str2bool, nargs=?; default=False
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    use_loss_semantic_pbt: false
+    # What: controls `objectives.objectives.use_loss_semantic_hardneg_margin` runtime/config behavior.
+    # CLI: --use_loss_semantic_hardneg_margin
+    # Options/Type: type=_str2bool, nargs=?; default=False
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    use_loss_semantic_hardneg_margin: false
+    # What: controls `objectives.objectives.use_loss_semantic_hosthard_weighted` runtime/config behavior.
+    # CLI: --use_loss_semantic_hosthard_weighted
+    # Options/Type: type=_str2bool, nargs=?; default=False
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    use_loss_semantic_hosthard_weighted: false
+    # What: controls `objectives.objectives.use_hbr` runtime/config behavior.
+    # CLI: --use_hbr
+    # Options/Type: type=_str2bool, nargs=?; default=False
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    use_hbr: true
+    # What: controls `objectives.objectives.retrieval_mode` runtime/config behavior.
+    # CLI: --retrieval_mode
+    # Options/Type: choices=surrogate_i2t | clip_bidirectional; type=str; default=surrogate_i2t
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    retrieval_mode: clip_bidirectional
+    # What: controls `objectives.objectives.use_balancing_loss` runtime/config behavior.
+    # CLI: --use_balancing_loss
+    # Options/Type: type=_str2bool, nargs=?; default=False
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    use_balancing_loss: false
+    # What: controls `objectives.objectives.use_diversity_loss` runtime/config behavior.
+    # CLI: --use_diversity_loss
+    # Options/Type: type=_str2bool, nargs=?; default=True
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    use_diversity_loss: false
+  # What: controls `objectives.lambda` runtime/config behavior.
+  # CLI: none
+  # Options/Type: type=yaml_native; default=current_yaml_value
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lambda:
+    # What: controls `objectives.lambda.host` runtime/config behavior.
+    # CLI: --lambda_host
+    # Options/Type: type=float; default=1.0
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    host: 1.0
+    # What: controls `objectives.lambda.diag` runtime/config behavior.
+    # CLI: --lambda_diag
+    # Options/Type: type=float; default=1.0
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    diag: 4.0
+    # What: controls `objectives.lambda.semantic_pbt` runtime/config behavior.
+    # CLI: --lambda_semantic_pbt
+    # Options/Type: type=float; default=0.0
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    semantic_pbt: 0.0
+    # What: controls `objectives.lambda.semantic_hardneg_margin` runtime/config behavior.
+    # CLI: --lambda_semantic_hardneg_margin
+    # Options/Type: type=float; default=0.0
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    semantic_hardneg_margin: 0.0
+    # What: controls `objectives.lambda.semantic_hosthard_weighted` runtime/config behavior.
+    # CLI: --lambda_semantic_hosthard_weighted
+    # Options/Type: type=float; default=0.0
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    semantic_hosthard_weighted: 0.0
+    # What: controls `objectives.lambda.hbr` runtime/config behavior.
+    # CLI: --lambda_hbr
+    # Options/Type: type=float; default=0.0
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    hbr: 100.0
+    # What: controls `objectives.lambda.balance` runtime/config behavior.
+    # CLI: --lambda_bal, --prototype_balance_loss_weight
+    # Options/Type: type=float; default=0.0
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    balance: 0.0
+    # What: controls `objectives.lambda.diversity` runtime/config behavior.
+    # CLI: --lambda_div, --diversity_loss_weight
+    # Options/Type: type=float; default=0.01
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    diversity: 0.0
+  # What: controls `objectives.semantic_hardneg_margin` runtime/config behavior.
+  # CLI: --semantic_hardneg_margin
+  # Options/Type: type=float; default=0.05
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  semantic_hardneg_margin: 0.05
+  # What: controls `objectives.semantic_hardneg_eps` runtime/config behavior.
+  # CLI: --semantic_hardneg_eps
+  # Options/Type: type=float; default=1e-08
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  semantic_hardneg_eps: 1.0e-8
+  # What: controls `objectives.semantic_hosthard_margin_ref` runtime/config behavior.
+  # CLI: --semantic_hosthard_margin_ref
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  semantic_hosthard_margin_ref: 0.0
+  # What: controls `objectives.semantic_hosthard_tau` runtime/config behavior.
+  # CLI: --semantic_hosthard_tau
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  semantic_hosthard_tau: 0.1
+  # What: controls `objectives.semantic_hosthard_eps` runtime/config behavior.
+  # CLI: --semantic_hosthard_eps
+  # Options/Type: type=float; default=1e-08
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  semantic_hosthard_eps: 1.0e-8
+  # What: controls `objectives.semantic_hosthard_normalize_weights` runtime/config behavior.
+  # CLI: --semantic_hosthard_normalize_weights
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  semantic_hosthard_normalize_weights: true
+# What: controls `hbr` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+hbr:
+  # What: controls `hbr.topk_hard_negatives` runtime/config behavior.
+  # CLI: --hbr_topk_hard_negatives
+  # Options/Type: type=int; default=5
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  topk_hard_negatives: 5
+  # What: controls `hbr.tail_selection_mode` runtime/config behavior.
+  # CLI: --hbr_tail_selection_mode
+  # Options/Type: choices=bottomk | threshold; type=str; default=bottomk
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  tail_selection_mode: bottomk
+  # What: controls `hbr.tail_bottomk` runtime/config behavior.
+  # CLI: --hbr_tail_bottomk
+  # Options/Type: type=int; default=5
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  tail_bottomk: 5
+  # What: controls `hbr.tail_margin_threshold` runtime/config behavior.
+  # CLI: --hbr_tail_margin_threshold
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  tail_margin_threshold: 
+  # What: controls `hbr.inner_tail_weight_mode` runtime/config behavior.
+  # CLI: --hbr_inner_tail_weight_mode
+  # Options/Type: choices=uniform | sigmoid_proto | softmax_proto; type=str; default=uniform
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  inner_tail_weight_mode: uniform
+  # What: controls `hbr.proto_inner_tau` runtime/config behavior.
+  # CLI: --hbr_proto_inner_tau
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  proto_inner_tau: 0.1
+  # What: controls `hbr.proto_inner_center` runtime/config behavior.
+  # CLI: --hbr_proto_inner_center
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  proto_inner_center: 0.0
+  # What: controls `hbr.adaptive_margin_enabled` runtime/config behavior.
+  # CLI: --hbr_adaptive_margin_enabled
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  adaptive_margin_enabled: false
+  # What: controls `hbr.adaptive_margin_lambda` runtime/config behavior.
+  # CLI: --hbr_adaptive_margin_lambda
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  adaptive_margin_lambda: 0.0
+  # What: controls `hbr.base_margin` runtime/config behavior.
+  # CLI: --hbr_base_margin
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  base_margin: 0.1
+  # What: controls `hbr.host_gate_margin` runtime/config behavior.
+  # CLI: --hbr_host_gate_margin
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  host_gate_margin: 0.1
+  # What: controls `hbr.host_gate_temperature` runtime/config behavior.
+  # CLI: --hbr_host_gate_temperature
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  host_gate_temperature: 0.1
+  # What: controls `hbr.use_global_local_decomposition` runtime/config behavior.
+  # CLI: --hbr_use_global_local_decomposition
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  use_global_local_decomposition: true
+  # What: controls `hbr.global_gate_margin` runtime/config behavior.
+  # CLI: --hbr_global_gate_margin
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  global_gate_margin: 0.1
+  # What: controls `hbr.local_gate_margin` runtime/config behavior.
+  # CLI: --hbr_local_gate_margin
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  local_gate_margin: 0.1
+  # What: controls `hbr.global_gate_weight` runtime/config behavior.
+  # CLI: --hbr_global_gate_weight
+  # Options/Type: type=float; default=1.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  global_gate_weight: 1.0
+  # What: controls `hbr.local_gate_weight` runtime/config behavior.
+  # CLI: --hbr_local_gate_weight
+  # Options/Type: type=float; default=1.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  local_gate_weight: 1.0
+  # What: controls `hbr.use_prototype_pair_signal` runtime/config behavior.
+  # CLI: --hbr_use_prototype_pair_signal
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  use_prototype_pair_signal: true
+  # What: controls `hbr.proto_signal_temperature` runtime/config behavior.
+  # CLI: --hbr_proto_signal_temperature
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  proto_signal_temperature: 0.1
+  # What: controls `hbr.proto_signal_center` runtime/config behavior.
+  # CLI: --hbr_proto_signal_center
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  proto_signal_center: 0.0
+  # What: controls `hbr.stopgrad_proto_signal` runtime/config behavior.
+  # CLI: --hbr_stopgrad_proto_signal
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  stopgrad_proto_signal: true
+  # What: controls `hbr.control_mode` runtime/config behavior.
+  # CLI: --hbr_control_mode
+  # Options/Type: choices=none | host_only_weight | proto_weight | proto_weight_shuffled | random_matched_weight | proto_adaptive_margin; type=str; default=none
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  control_mode: proto_weight
+  # What: controls `hbr.proto_adaptive_margin_weight` runtime/config behavior.
+  # CLI: --hbr_proto_adaptive_margin_weight
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  proto_adaptive_margin_weight: 0.0
+# What: controls `text_pooling` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+text_pooling:
+  # What: controls `text_pooling.token_policy` runtime/config behavior.
+  # CLI: --token_policy
+  # Options/Type: choices=content_only | content_plus_special | eos_only; type=str; default=content_only
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  token_policy: content_only
+  # What: controls `text_pooling.scoring_type` runtime/config behavior.
+  # CLI: --token_similarity, --token_scoring_type
+  # Options/Type: choices=cosine | dot; type=str; default=cosine
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  scoring_type: cosine
+  # What: controls `text_pooling.normalize_for_token_scoring` runtime/config behavior.
+  # CLI: --normalize_for_token_scoring
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  normalize_for_token_scoring: true
+  # What: controls `text_pooling.token_temperature` runtime/config behavior.
+  # CLI: --tau_t, --token_pooling_temperature
+  # Options/Type: type=float; default=0.07
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  token_temperature: 0.07
+  # What: controls `text_pooling.special_token_ids` runtime/config behavior.
+  # CLI: --special_token_ids, --text_pooling.special_token_ids
+  # Options/Type: type=int, nargs=3; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  special_token_ids:
+    # What: controls `text_pooling.special_token_ids.bos_token_id` runtime/config behavior.
+    # CLI: none
+    # Options/Type: type=yaml_native; default=current_yaml_value
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    # WARNING: present_in_yaml_but_no_code_usage_found
+    bos_token_id: 49406
+    # What: controls `text_pooling.special_token_ids.eos_token_id` runtime/config behavior.
+    # CLI: none
+    # Options/Type: type=yaml_native; default=current_yaml_value
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    # WARNING: present_in_yaml_but_no_code_usage_found
+    eos_token_id: 49407
+    # What: controls `text_pooling.special_token_ids.pad_token_id` runtime/config behavior.
+    # CLI: none
+    # Options/Type: type=yaml_native; default=current_yaml_value
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    # WARNING: present_in_yaml_but_no_code_usage_found
+    pad_token_id: 0
+  # What: controls `text_pooling.error_on_empty_kept_tokens` runtime/config behavior.
+  # CLI: --error_on_empty_kept_tokens
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  error_on_empty_kept_tokens: true
+# What: controls `training` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+training:
+  # What: controls `training.batch_size` runtime/config behavior.
+  # CLI: --batch_size
+  # Options/Type: type=int; default=32
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  batch_size: 256
+  # What: controls `training.epochs` runtime/config behavior.
+  # CLI: --epochs, --num_epoch
+  # Options/Type: type=int; default=60
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  epochs: 15
+  # What: controls `training.log_period` runtime/config behavior.
+  # CLI: --log_period
+  # Options/Type: type=int; default=50
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  log_period: 50
+  # What: controls `training.eval_frequency` runtime/config behavior.
+  # CLI: --eval_frequency, --eval_period
+  # Options/Type: type=int; default=1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  eval_frequency: 1
+  # What: controls `training.early_stopping_enabled` runtime/config behavior.
+  # CLI: --early_stopping_enabled
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  early_stopping_enabled: true
+  # What: controls `training.early_stopping_metric` runtime/config behavior.
+  # CLI: --early_stopping_metric
+  # Options/Type: type=str; default=R1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  early_stopping_metric: R1
+  # What: controls `training.early_stopping_mode` runtime/config behavior.
+  # CLI: --early_stopping_mode
+  # Options/Type: choices=max | min; type=str; default=max
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  early_stopping_mode: max
+  # What: controls `training.early_stopping_patience` runtime/config behavior.
+  # CLI: --early_stopping_patience
+  # Options/Type: type=int; default=5
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  early_stopping_patience: 5
+  # What: controls `training.early_stopping_min_delta` runtime/config behavior.
+  # CLI: --early_stopping_min_delta
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  early_stopping_min_delta: 0.0
+  # What: controls `training.early_stopping_start_epoch` runtime/config behavior.
+  # CLI: --early_stopping_start_epoch
+  # Options/Type: type=int; default=1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  early_stopping_start_epoch: 1
+  # What: controls `training.early_stopping_monitored_bucket` runtime/config behavior.
+  # CLI: --early_stopping_monitored_bucket
+  # Options/Type: type=str; default=host
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  early_stopping_monitored_bucket: host
+  # What: controls `training.early_stopping_monitored_task_pattern` runtime/config behavior.
+  # CLI: --early_stopping_monitored_task_pattern
+  # Options/Type: type=str; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  early_stopping_monitored_task_pattern: 
+  # What: controls `training.early_stopping_stop_on_nan` runtime/config behavior.
+  # CLI: --early_stopping_stop_on_nan
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  early_stopping_stop_on_nan: false
+  # What: controls `training.save_interval` runtime/config behavior.
+  # CLI: --save_interval
+  # Options/Type: type=int; default=1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  save_interval: 1
+  # What: controls `training.img_aug` runtime/config behavior.
+  # CLI: --img_aug
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  img_aug: true
+  # What: controls `training.txt_aug` runtime/config behavior.
+  # CLI: --txt_aug
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  txt_aug: true
+  # What: controls `training.sampler` runtime/config behavior.
+  # CLI: --sampler
+  # Options/Type: type=str; default=identity
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  sampler: identity
+  # What: controls `training.num_instance` runtime/config behavior.
+  # CLI: --num_instance
+  # Options/Type: type=int; default=2
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  num_instance: 2
+  # What: controls `training.num_workers` runtime/config behavior.
+  # CLI: --num_workers
+  # Options/Type: type=int; default=4
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  num_workers: 4
+  # What: controls `training.training` runtime/config behavior.
+  # CLI: --test
+  # Options/Type: type=str; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  training: true
+  # What: controls `training.freeze_host_backbone` runtime/config behavior.
+  # CLI: --freeze_host_backbone
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  freeze_host_backbone: false
+  # What: controls `training.freeze_host_retrieval` runtime/config behavior.
+  # CLI: --freeze_host_retrieval
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  freeze_host_retrieval: false
+  # What: controls `training.freeze_prototype_bank` runtime/config behavior.
+  # CLI: --freeze_prototype_bank
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  freeze_prototype_bank: false
+  # What: controls `training.freeze_prototype_projector` runtime/config behavior.
+  # CLI: --freeze_prototype_projector
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  freeze_prototype_projector: false
+  # What: controls `training.freeze_routing` runtime/config behavior.
+  # CLI: --freeze_routing
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  freeze_routing: false
+  # What: controls `training.freeze_image_backbone` runtime/config behavior.
+  # CLI: --freeze_image_backbone
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  freeze_image_backbone: false
+  # What: controls `training.freeze_text_backbone` runtime/config behavior.
+  # CLI: --freeze_text_backbone
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  freeze_text_backbone: false
+  # What: controls `training.grad_clip` runtime/config behavior.
+  # CLI: --grad_clip
+  # Options/Type: type=float; default=1.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  grad_clip: 0.0
+  # What: controls `training.amp` runtime/config behavior.
+  # CLI: --amp
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  amp: false
+  # What: controls `training.amp_dtype` runtime/config behavior.
+  # CLI: --amp_dtype
+  # Options/Type: choices=fp16 | float16 | half | bf16 | bfloat16; type=str; default=fp16
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  amp_dtype: fp16
+  # What: controls `training.stage` runtime/config behavior.
+  # CLI: --stage, --training_stage
+  # Options/Type: choices=stage0 | stage1 | stage2 | stage3 | joint; type=str; default=joint
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  stage: joint
+  # What: controls `training.prototype_selection_metric` runtime/config behavior.
+  # CLI: --prototype-selection-metric
+  # Options/Type: type=str; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  prototype_selection_metric: 
+  # What: controls `training.resume` runtime/config behavior.
+  # CLI: --resume
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  resume: false
+  # What: controls `training.resume_ckpt_file` runtime/config behavior.
+  # CLI: --resume_ckpt_file
+  # Options/Type: type=str; default=''
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  resume_ckpt_file: ''
+  # What: controls `training.resume_strict` runtime/config behavior.
+  # CLI: --resume_strict
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  resume_strict: false
+  # What: controls `training.resume_restore_rng` runtime/config behavior.
+  # CLI: --resume_restore_rng
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  resume_restore_rng: true
+  # What: controls `training.finetune` runtime/config behavior.
+  # CLI: --finetune
+  # Options/Type: type=str; default=''
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  finetune: ''
+  # What: controls `training.freeze_fusion` runtime/config behavior.
+  # CLI: --freeze_fusion
+  # Options/Type: type=_str2bool, nargs=?; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  freeze_fusion: 
+  # What: controls `training.proxy_temperature` runtime/config behavior.
+  # CLI: --proxy_temperature
+  # Options/Type: type=float; default=0.07
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  proxy_temperature: 0.07
+  # What: controls `training.diag_temperature` runtime/config behavior.
+  # CLI: --diag_temperature
+  # Options/Type: type=float; default=0.07
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  diag_temperature: 0.07
+# What: controls `optimizer` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+optimizer:
+  # What: controls `optimizer.type` runtime/config behavior.
+  # CLI: --optimizer_type, --optimizer
+  # Options/Type: choices=SGD | Adam | AdamW; type=str; default=AdamW
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  type: Adam         # SGD | Adam | AdamW
+  # What: controls `optimizer.lr` runtime/config behavior.
+  # CLI: --lr
+  # Options/Type: type=float; default=0.001
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  lr: 1.0e-5           # default LR for "other" params
+  # What: controls `optimizer.weight_decay` runtime/config behavior.
+  # CLI: --weight_decay
+  # Options/Type: type=float; default=0.01
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  weight_decay: 4.0e-5 # default WD for "other" params
+  # What: controls `optimizer.lr_prototype_bank` runtime/config behavior.
+  # CLI: --lr_prototype_bank
+  # Options/Type: type=float; default=0.001
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lr_prototype_bank: 1.0e-4
+  # What: controls `optimizer.lr_projectors` runtime/config behavior.
+  # CLI: --lr_projectors
+  # Options/Type: type=float; default=0.001
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lr_projectors: 1.0e-4
+  # What: controls `optimizer.lr_prototype_routing` runtime/config behavior.
+  # CLI: --lr_prototype_routing
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lr_prototype_routing: 5.0e-5
+  # What: controls `optimizer.lr_prototype_pooling` runtime/config behavior.
+  # CLI: --lr_prototype_pooling
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lr_prototype_pooling: 5.0e-5
+  # What: controls `optimizer.lr_prototype_contextualization` runtime/config behavior.
+  # CLI: --lr_prototype_contextualization
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lr_prototype_contextualization: null
+  # What: controls `optimizer.lr_host_projectors` runtime/config behavior.
+  # CLI: --lr_host_projectors
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lr_host_projectors: 1.0e-5
+  # What: controls `optimizer.lr_class_proxies` runtime/config behavior.
+  # CLI: --lr_class_proxies
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lr_class_proxies: 1.0e-5
+  # What: controls `optimizer.lr_image_backbone` runtime/config behavior.
+  # CLI: --lr_image_backbone
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lr_image_backbone: 1.0e-5
+  # What: controls `optimizer.lr_text_backbone` runtime/config behavior.
+  # CLI: --lr_text_backbone
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  lr_text_backbone: 1.0e-5
+  # What: controls `optimizer.weight_decay_prototype_bank` runtime/config behavior.
+  # CLI: --weight_decay_prototype_bank
+  # Options/Type: type=float; default=0.01
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  weight_decay_prototype_bank: 1.0e-4
+  # What: controls `optimizer.weight_decay_projectors` runtime/config behavior.
+  # CLI: --weight_decay_projectors
+  # Options/Type: type=float; default=0.05
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  weight_decay_projectors: 1.0e-4
+  # What: controls `optimizer.weight_decay_prototype_routing` runtime/config behavior.
+  # CLI: --weight_decay_prototype_routing
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  weight_decay_prototype_routing: 4.0e-5
+  # What: controls `optimizer.weight_decay_prototype_pooling` runtime/config behavior.
+  # CLI: --weight_decay_prototype_pooling
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  weight_decay_prototype_pooling: 4.0e-5
+  # What: controls `optimizer.weight_decay_prototype_contextualization` runtime/config behavior.
+  # CLI: --weight_decay_prototype_contextualization
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  weight_decay_prototype_contextualization: null
+  # What: controls `optimizer.weight_decay_host_projectors` runtime/config behavior.
+  # CLI: --weight_decay_host_projectors
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  weight_decay_host_projectors: 4.0e-5
+  # What: controls `optimizer.weight_decay_class_proxies` runtime/config behavior.
+  # CLI: --weight_decay_class_proxies
+  # Options/Type: type=float; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  weight_decay_class_proxies: 4.0e-5
+  # What: controls `optimizer.weight_decay_image_backbone` runtime/config behavior.
+  # CLI: --weight_decay_image_backbone
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  weight_decay_image_backbone: 4.0e-5
+  # What: controls `optimizer.weight_decay_text_backbone` runtime/config behavior.
+  # CLI: --weight_decay_text_backbone
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: present_in_yaml_but_no_code_usage_found
+  weight_decay_text_backbone: 4.0e-5
+  # What: controls `optimizer.momentum` runtime/config behavior.
+  # CLI: --momentum
+  # Options/Type: type=float; default=0.9
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  momentum: 0.9
+  # What: controls `optimizer.alpha` runtime/config behavior.
+  # CLI: --alpha
+  # Options/Type: type=float; default=0.9
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  alpha: 0.9
+  # What: controls `optimizer.beta` runtime/config behavior.
+  # CLI: --beta
+  # Options/Type: type=float; default=0.999
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  beta: 0.999
+  # What: controls `optimizer.lr_factor` runtime/config behavior.
+  # CLI: --lr_factor
+  # Options/Type: type=float; default=5.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  lr_factor: 5.0
+  # What: controls `optimizer.bias_lr_factor` runtime/config behavior.
+  # CLI: --bias_lr_factor
+  # Options/Type: type=float; default=2.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  bias_lr_factor: 2.0
+  # What: controls `optimizer.weight_decay_bias` runtime/config behavior.
+  # CLI: --weight_decay_bias
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  weight_decay_bias: 0.0
+  # What: controls `optimizer.optimizer_eps` runtime/config behavior.
+  # CLI: --optimizer_eps
+  # Options/Type: type=float; default=1e-08
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  optimizer_eps: 1.0e-3
+  # What: controls `optimizer.milestones` runtime/config behavior.
+  # CLI: --milestones
+  # Options/Type: type=int, nargs=+; default=(40, 50)
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  milestones: [45, 50]
+  # What: controls `optimizer.gamma` runtime/config behavior.
+  # CLI: --gamma
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  gamma: 0.1
+  # What: controls `optimizer.warmup_factor` runtime/config behavior.
+  # CLI: --warmup_factor
+  # Options/Type: type=float; default=0.1
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  warmup_factor: 0.1
+  # What: controls `optimizer.warmup_epochs` runtime/config behavior.
+  # CLI: --warmup_epochs
+  # Options/Type: type=int; default=5
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  warmup_epochs: 5
+  # What: controls `optimizer.warmup_method` runtime/config behavior.
+  # CLI: --warmup_method
+  # Options/Type: type=str; default=linear
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  warmup_method: linear
+  # What: controls `optimizer.scheduler` runtime/config behavior.
+  # CLI: --lr_scheduler, --lrscheduler
+  # Options/Type: choices=step | exp | poly | cosine | linear; type=str; default=cosine
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  scheduler: cosine
+  # What: controls `optimizer.target_lr` runtime/config behavior.
+  # CLI: --target_lr
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  target_lr: 0.0
+  # What: controls `optimizer.power` runtime/config behavior.
+  # CLI: --power
+  # Options/Type: type=float; default=0.9
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  power: 0.9
+# What: controls `dataset` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+dataset:
+  # What: controls `dataset.dataset_name` runtime/config behavior.
+  # CLI: --dataset_name
+  # Options/Type: choices=CUHK-PEDES | ICFG-PEDES | RSTPReid; type=str; default=CUHK-PEDES
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  dataset_name: RSTPReid
+  # What: controls `dataset.root_dir` runtime/config behavior.
+  # CLI: --root_dir
+  # Options/Type: type=str; default=data
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  root_dir: data
+  # What: controls `dataset.val_dataset` runtime/config behavior.
+  # CLI: --val_dataset
+  # Options/Type: choices=val | test; type=str; default=test
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  val_dataset: test
+  # What: controls `dataset.num_workers` runtime/config behavior.
+  # CLI: --num_workers
+  # Options/Type: type=int; default=4
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  num_workers: 4
+# What: controls `logging` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+logging:
+  # What: controls `logging.use_wandb` runtime/config behavior.
+  # CLI: --use_wandb
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  use_wandb: true
+  # What: controls `logging.project` runtime/config behavior.
+  # CLI: --wandb_project
+  # Options/Type: type=str; default=PAS
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  project: itself_hbr
+  # What: controls `logging.entity` runtime/config behavior.
+  # CLI: --wandb_entity
+  # Options/Type: type=str; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  entity: 
+  # What: controls `logging.run_name` runtime/config behavior.
+  # CLI: --wandb_run_name
+  # Options/Type: type=str; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  run_name: 
+  # What: controls `logging.group` runtime/config behavior.
+  # CLI: --wandb_group
+  # Options/Type: type=str; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  group: itself_hbr
+  # What: controls `logging.mode` runtime/config behavior.
+  # CLI: --wandb_mode
+  # Options/Type: type=str; default=online
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  mode: online
+  # What: controls `logging.tags` runtime/config behavior.
+  # CLI: --wandb_tags
+  # Options/Type: type=str, nargs=*; default=[]
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  tags: [itself, hbr]
+  # What: controls `logging.notes` runtime/config behavior.
+  # CLI: --wandb_notes
+  # Options/Type: type=str; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  notes: 
+  # What: controls `logging.log_interval` runtime/config behavior.
+  # CLI: --wandb_log_interval
+  # Options/Type: type=int; default=50
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  log_interval: 50
+  # What: controls `logging.log_code` runtime/config behavior.
+  # CLI: --wandb_log_code
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  log_code: false
+  # What: controls `logging.log_debug_metrics` runtime/config behavior.
+  # CLI: --log_debug_metrics
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  log_debug_metrics: true
+  # What: controls `logging.export_pairwise_hard_samples` runtime/config behavior.
+  # CLI: --export_pairwise_hard_samples
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  export_pairwise_hard_samples: true
+  # What: controls `logging.pairwise_export_max_rows_per_epoch` runtime/config behavior.
+  # CLI: --pairwise_export_max_rows_per_epoch
+  # Options/Type: type=int; default=2000
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  pairwise_export_max_rows_per_epoch: 2000
+  # What: controls `logging.track_proto_contribution_metrics` runtime/config behavior.
+  # CLI: --track_proto_contribution_metrics
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  track_proto_contribution_metrics: true
+  # What: controls `logging.track_hard_pair_repair_metrics` runtime/config behavior.
+  # CLI: --track_hard_pair_repair_metrics
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  track_hard_pair_repair_metrics: true
+# What: controls `evaluation` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+# WARNING: present_in_yaml_but_no_code_usage_found
+evaluation:
+  # What: controls `evaluation.checkpoint_path` runtime/config behavior.
+  # CLI: --checkpoint_path, --checkpoint
+  # Options/Type: type=str; default=''
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  checkpoint_path: ''
+  # What: controls `evaluation.device` runtime/config behavior.
+  # CLI: --device
+  # Options/Type: type=str; default=cuda
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  device: cuda
+  # What: controls `evaluation.cross_domain_generalization` runtime/config behavior.
+  # CLI: --cross_domain_generalization
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  cross_domain_generalization: false
+  # What: controls `evaluation.target_domain` runtime/config behavior.
+  # CLI: --target_domain
+  # Options/Type: choices=CUHK-PEDES | ICFG-PEDES | RSTPReid; type=str; default=RSTPReid
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  target_domain: CUHK-PEDES
+  # What: controls `evaluation.retrieval_metrics` runtime/config behavior.
+  # CLI: --retrieval_metrics
+  # Options/Type: choices=R1 | R5 | R10 | mAP | mINP | rSum; type=str, nargs=+; default=UNPARSED
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
+  # What: controls `evaluation.itself_lambda_ablation_enabled` runtime/config behavior.
+  # CLI: --itself_lambda_ablation_enabled
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_lambda_ablation_enabled: true
+  # What: controls `evaluation.itself_lambda_ablation_alphas` runtime/config behavior.
+  # CLI: --itself_lambda_ablation_alphas
+  # Options/Type: type=float, nargs=+; default=None
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  itself_lambda_ablation_alphas: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32]
+  # What: controls `evaluation.batch_size` runtime/config behavior.
+  # CLI: --test_batch_size
+  # Options/Type: type=int; default=512
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  batch_size: 512
+  # What: controls `evaluation.prototype_image_chunk_size` runtime/config behavior.
+  # CLI: --prototype_eval_image_chunk_size
+  # Options/Type: type=int; default=32
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_image_chunk_size: 32
+  # What: controls `evaluation.prototype_text_chunk_size` runtime/config behavior.
+  # CLI: --prototype_eval_text_chunk_size
+  # Options/Type: type=int; default=128
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  prototype_text_chunk_size: 128
+  # What: controls `evaluation.itself_lambda_ablation_include_default` runtime/config behavior.
+  # CLI: --itself_lambda_ablation_include_default
+  # Options/Type: type=_str2bool, nargs=?; default=True
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  itself_lambda_ablation_include_default: true
+# What: controls `checkpointing` runtime/config behavior.
+# CLI: none (config-only checkpointing subtree)
+# Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+checkpointing:
+  # What: controls `checkpointing.metric` runtime/config behavior.
+  # CLI: none (config-only checkpointing subtree)
+  # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  metric:
+    # What: controls `checkpointing.metric.name` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    name: R1
+    # What: controls `checkpointing.metric.mode` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    mode: max
+  # What: controls `checkpointing.groups` runtime/config behavior.
+  # CLI: none (config-only checkpointing subtree)
+  # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  groups:
+    # What: controls `checkpointing.groups.host` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    host:
+      # What: controls `checkpointing.groups.host.enabled` runtime/config behavior.
+      # CLI: none (config-only checkpointing subtree)
+      # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+      # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+      enabled: true
+    # What: controls `checkpointing.groups.prototype_bank` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    prototype_bank:
+      # What: controls `checkpointing.groups.prototype_bank.enabled` runtime/config behavior.
+      # CLI: none (config-only checkpointing subtree)
+      # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+      # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+      enabled: false
+    # What: controls `checkpointing.groups.prototype_projector` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    prototype_projector:
+      # What: controls `checkpointing.groups.prototype_projector.enabled` runtime/config behavior.
+      # CLI: none (config-only checkpointing subtree)
+      # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+      # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+      enabled: false
+  # What: controls `checkpointing.save` runtime/config behavior.
+  # CLI: none (config-only checkpointing subtree)
+  # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  save:
+    # What: controls `checkpointing.save.save_latest` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    save_latest: true
+    # What: controls `checkpointing.save.save_best` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    save_best: true
+    # What: controls `checkpointing.save.keep_last_n` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    keep_last_n: 2
+  # What: controls `checkpointing.authority_validation` runtime/config behavior.
+  # CLI: none (config-only checkpointing subtree)
+  # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  authority_validation:
+    # What: controls `checkpointing.authority_validation.enabled` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    enabled: true
+    # What: controls `checkpointing.authority_validation.strict` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    strict: true
+    # What: controls `checkpointing.authority_validation.warn_only` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    warn_only: false
+    # What: controls `checkpointing.authority_validation.allow_fallback_row_name_classification` runtime/config behavior.
+    # CLI: none (config-only checkpointing subtree)
+    # Options/Type: type=dict/bool/int/str; default=merged_with_modular_checkpoint_defaults
+    # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+    allow_fallback_row_name_classification: true
+# What: controls `loss` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+loss:
+  # What: controls `loss.use_hbr` runtime/config behavior.
+  # CLI: --use_hbr
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  use_hbr: false
+  # What: controls `loss.lambda_hbr` runtime/config behavior.
+  # CLI: --lambda_hbr
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  lambda_hbr: 0.0
+# What: controls `losses` runtime/config behavior.
+# CLI: none
+# Options/Type: type=yaml_native; default=current_yaml_value
+# Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+losses:
+  # What: controls `losses.use_hbr` runtime/config behavior.
+  # CLI: --use_hbr
+  # Options/Type: type=_str2bool, nargs=?; default=False
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  use_hbr: false
+  # What: controls `losses.lambda_hbr` runtime/config behavior.
+  # CLI: --lambda_hbr
+  # Options/Type: type=float; default=0.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  lambda_hbr: 0.0
+  # What: controls `losses.lambda_host` runtime/config behavior.
+  # CLI: --lambda_host
+  # Options/Type: type=float; default=1.0
+  # Constraints/Interactions: validated by `utils/config.py` runtime/config validators where applicable.
+  # WARNING: used_in_code_but_missing_from_itself_yaml
+  lambda_host: 1.0

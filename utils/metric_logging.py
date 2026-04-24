@@ -1,4 +1,5 @@
 from collections import deque
+import math
 from typing import Deque, Dict, Iterable, Optional, Tuple
 
 import torch
@@ -482,6 +483,24 @@ _VAL_DEBUG_NAMESPACE_MAP = {
     'hbr_hardest_tail_margin_mean': 'val/hbr/hardest_tail_margin_mean',
     'hbr_hardest_tail_margin_p10': 'val/hbr/hardest_tail_margin_p10',
     'hbr_hbr_loss_active_mean': 'val/hbr/hbr_loss_active_mean',
+    # Alias support: these keys may be emitted without the legacy `hbr_` prefix in
+    # some analysis paths; keep them pinned to the same val/hbr namespace.
+    'host_tail_size_mean': 'val/hbr/host_tail_size_mean',
+    'host_tail_margin_mean': 'val/hbr/host_tail_margin_mean',
+    'host_tail_margin_p10': 'val/hbr/host_tail_margin_p10',
+    'top_weight_overlap_with_bottom_host_margin': 'val/hbr/top_weight_overlap_with_bottom_host_margin',
+    'top_weight_in_host_tail_fraction': 'val/hbr/top_weight_in_host_tail_fraction',
+    'proto_signal_vs_host_margin_corr_in_tail': 'val/hbr/proto_signal_vs_host_margin_corr_in_tail',
+    'proto_signal_mean_in_tail': 'val/hbr/proto_signal_mean_in_tail',
+    'proto_signal_std_in_tail': 'val/hbr/proto_signal_std_in_tail',
+    'omega_mean_in_tail': 'val/hbr/omega_mean_in_tail',
+    'omega_max_in_tail': 'val/hbr/omega_max_in_tail',
+    'omega_entropy_in_tail': 'val/hbr/omega_entropy_in_tail',
+    'nonzero_omega_fraction': 'val/hbr/nonzero_omega_fraction',
+    'active_pairs_per_anchor': 'val/hbr/active_pairs_per_anchor',
+    'hardest_tail_margin_mean': 'val/hbr/hardest_tail_margin_mean',
+    'hardest_tail_margin_p10': 'val/hbr/hardest_tail_margin_p10',
+    'hbr_loss_active_mean': 'val/hbr/hbr_loss_active_mean',
 }
 
 
@@ -610,6 +629,23 @@ def map_train_diagnostic_key(raw_key: str) -> str:
         'hbr_hardest_tail_margin_mean',
         'hbr_hardest_tail_margin_p10',
         'hbr_hbr_loss_active_mean',
+        # Residual-space HBR diagnostics without legacy `hbr_` prefix.
+        'host_tail_size_mean',
+        'host_tail_margin_mean',
+        'host_tail_margin_p10',
+        'top_weight_overlap_with_bottom_host_margin',
+        'top_weight_in_host_tail_fraction',
+        'proto_signal_vs_host_margin_corr_in_tail',
+        'proto_signal_mean_in_tail',
+        'proto_signal_std_in_tail',
+        'omega_mean_in_tail',
+        'omega_max_in_tail',
+        'omega_entropy_in_tail',
+        'nonzero_omega_fraction',
+        'active_pairs_per_anchor',
+        'hardest_tail_margin_mean',
+        'hardest_tail_margin_p10',
+        'hbr_loss_active_mean',
     }:
         stripped_key = raw_key[len('hbr_'):] if raw_key.startswith('hbr_') else raw_key
         return f'train/hbr/{stripped_key}'
@@ -635,11 +671,36 @@ def map_validation_metric_key(metric_key: str) -> str:
     return metric_key
 
 
+def _safe_float_for_logging(value: object) -> Optional[float]:
+    """Convert scalar-like values to finite floats for robust metric logging.
+
+    Residual-space HBR diagnostics are used for selective-tail analysis. We
+    force NaN/Inf to 0.0 at logging time so dashboard streams stay stable even
+    when a mini-batch has empty/degenerate pair sets.
+    """
+    try:
+        scalar = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(scalar):
+        return 0.0
+    return scalar
+
+
+def _map_validation_scalar_key(raw_key: str) -> str:
+    if raw_key in TRAIN_LOSS_KEYS or raw_key.startswith('loss_'):
+        return _map_val_loss_key(raw_key)
+    return _VAL_DEBUG_NAMESPACE_MAP.get(raw_key, f'val/model/{raw_key}')
+
+
 def build_validation_debug_metrics(raw_debug_metrics: Dict[str, float]) -> Dict[str, float]:
     mapped = {}
     for raw_key, value in raw_debug_metrics.items():
         mapped_key = _VAL_DEBUG_NAMESPACE_MAP.get(raw_key, f'val/model/{raw_key}')
-        mapped[mapped_key] = float(value)
+        scalar = _safe_float_for_logging(value)
+        if scalar is None:
+            continue
+        mapped[mapped_key] = scalar
     return mapped
 
 
@@ -899,9 +960,8 @@ def build_train_metrics_from_scalars(
         metrics['train/step'] = float(step)
 
     for key, value in scalar_metrics.items():
-        try:
-            scalar_value = float(value)
-        except (TypeError, ValueError):
+        scalar_value = _safe_float_for_logging(value)
+        if scalar_value is None:
             continue
         metrics[map_train_scalar_to_wandb_key(key)] = scalar_value
     return metrics
@@ -930,7 +990,10 @@ def build_validation_metrics(
     if val_loss is not None and 'loss_total' not in merged_loss_metrics:
         merged_loss_metrics['loss_total'] = float(val_loss)
     for key, value in merged_loss_metrics.items():
-        metrics[_map_val_loss_key(key)] = float(value)
+        scalar_value = _safe_float_for_logging(value)
+        if scalar_value is None:
+            continue
+        metrics[_map_validation_scalar_key(key)] = scalar_value
     if evaluator is not None and getattr(evaluator, 'latest_metrics', None):
         for metric_key, metric_value in evaluator.latest_metrics.items():
             metrics[map_validation_metric_key(metric_key)] = metric_value

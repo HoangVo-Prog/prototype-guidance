@@ -980,6 +980,10 @@ class PrototypeLosses(nn.Module):
 
         outputs.update(
             {
+                # Residual-space HBR diagnostics: these are logging-only signals used to
+                # audit whether omega/gates focus host failure tails, whether prototype
+                # signal aligns with host margin deficits, and whether tail repair happens
+                # without granting prototype any inference-time ranking authority.
                 'loss': loss,
                 'loss_weighted': loss,
                 'num_hard_pairs': num_hard_pairs_tensor,
