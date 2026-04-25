@@ -87,16 +87,16 @@ semantic_structure:
   pred_temperature: 0.07
   
   recompute_schedule: epoch
-  recompute_interval: 3
+  recompute_interval: 2
   min_cluster_count_for_pbt: 1.0
   empty_cluster_policy: skip
   text_teacher_source: exact_diagonal
   text_student_source: surrogate_diagonal
   image_student_source: image_semantic_feature
 
-  recompute_start_epoch: 3
+  recompute_start_epoch: 0
   recompute_start_step: 0
-  loss_ramp_start_epoch: 3
+  loss_ramp_start_epoch: 0
   loss_ramp_start_step: 0
   loss_ramp_epochs: 0
   loss_ramp_steps: 0
