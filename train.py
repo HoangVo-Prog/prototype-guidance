@@ -625,6 +625,7 @@ if __name__ == '__main__':
                 optimizer,
                 scheduler,
                 checkpointer,
+                experiment_tracker=experiment_tracker,
             )
         else:
             do_train_fn(
