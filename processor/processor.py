@@ -1,5 +1,6 @@
 import copy
 import csv
+import inspect
 import logging
 import math
 import os
@@ -554,6 +555,37 @@ def _collect_loss_grad_norm_metrics(outputs, parameters):
 
 def _unwrap_model(model):
     return model.module if hasattr(model, 'module') else model
+
+
+def _resolve_forward_kwargs(model, candidate_kwargs):
+    """Filter runtime forward kwargs to only those accepted by the wrapped model.
+
+    Host-only models (for example ClipHostModel) do not expose every PAS runtime
+    argument (`total_steps`, etc.). This keeps training runtime-compatible across
+    host-only and PAS paths without changing model ranking/inference semantics.
+    """
+    runtime_model = _unwrap_model(model)
+    if runtime_model is None:
+        return {}
+    forward_fn = getattr(runtime_model, 'forward', None)
+    if forward_fn is None:
+        return {}
+    try:
+        signature = inspect.signature(forward_fn)
+    except (TypeError, ValueError):
+        # Be conservative when signature introspection is unavailable.
+        return {}
+    accepts_var_kwargs = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    if accepts_var_kwargs:
+        return dict(candidate_kwargs)
+    accepted = {}
+    for key, value in candidate_kwargs.items():
+        if key in signature.parameters:
+            accepted[key] = value
+    return accepted
 
 
 def _copy_optimizer_state(old_optimizer, new_optimizer):
@@ -1252,12 +1284,18 @@ def _do_train_runtime(
             batch = {key: value.to(device) for key, value in batch.items()}
             optimizer.zero_grad(set_to_none=True)
             with build_autocast_context(args, device):
+                forward_kwargs = _resolve_forward_kwargs(
+                    model,
+                    {
+                        'epoch': epoch,
+                        'current_step': current_steps,
+                        'total_steps': total_training_steps,
+                        'disable_proxy_losses': False,
+                    },
+                )
                 outputs = model(
                     batch,
-                    epoch=epoch,
-                    current_step=current_steps,
-                    total_steps=total_training_steps,
-                    disable_proxy_losses=False,
+                    **forward_kwargs,
                 )
                 total_loss = outputs['loss_total']
             grad_loss_norm_metrics = None
