@@ -1289,19 +1289,22 @@ def build_model(args, num_classes, train_loader=None):
         str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
         and bool(getattr(args, 'itself_use_original_impl', True))
     )
-    if model.backbone_precision == 'fp16' or use_original_itself_host_impl:
+    if model.backbone_precision == 'fp16':
         convert_weights(model.base_model)
     else:
         model.base_model.float()
 
-    if use_original_itself_host_impl:
-        convert_weights(model.host_head)
-    else:
-        if model.prototype_precision == 'fp16':
-            model.host_head.half()
+    # `host_retrieval` belongs to the host side and follows `backbone_precision`.
+    if model.backbone_precision == 'fp16':
+        if use_original_itself_host_impl:
+            convert_weights(model.host_head)
         else:
-            model.host_head.float()
+            model.host_head.half()
+    else:
+        model.host_head.float()
 
+    # Prototype-side groups (`prototype_bank`, `prototype_projector`, `routing`, `fusion`)
+    # follow `prototype_precision`.
     if model.prototype_head is not None:
         if model.prototype_precision == 'fp16':
             model.prototype_head.half()

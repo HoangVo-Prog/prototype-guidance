@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.precision import canonicalize_backbone_precision, canonicalize_prototype_precision
+from utils.precision import canonicalize_backbone_precision
 from utils.freeze_schedule import set_group_requires_grad
 
 from .itself import get_original_itself_components
@@ -237,14 +237,13 @@ class ClipHostModel(nn.Module):
         return base_model, base_cfg, model_build.convert_weights
 
     def _apply_precision_policy(self):
-        if canonicalize_backbone_precision(getattr(self.args, 'backbone_precision', 'fp16')) == 'fp16':
+        host_precision = canonicalize_backbone_precision(getattr(self.args, 'backbone_precision', 'fp16'))
+        if host_precision == 'fp16':
             self._convert_clip_weights(self.base_model)
-        else:
-            self.base_model.float()
-        if canonicalize_prototype_precision(getattr(self.args, 'prototype_precision', 'fp32')) == 'fp16':
             self.host_head.half()
             self.losses.half()
         else:
+            self.base_model.float()
             self.host_head.float()
             self.losses.float()
 

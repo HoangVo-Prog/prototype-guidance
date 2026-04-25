@@ -17,8 +17,8 @@ Backbone support:
 - The runtime requires a ViT image token interface and `transformer_width == embed_dim` because the prototype path consumes text pre-projection token states.
 
 Precision controls:
-- `model.backbone_precision` selects whether CLIP backbone parameters are kept in `fp16` or `fp32`.
-- `model.prototype_precision` selects whether prototype-head parameters are kept in `fp16` or `fp32`.
+- `model.backbone_precision` controls host-side parameter precision (`host_backbone` + `host_retrieval`).
+- `model.prototype_precision` controls prototype-side parameter precision (`prototype_bank`, `prototype_projector`, `routing`, `fusion`).
 - `training.amp` and `training.amp_dtype` control CUDA autocast/scaler usage during training and retrieval evaluation.
 - Unfrozen `fp16` backbone training is only supported when `training.amp=true`.
 - `prototype_precision=fp16` training is only supported when `training.amp=true`.
