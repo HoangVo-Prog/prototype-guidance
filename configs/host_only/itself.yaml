@@ -134,7 +134,7 @@ optimizer:
   lr_factor: 5.0
   bias_lr_factor: 2.0
   weight_decay_bias: 0.0
-  optimizer_eps: 1.0e-3
+  optimizer_eps: 1.0e-8
   milestones: [45, 50]
   gamma: 0.1
   warmup_factor: 0.1
