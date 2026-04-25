@@ -166,6 +166,21 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
         def _format_alpha(alpha: float) -> str:
             return f'{alpha:.2f}'.rstrip('0').rstrip('.')
 
+        @staticmethod
+        def _to_row_dict(row):
+            # Original ITSELF get_metrics returns:
+            # [task, R1, R5, R10, mAP, mINP, rSum]
+            return {
+                'task': str(row[0]),
+                'R1': float(row[1]),
+                'R5': float(row[2]),
+                'R10': float(row[3]),
+                'mAP': float(row[4]),
+                'mINP': float(row[5]),
+                'rSum': float(row[6]),
+                'bucket': 'host',
+            }
+
         def _ablation_enabled(self) -> bool:
             return bool(
                 str(getattr(self.args, 'host_type', 'itself')).lower() == 'itself'
@@ -244,14 +259,19 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
                         )
                     )
                 top1 = 0.0
+                top1_row = None
                 for row in rows:
                     table.add_row(row)
-                    top1 = max(top1, float(row[1]))
+                    row_r1 = float(row[1])
+                    if (top1_row is None) or (row_r1 > top1):
+                        top1 = row_r1
+                        top1_row = row
             else:
                 sims = alpha * sims_global + (1.0 - alpha) * sims_grab
                 row = metrics_module.get_metrics(sims, qids, gids, f'global+grab({alpha:.2f})-t2i', False)
                 top1 = float(row[1])
                 table.add_row(row)
+                top1_row = row
             if i2t_metric:
                 i2t_similarity = sims if 'sims' in locals() else sims_global
                 i2t_cmc, i2t_mAP, i2t_mINP, _ = metrics_module.rank(
@@ -277,6 +297,41 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
                 self.logger.info('\n' + f'static global-grab alpha = {alpha:.4f}')
             self.logger.info('\n' + f'best R1 = {top1}')
             self.logger.info('Static ITSELF evaluation finished in %.1fs.', time.time() - start_time)
+
+            structured_rows = [self._to_row_dict(row) for row in rows] if self._ablation_enabled() else [self._to_row_dict(top1_row)]
+            top1_task = str(top1_row[0]) if top1_row is not None else 'host-t2i'
+            self.latest_eval_rows = [dict(item) for item in structured_rows]
+            self.latest_authority = {
+                'display_row': top1_task,
+                'source_row': top1_task,
+                'mismatch': False,
+                'selected_source_role': 'host',
+                'candidates': {'host': top1_task},
+                'row_roles': {str(item['task']): 'host' for item in structured_rows},
+                'row_metrics': {
+                    str(item['task']): {
+                        'R1': float(item['R1']),
+                        'R5': float(item['R5']),
+                        'R10': float(item['R10']),
+                        'mAP': float(item['mAP']),
+                        'mINP': float(item['mINP']),
+                        'rSum': float(item['rSum']),
+                    }
+                    for item in structured_rows
+                },
+            }
+            self.latest_metrics = {
+                'val/retrieval/R1': float(top1_row[1]) if top1_row is not None else float(top1),
+                'val/retrieval/R5': float(top1_row[2]) if top1_row is not None else 0.0,
+                'val/retrieval/R10': float(top1_row[3]) if top1_row is not None else 0.0,
+                'val/retrieval/mAP': float(top1_row[4]) if top1_row is not None else 0.0,
+                'val/retrieval/mINP': float(top1_row[5]) if top1_row is not None else 0.0,
+                'val/retrieval/rSum': float(top1_row[6]) if top1_row is not None else 0.0,
+                'val/top1': float(top1),
+                'val/top1_row': top1_task,
+                'val/top1_source_row': top1_task,
+                'val/top1_display_row': top1_task,
+            }
             return top1
 
     _STATIC_MIX_EVALUATOR_CACHE = ITSELFStaticMixEvaluator

@@ -68,6 +68,11 @@ class StructuralSplitRuntimeTests(unittest.TestCase):
         args = types.SimpleNamespace(runtime_mode='auto', use_prototype_branch=True)
         self.assertEqual(resolve_runtime_mode_from_args(args, for_training=False), 'host_only')
 
+    def test_lr_ablation_runtime_mode_is_accepted(self):
+        args = types.SimpleNamespace(runtime_mode='lr_ablation', use_prototype_branch=True)
+        self.assertEqual(resolve_runtime_mode_from_args(args, for_training=True), 'joint_training')
+        self.assertEqual(resolve_runtime_mode_from_args(args, for_training=False), 'host_only')
+
     def test_host_only_retrieval_is_only_eval_row(self):
         args = types.SimpleNamespace(
             retrieval_metrics=['R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum'],
@@ -151,6 +156,22 @@ class StructuralSplitRuntimeTests(unittest.TestCase):
                     'early_stopping_monitored_bucket': 'host',
                     'early_stopping_monitored_task_pattern': '*grab*',
                     'early_stopping_stop_on_nan': False,
+                },
+            }
+        )
+
+    def test_lr_ablation_config_is_accepted(self):
+        validate_config_data(
+            {
+                'model': {
+                    'runtime_mode': 'lr_ablation',
+                },
+                'lr_ablation': {
+                    'enabled': True,
+                    'base_lrs': [5e-6, 1e-5, 2e-5],
+                    'num_epochs': 2,
+                    'selection_metric': 'val_r1',
+                    'selection_task': 'global+grab(0.32)-t2i',
                 },
             }
         )

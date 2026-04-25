@@ -2,7 +2,7 @@ import copy
 import logging
 import math
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -616,6 +616,7 @@ def _do_train_runtime(
     modular_checkpoint_manager=None,
     runtime_mode: str = None,
     resume_state: Dict[str, Any] = None,
+    return_epoch_records: bool = False,
 ):
     log_period = args.log_period
     eval_period = args.eval_period
@@ -738,6 +739,8 @@ def _do_train_runtime(
         'authority_bucket': None,
         'selection_reason': None,
     }
+    last_validation_snapshot: Dict[str, Any] = {}
+    epoch_records: List[Dict[str, Any]] = []
     early_stopping_cfg = _resolve_early_stopping_config(args)
     early_stopping_state = _initialize_early_stopping_state()
     resume_training_state = resume_bundle.get('training_state', {}) if isinstance(resume_bundle, dict) else {}
@@ -866,7 +869,7 @@ def _do_train_runtime(
         )
 
     def _run_validation(eval_epoch: int) -> float:
-        nonlocal latest_metric_state_current
+        nonlocal latest_metric_state_current, last_validation_snapshot
         logger.info('Validation Results - Epoch: {}'.format(eval_epoch))
         eval_loss_metrics = _compute_eval_loss_metrics(
             model.module if args.distributed else model,
@@ -910,6 +913,14 @@ def _do_train_runtime(
         if experiment_tracker is not None:
             validation_metrics = build_validation_metrics(eval_epoch, evaluator=evaluator, loss_metrics=eval_loss_metrics)
             experiment_tracker.log(validation_metrics)
+        last_validation_snapshot = {
+            'epoch': int(eval_epoch),
+            'top1': float(top1_score),
+            'loss_metrics': copy.deepcopy(eval_loss_metrics),
+            'latest_metrics': copy.deepcopy(getattr(evaluator, 'latest_metrics', {}) or {}),
+            'latest_eval_rows': copy.deepcopy(getattr(evaluator, 'latest_eval_rows', []) or []),
+            'latest_authority': copy.deepcopy(getattr(evaluator, 'latest_authority', {}) or {}),
+        }
         if modular_checkpoint_manager is not None:
             model_for_group_ckpt = model.module if hasattr(model, 'module') else model
             if (
@@ -1177,6 +1188,8 @@ def _do_train_runtime(
                     lr=display_lr,
                 )
             )
+        else:
+            averaged_metrics = _meter_averages(meters)
         if coverage_tracker is not None:
             coverage_tracker.reset_epoch()
 
@@ -1239,7 +1252,23 @@ def _do_train_runtime(
                     iteration_in_epoch=0,
                 )
             if early_stopping_state.get('should_stop', False):
+                if return_epoch_records:
+                    epoch_records.append(
+                        {
+                            'epoch': int(epoch),
+                            'train_scalar_metrics': copy.deepcopy(averaged_metrics),
+                            'validation': copy.deepcopy(last_validation_snapshot),
+                        }
+                    )
                 break
+        if return_epoch_records:
+            epoch_records.append(
+                {
+                    'epoch': int(epoch),
+                    'train_scalar_metrics': copy.deepcopy(averaged_metrics),
+                    'validation': copy.deepcopy(last_validation_snapshot),
+                }
+            )
 
     if get_rank() == 0:
         if last_epoch >= start_epoch:
@@ -1258,6 +1287,15 @@ def _do_train_runtime(
         logger.info(f'best R1: {best_top1} at epoch {best_epoch}')
 
     tb_writer.close()
+    if return_epoch_records:
+        return {
+            'best_top1': float(best_top1),
+            'best_epoch': int(best_epoch),
+            'epoch_records': epoch_records,
+            'latest_metric_state': copy.deepcopy(latest_metric_state_current),
+            'best_metric_state': copy.deepcopy(best_metric_state_current),
+        }
+    return None
 
 
 def train_host_core(*args, **kwargs):
@@ -1288,6 +1326,7 @@ def do_train(
     eval_loss_loader=None,
     modular_checkpoint_manager=None,
     resume_state: Dict[str, Any] = None,
+    return_epoch_records: bool = False,
 ):
     resolved_runtime_mode = resolve_runtime_mode_from_args(args, for_training=True)
     if resolved_runtime_mode == RUNTIME_MODE_HOST_ONLY:
@@ -1304,6 +1343,7 @@ def do_train(
             eval_loss_loader=eval_loss_loader,
             modular_checkpoint_manager=modular_checkpoint_manager,
             resume_state=resume_state,
+            return_epoch_records=return_epoch_records,
         )
     return train_joint(
         start_epoch,
@@ -1318,6 +1358,7 @@ def do_train(
         eval_loss_loader=eval_loss_loader,
         modular_checkpoint_manager=modular_checkpoint_manager,
         resume_state=resume_state,
+        return_epoch_records=return_epoch_records,
     )
 
 

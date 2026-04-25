@@ -38,6 +38,7 @@ model:
   use_prototype_bank: false
   use_image_conditioned_pooling: false
   return_debug_outputs: false
+  runtime_mode: auto
 
 host:
   type: itself
@@ -108,4 +109,15 @@ semantic_structure:
   ramp_loss_semantic_hardneg_margin: true
   ramp_loss_semantic_hosthard_weighted: true
   ramp_use_prototype: false
+
+lr_ablation:
+  enabled: false
+  base_lrs: [5.0e-6, 1.0e-5, 2.0e-5]
+  num_epochs: 2
+  selection_metric: val_r1
+  selection_task: host-t2i
+  save_each_run: true
+  restore_initial_state_each_run: true
+  write_summary_json: true
+  summary_path: outputs/lr_ablation_summary.json
 

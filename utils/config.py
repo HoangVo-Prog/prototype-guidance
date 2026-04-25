@@ -248,6 +248,16 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('evaluation', 'batch_size'): 'test_batch_size',
     ('evaluation', 'prototype_image_chunk_size'): 'prototype_eval_image_chunk_size',
     ('evaluation', 'prototype_text_chunk_size'): 'prototype_eval_text_chunk_size',
+
+    ('lr_ablation', 'enabled'): 'lr_ablation_enabled',
+    ('lr_ablation', 'base_lrs'): 'lr_ablation_base_lrs',
+    ('lr_ablation', 'num_epochs'): 'lr_ablation_num_epochs',
+    ('lr_ablation', 'selection_metric'): 'lr_ablation_selection_metric',
+    ('lr_ablation', 'selection_task'): 'lr_ablation_selection_task',
+    ('lr_ablation', 'save_each_run'): 'lr_ablation_save_each_run',
+    ('lr_ablation', 'restore_initial_state_each_run'): 'lr_ablation_restore_initial_state_each_run',
+    ('lr_ablation', 'write_summary_json'): 'lr_ablation_write_summary_json',
+    ('lr_ablation', 'summary_path'): 'lr_ablation_summary_path',
 }
 
 # Backward-compatible alias paths (accepted by parser/loader) that are intentionally
@@ -374,6 +384,7 @@ SECTION_TEMPLATE = {
     'dataset': {},
     'logging': {},
     'evaluation': {},
+    'lr_ablation': {},
     'checkpointing': {},
 }
 
@@ -523,7 +534,7 @@ UNSUPPORTED_CONFIG_PATHS = {
 
 CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('model', 'training_mode'): ('pas', 'vanilla_clip'),
-    ('model', 'runtime_mode'): ('auto', 'host_only', 'joint_training'),
+    ('model', 'runtime_mode'): ('auto', 'host_only', 'joint_training', 'lr_ablation'),
     ('model', 'prototype_method_role'): ('semantic_structure',),
     ('host', 'type'): ('clip', 'itself'),
     ('host', 'itself_topk_type'): ('mean', 'std', 'layer_index', 'custom'),
@@ -562,7 +573,7 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
 
 RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'training_mode': ('pas', 'vanilla_clip'),
-    'runtime_mode': ('auto', 'host_only', 'joint_training'),
+    'runtime_mode': ('auto', 'host_only', 'joint_training', 'lr_ablation'),
     'prototype_method_role': ('semantic_structure',),
     'host_type': ('clip', 'itself'),
     'itself_topk_type': ('mean', 'std', 'layer_index', 'custom'),
@@ -632,6 +643,59 @@ def _validate_itself_lambda_ablation_alphas(field_name: str, value: Any) -> None
             raise ValueError(f'{field_name} contains a non-numeric value: {alpha!r}.') from exc
         if alpha_float < 0.0 or alpha_float > 1.0:
             raise ValueError(f'{field_name} values must be in [0, 1]. Got {alpha_float}.')
+
+
+def _normalize_lr_ablation_base_lrs(value: Any, field_name: str) -> List[float]:
+    if value in (None, ''):
+        return []
+    if isinstance(value, str):
+        tokens = [token.strip() for token in value.split(',') if token.strip()]
+        raw_values = tokens
+    elif isinstance(value, (list, tuple)):
+        raw_values = list(value)
+    else:
+        raw_values = [value]
+    normalized = []
+    for raw_item in raw_values:
+        try:
+            lr_value = float(raw_item)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f'{field_name} contains a non-numeric value: {raw_item!r}.') from exc
+        if lr_value <= 0.0:
+            raise ValueError(f'{field_name} values must be positive. Got {lr_value}.')
+        normalized.append(lr_value)
+    return normalized
+
+
+def _validate_lr_ablation_fields(
+    *,
+    enabled_field_name: str,
+    enabled_value: Any,
+    base_lrs_field_name: str,
+    base_lrs_value: Any,
+    num_epochs_field_name: str,
+    num_epochs_value: Any,
+    selection_metric_field_name: str,
+    selection_metric_value: Any,
+    selection_task_field_name: str,
+    selection_task_value: Any,
+) -> None:
+    enabled = bool(enabled_value)
+    base_lrs = _normalize_lr_ablation_base_lrs(base_lrs_value, base_lrs_field_name)
+    try:
+        num_epochs = int(num_epochs_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{num_epochs_field_name} must be a positive integer.') from exc
+    if num_epochs <= 0:
+        raise ValueError(f'{num_epochs_field_name} must be a positive integer.')
+    selection_metric = str(selection_metric_value or '').strip().lower()
+    if selection_metric not in {'val_r1'}:
+        raise ValueError(f'{selection_metric_field_name} must be \"val_r1\".')
+    selection_task = str(selection_task_value or '').strip()
+    if not selection_task:
+        raise ValueError(f'{selection_task_field_name} must be a non-empty task name.')
+    if enabled and not base_lrs:
+        raise ValueError(f'{base_lrs_field_name} must contain at least one value when {enabled_field_name}=true.')
 
 
 def _validate_early_stopping_fields(
@@ -946,6 +1010,20 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
             start_epoch_field_name='training.early_stopping_start_epoch',
             start_epoch_value=training_cfg.get('early_stopping_start_epoch', 1),
         )
+    if _path_exists(config_data, ('lr_ablation',)):
+        lr_ablation_cfg = config_data.get('lr_ablation', {}) if isinstance(config_data.get('lr_ablation', {}), dict) else {}
+        _validate_lr_ablation_fields(
+            enabled_field_name='lr_ablation.enabled',
+            enabled_value=lr_ablation_cfg.get('enabled', False),
+            base_lrs_field_name='lr_ablation.base_lrs',
+            base_lrs_value=lr_ablation_cfg.get('base_lrs', []),
+            num_epochs_field_name='lr_ablation.num_epochs',
+            num_epochs_value=lr_ablation_cfg.get('num_epochs', 2),
+            selection_metric_field_name='lr_ablation.selection_metric',
+            selection_metric_value=lr_ablation_cfg.get('selection_metric', 'val_r1'),
+            selection_task_field_name='lr_ablation.selection_task',
+            selection_task_value=lr_ablation_cfg.get('selection_task', 'host-t2i'),
+        )
     _validate_fusion_config_data(config_data)
 
     flat = flatten_config_dict(config_data)
@@ -1083,6 +1161,18 @@ def validate_runtime_args_namespace(args) -> None:
         patience_value=getattr(args, 'early_stopping_patience', 5),
         start_epoch_field_name='early_stopping_start_epoch',
         start_epoch_value=getattr(args, 'early_stopping_start_epoch', 1),
+    )
+    _validate_lr_ablation_fields(
+        enabled_field_name='lr_ablation_enabled',
+        enabled_value=getattr(args, 'lr_ablation_enabled', False),
+        base_lrs_field_name='lr_ablation_base_lrs',
+        base_lrs_value=getattr(args, 'lr_ablation_base_lrs', []),
+        num_epochs_field_name='lr_ablation_num_epochs',
+        num_epochs_value=getattr(args, 'lr_ablation_num_epochs', 2),
+        selection_metric_field_name='lr_ablation_selection_metric',
+        selection_metric_value=getattr(args, 'lr_ablation_selection_metric', 'val_r1'),
+        selection_task_field_name='lr_ablation_selection_task',
+        selection_task_value=getattr(args, 'lr_ablation_selection_task', 'host-t2i'),
     )
     _validate_runtime_fusion_args(args)
     parse_freeze_schedule_config(

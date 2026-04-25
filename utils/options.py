@@ -75,6 +75,15 @@ def _str2bool(value):
     raise argparse.ArgumentTypeError(f'Invalid boolean value: {value}')
 
 
+def _parse_float_list_csv(value):
+    if value in (None, ''):
+        return []
+    if isinstance(value, (list, tuple)):
+        return [float(item) for item in value]
+    tokens = [token.strip() for token in str(value).split(',') if token.strip()]
+    return [float(token) for token in tokens]
+
+
 def _prevalidate_removed_cli_flags(argv):
     for token in argv or []:
         option = token.split('=', 1)[0]
@@ -94,7 +103,24 @@ def build_parser():
     parser.add_argument('--model_name', default='PAS')
     parser.add_argument('--model_variant', default='pas_v1')
     parser.add_argument('--training_mode', type=str, default='pas')
-    parser.add_argument('--runtime_mode', type=str, default='auto')
+    parser.add_argument('--runtime_mode', '--model.runtime_mode', dest='runtime_mode', type=str, default='auto')
+    parser.add_argument('--lr_ablation_enabled', '--lr_ablation.enabled', dest='lr_ablation_enabled', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--lr_ablation_base_lrs', '--lr_ablation.base_lrs', dest='lr_ablation_base_lrs', default='')
+    parser.add_argument('--lr_ablation_num_epochs', '--lr_ablation.num_epochs', dest='lr_ablation_num_epochs', type=int, default=2)
+    parser.add_argument('--lr_ablation_selection_metric', '--lr_ablation.selection_metric', dest='lr_ablation_selection_metric', type=str, default='val_r1')
+    parser.add_argument('--lr_ablation_selection_task', '--lr_ablation.selection_task', dest='lr_ablation_selection_task', type=str, default='host-t2i')
+    parser.add_argument('--lr_ablation_save_each_run', '--lr_ablation.save_each_run', dest='lr_ablation_save_each_run', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument(
+        '--lr_ablation_restore_initial_state_each_run',
+        '--lr_ablation.restore_initial_state_each_run',
+        dest='lr_ablation_restore_initial_state_each_run',
+        type=_str2bool,
+        nargs='?',
+        const=True,
+        default=True,
+    )
+    parser.add_argument('--lr_ablation_write_summary_json', '--lr_ablation.write_summary_json', dest='lr_ablation_write_summary_json', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--lr_ablation_summary_path', '--lr_ablation.summary_path', dest='lr_ablation_summary_path', type=str, default='outputs/lr_ablation_summary.json')
     parser.add_argument('--prototype_method_role', type=str, default='semantic_structure')
     parser.add_argument('--prototype_semantic_enabled', type=_str2bool, nargs='?', const=True, default=None)
     parser.add_argument('--prototype_recompute_enabled', type=_str2bool, nargs='?', const=True, default=None)
@@ -463,6 +489,24 @@ def _finalize_args(args):
     args.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
     args.training_mode = str(getattr(args, 'training_mode', 'pas')).lower()
     args.runtime_mode = str(getattr(args, 'runtime_mode', 'auto')).lower()
+    args.lr_ablation_enabled = bool(getattr(args, 'lr_ablation_enabled', False))
+    try:
+        args.lr_ablation_base_lrs = _parse_float_list_csv(getattr(args, 'lr_ablation_base_lrs', ''))
+    except (TypeError, ValueError) as exc:
+        raise ValueError('lr_ablation.base_lrs must be a comma-separated list of floats.') from exc
+    args.lr_ablation_num_epochs = max(int(getattr(args, 'lr_ablation_num_epochs', 2)), 1)
+    args.lr_ablation_selection_metric = str(getattr(args, 'lr_ablation_selection_metric', 'val_r1') or 'val_r1').strip().lower()
+    args.lr_ablation_selection_task = str(getattr(args, 'lr_ablation_selection_task', 'host-t2i') or 'host-t2i').strip()
+    args.lr_ablation_save_each_run = bool(getattr(args, 'lr_ablation_save_each_run', True))
+    args.lr_ablation_restore_initial_state_each_run = bool(
+        getattr(args, 'lr_ablation_restore_initial_state_each_run', True)
+    )
+    args.lr_ablation_write_summary_json = bool(getattr(args, 'lr_ablation_write_summary_json', True))
+    args.lr_ablation_summary_path = str(
+        getattr(args, 'lr_ablation_summary_path', 'outputs/lr_ablation_summary.json') or ''
+    ).strip() or 'outputs/lr_ablation_summary.json'
+    if args.runtime_mode == 'lr_ablation':
+        args.lr_ablation_enabled = True
     args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
     args.resume = bool(getattr(args, 'resume', False))
     args.resume_ckpt_file = str(getattr(args, 'resume_ckpt_file', '') or '').strip()

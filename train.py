@@ -4,6 +4,8 @@ import random
 import sys
 import warnings
 import logging
+import copy
+import json
 
 import numpy as np
 import torch
@@ -331,6 +333,504 @@ def _resolve_resume_checkpoint_path(args) -> str:
     return ''
 
 
+def _clone_model_state_dict_cpu(model):
+    return {
+        key: value.detach().cpu().clone()
+        for key, value in model.state_dict().items()
+    }
+
+
+def _restore_model_state_dict_cpu(model, state_dict_cpu):
+    model.load_state_dict({key: value for key, value in state_dict_cpu.items()}, strict=True)
+
+
+def _capture_rng_state():
+    state = {
+        'python': random.getstate(),
+        'numpy': np.random.get_state(),
+        'torch_cpu': torch.get_rng_state(),
+        'torch_cuda': None,
+    }
+    if torch.cuda.is_available():
+        state['torch_cuda'] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def _restore_rng_state(state):
+    if not isinstance(state, dict):
+        return
+    if state.get('python') is not None:
+        random.setstate(state['python'])
+    if state.get('numpy') is not None:
+        np.random.set_state(state['numpy'])
+    if state.get('torch_cpu') is not None:
+        torch.set_rng_state(state['torch_cpu'])
+    if torch.cuda.is_available() and state.get('torch_cuda') is not None:
+        torch.cuda.set_rng_state_all(list(state['torch_cuda']))
+
+
+def _move_batch_to_device(batch, device):
+    moved = {}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            moved[key] = value.to(device)
+        else:
+            moved[key] = value
+    return moved
+
+
+def _to_scalar(value):
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return None
+        return float(value.detach().float().reshape(-1)[0].cpu().item())
+    if isinstance(value, (int, float, bool)):
+        return float(value)
+    return None
+
+
+def _extract_loss_scalars(outputs):
+    scalars = {}
+    for key, value in outputs.items():
+        if 'loss' not in str(key):
+            continue
+        scalar = _to_scalar(value)
+        if scalar is None:
+            continue
+        scalars[str(key)] = scalar
+    return scalars
+
+
+def _compute_total_loss_tensor(outputs):
+    if isinstance(outputs.get('loss_total'), torch.Tensor):
+        return outputs['loss_total']
+    loss_tensors = []
+    for key, value in outputs.items():
+        if 'loss' not in str(key):
+            continue
+        if isinstance(value, torch.Tensor):
+            loss_tensors.append(value)
+    if not loss_tensors:
+        raise RuntimeError('No differentiable loss tensor found in model outputs.')
+    return sum(loss_tensors)
+
+
+def _forward_train_step(model, batch, epoch, current_step, total_steps):
+    try:
+        return model(
+            batch,
+            epoch=epoch,
+            current_step=current_step,
+            total_steps=total_steps,
+            disable_proxy_losses=False,
+        )
+    except TypeError:
+        try:
+            return model(batch, epoch=epoch, current_step=current_step)
+        except TypeError:
+            return model(batch, epoch=epoch)
+
+
+def _forward_eval_losses(model, batch):
+    try:
+        return model(
+            batch,
+            return_debug=False,
+            disable_proxy_losses=True,
+        )
+    except TypeError:
+        try:
+            return model(batch, disable_proxy_losses=True)
+        except TypeError:
+            return model(batch)
+
+
+def _compute_eval_loss_metrics_generic(model, val_loss_loader, args):
+    del args
+    if val_loss_loader is None:
+        return {}
+    was_training = model.training
+    device = next(model.parameters()).device
+    totals = {}
+    counts = {}
+    model.eval()
+    try:
+        with torch.no_grad():
+            for batch in val_loss_loader:
+                batch = _move_batch_to_device(batch, device)
+                outputs = _forward_eval_losses(model, batch)
+                loss_scalars = _extract_loss_scalars(outputs)
+                if 'loss_total' not in loss_scalars:
+                    total_tensor = _compute_total_loss_tensor(outputs)
+                    loss_scalars['loss_total'] = _to_scalar(total_tensor)
+                batch_size = int(batch['images'].shape[0]) if isinstance(batch.get('images'), torch.Tensor) else 1
+                for key, value in loss_scalars.items():
+                    totals[key] = totals.get(key, 0.0) + (float(value) * batch_size)
+                    counts[key] = counts.get(key, 0) + batch_size
+    finally:
+        if was_training:
+            model.train()
+    averaged = {}
+    for key, total in totals.items():
+        count = counts.get(key, 0)
+        if count > 0:
+            averaged[key] = float(total) / float(count)
+    return averaged
+
+
+def _collect_eval_rows(evaluator, top1_score):
+    rows = []
+    latest_rows = getattr(evaluator, 'latest_eval_rows', None)
+    if isinstance(latest_rows, list) and latest_rows:
+        for row in latest_rows:
+            if not isinstance(row, dict):
+                continue
+            normalized = dict(row)
+            task_name = str(normalized.get('task') or normalized.get('name') or '')
+            if not task_name:
+                continue
+            normalized['task'] = task_name
+            rows.append(normalized)
+    if rows:
+        return rows
+    top1_row_name = str(getattr(evaluator, 'latest_metrics', {}).get('val/top1_row', '') or 'host-t2i')
+    return [{
+        'task': top1_row_name,
+        'R1': float(top1_score),
+    }]
+
+
+def _get_metric(row, key, default=0.0):
+    value = row.get(key, default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _choose_best_row_for_trial(epoch_rows, selection_task, base_lr):
+    selection_task = str(selection_task or '').strip()
+    candidates = [row for row in epoch_rows if str(row.get('task', '')) == selection_task]
+    selection_task_missing = len(candidates) == 0
+    if selection_task_missing:
+        candidates = list(epoch_rows)
+    if not candidates:
+        return None, bool(selection_task_missing)
+
+    def _sort_key(item):
+        return (
+            -_get_metric(item, 'R1', 0.0),
+            -_get_metric(item, 'mAP', 0.0),
+            _get_metric(item, 'loss_total', float('inf')),
+            float(base_lr),
+        )
+
+    best_row = sorted(candidates, key=_sort_key)[0]
+    return best_row, bool(selection_task_missing)
+
+
+def _format_lr_key(base_lr: float) -> str:
+    return str(f'{float(base_lr):.2e}')
+
+
+def _log_lr_ablation_optimizer_groups(logger, optimizer_group_summaries):
+    logger.info('[LR_ABLATION] Optimizer param groups:')
+    for group_summary in optimizer_group_summaries:
+        if int(group_summary.get('tensor_count', 0)) <= 0:
+            continue
+        logger.info(
+            '  group_name=%s, lr=%.6g, weight_decay=%.6g, num_params=%d',
+            group_summary.get('name'),
+            float(group_summary.get('lr', 0.0)),
+            float(group_summary.get('weight_decay', 0.0)),
+            int(group_summary.get('parameter_count', 0)),
+        )
+
+
+def _apply_lr_ablation_base_lr(args, base_lr: float):
+    args.lr = float(base_lr)
+    # Keep host-side ITSELF groups anchored to base_lr, while preserving lr_factor and bias_lr_factor.
+    for attr_name in ('lr_host_projectors', 'lr_image_backbone', 'lr_text_backbone'):
+        if hasattr(args, attr_name):
+            setattr(args, attr_name, float(base_lr))
+
+
+def _run_lr_ablation(
+    *,
+    args,
+    logger,
+    model,
+    train_loader,
+    eval_loss_loader,
+    evaluator,
+    checkpointer,
+    experiment_tracker,
+):
+    base_lrs = [float(value) for value in list(getattr(args, 'lr_ablation_base_lrs', []) or [])]
+    if not base_lrs:
+        raise ValueError('lr_ablation.base_lrs must contain at least one base LR.')
+    num_epochs = int(getattr(args, 'lr_ablation_num_epochs', 2))
+    selection_metric = str(getattr(args, 'lr_ablation_selection_metric', 'val_r1') or 'val_r1').strip().lower()
+    selection_task = str(getattr(args, 'lr_ablation_selection_task', 'host-t2i') or 'host-t2i').strip()
+    save_each_run = bool(getattr(args, 'lr_ablation_save_each_run', True))
+    restore_initial_state_each_run = bool(getattr(args, 'lr_ablation_restore_initial_state_each_run', True))
+    write_summary_json = bool(getattr(args, 'lr_ablation_write_summary_json', True))
+    summary_path_cfg = str(getattr(args, 'lr_ablation_summary_path', 'outputs/lr_ablation_summary.json') or '').strip()
+    summary_path_cfg = summary_path_cfg or 'outputs/lr_ablation_summary.json'
+
+    device = next(model.parameters()).device
+    logger.info('[LR_ABLATION] enabled')
+    logger.info('[LR_ABLATION] base_lrs = %s', base_lrs)
+    logger.info('[LR_ABLATION] num_epochs = %d', num_epochs)
+    logger.info('[LR_ABLATION] selection_task = %s', selection_task)
+    logger.info('[LR_ABLATION] optimizer policy = ITSELF original policy')
+    logger.info('[LR_ABLATION] host_backbone_lr = base_lr')
+    logger.info('[LR_ABLATION] host_retrieval_lr = base_lr * lr_factor')
+    logger.info('[LR_ABLATION] bias_lr = base_lr * bias_lr_factor')
+
+    initial_state_dict_cpu = _clone_model_state_dict_cpu(model)
+    initial_rng_state = _capture_rng_state()
+    sampler_set_epoch_supported = bool(
+        getattr(getattr(train_loader, 'sampler', None), 'set_epoch', None)
+    )
+    if not sampler_set_epoch_supported:
+        logger.warning('[LR_ABLATION] Sampler does not expose set_epoch; full dataloader order determinism may be limited.')
+
+    trial_summaries = []
+    best_candidate = None
+    global_step = 0
+    selection_task_missing_any = False
+
+    for trial_index, base_lr in enumerate(base_lrs):
+        logger.info('[LR_ABLATION] Trial start: base_lr=%s', base_lr)
+        if restore_initial_state_each_run or trial_index == 0:
+            _restore_model_state_dict_cpu(model, initial_state_dict_cpu)
+            _restore_rng_state(initial_rng_state)
+
+        _apply_lr_ablation_base_lr(args, base_lr)
+        optimizer = build_optimizer(args, model.module if hasattr(model, 'module') else model)
+        scheduler = build_lr_scheduler(args, optimizer)
+        optimizer_group_summaries = summarize_optimizer_param_groups(optimizer)
+        _log_lr_ablation_optimizer_groups(logger, optimizer_group_summaries)
+
+        checkpointer.optimizer = optimizer
+        checkpointer.scheduler = scheduler
+        trial_epoch_rows = []
+        lr_key = _format_lr_key(base_lr)
+
+        for epoch in range(1, num_epochs + 1):
+            if sampler_set_epoch_supported:
+                train_loader.sampler.set_epoch(epoch)
+            model.train()
+            running_totals = {}
+            running_counts = {}
+            for batch in train_loader:
+                global_step += 1
+                batch = _move_batch_to_device(batch, device)
+                optimizer.zero_grad(set_to_none=True)
+                outputs = _forward_train_step(
+                    model,
+                    batch,
+                    epoch=epoch,
+                    current_step=global_step,
+                    total_steps=max(len(train_loader) * max(num_epochs, 1), 1),
+                )
+                total_loss = _compute_total_loss_tensor(outputs)
+                total_loss.backward()
+                optimizer.step()
+                synchronize()
+
+                loss_scalars = _extract_loss_scalars(outputs)
+                if 'loss_total' not in loss_scalars:
+                    loss_scalars['loss_total'] = _to_scalar(total_loss)
+                if 'loss' not in loss_scalars:
+                    loss_scalars['loss'] = loss_scalars['loss_total']
+                batch_size = int(batch['images'].shape[0]) if isinstance(batch.get('images'), torch.Tensor) else 1
+                for key, value in loss_scalars.items():
+                    running_totals[key] = running_totals.get(key, 0.0) + (float(value) * batch_size)
+                    running_counts[key] = running_counts.get(key, 0) + batch_size
+
+            train_losses = {}
+            for key, total in running_totals.items():
+                count = running_counts.get(key, 0)
+                if count > 0:
+                    train_losses[key] = float(total) / float(count)
+            if 'loss_total' not in train_losses and 'loss' in train_losses:
+                train_losses['loss_total'] = float(train_losses['loss'])
+            if 'loss' not in train_losses and 'loss_total' in train_losses:
+                train_losses['loss'] = float(train_losses['loss_total'])
+
+            scheduler.step()
+
+            eval_loss_metrics = _compute_eval_loss_metrics_generic(model.module if args.distributed else model, eval_loss_loader, args)
+            eval_model = model.module.eval() if args.distributed else model.eval()
+            top1_score = float(evaluator.eval(eval_model))
+            rows = _collect_eval_rows(evaluator, top1_score)
+            torch.cuda.empty_cache()
+
+            for row in rows:
+                row_record = {
+                    'base_lr': float(base_lr),
+                    'lr_factor': float(getattr(args, 'lr_factor', 1.0)),
+                    'bias_lr_factor': float(getattr(args, 'bias_lr_factor', 1.0)),
+                    'epoch': int(epoch),
+                    'task': str(row.get('task', '')),
+                    'loss_total': float(train_losses.get('loss_total', train_losses.get('loss', 0.0))),
+                    'train_losses': copy.deepcopy(train_losses),
+                    'eval_losses': copy.deepcopy(eval_loss_metrics),
+                    'R1': _get_metric(row, 'R1', top1_score),
+                    'R5': _get_metric(row, 'R5', 0.0),
+                    'R10': _get_metric(row, 'R10', 0.0),
+                    'mAP': _get_metric(row, 'mAP', 0.0),
+                    'mINP': _get_metric(row, 'mINP', 0.0),
+                    'rSum': _get_metric(row, 'rSum', 0.0),
+                }
+                trial_epoch_rows.append(row_record)
+
+            if experiment_tracker is not None and get_rank() == 0:
+                wandb_metrics = {
+                    f'lr_ablation/{lr_key}/epoch': float(epoch),
+                }
+                for loss_key, loss_value in train_losses.items():
+                    wandb_metrics[f'lr_ablation/{lr_key}/train/{loss_key}'] = float(loss_value)
+                for row in rows:
+                    task_name = str(row.get('task', 'host-t2i')).replace('/', '_')
+                    for metric_name in ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum'):
+                        metric_value = _get_metric(row, metric_name, None)
+                        wandb_metrics[f'lr_ablation/{lr_key}/val/{task_name}/{metric_name}'] = float(metric_value)
+                experiment_tracker.log(wandb_metrics)
+
+            if save_each_run and get_rank() == 0:
+                checkpointer.save(
+                    f'lr_ablation_base_lr_{str(base_lr).replace(".", "p").replace("-", "m")}_epoch_{epoch}',
+                    epoch=epoch,
+                    base_lr=float(base_lr),
+                )
+
+        trial_best, selection_task_missing = _choose_best_row_for_trial(
+            epoch_rows=trial_epoch_rows,
+            selection_task=selection_task,
+            base_lr=base_lr,
+        )
+        if trial_best is None:
+            continue
+
+        trial_summary = {
+            'base_lr': float(base_lr),
+            'lr_factor': float(getattr(args, 'lr_factor', 1.0)),
+            'bias_lr_factor': float(getattr(args, 'bias_lr_factor', 1.0)),
+            'best_epoch': int(trial_best['epoch']),
+            'selection_task_missing': bool(selection_task_missing),
+            'selected_task': str(trial_best.get('task', '')),
+            'selected_metrics': {
+                'R1': float(trial_best.get('R1', 0.0)),
+                'R5': float(trial_best.get('R5', 0.0)),
+                'R10': float(trial_best.get('R10', 0.0)),
+                'mAP': float(trial_best.get('mAP', 0.0)),
+                'mINP': float(trial_best.get('mINP', 0.0)),
+                'rSum': float(trial_best.get('rSum', 0.0)),
+            },
+            'losses': copy.deepcopy(trial_best.get('train_losses', {})),
+            'rows': trial_epoch_rows,
+        }
+        trial_summaries.append(trial_summary)
+        if selection_task_missing:
+            selection_task_missing_any = True
+            logger.warning(
+                '[LR_ABLATION] selection task `%s` missing for base_lr=%s, falling back to highest R1 row.',
+                selection_task,
+                base_lr,
+            )
+
+        candidate = {
+            'base_lr': float(base_lr),
+            'epoch': int(trial_best['epoch']),
+            'R1': float(trial_best.get('R1', 0.0)),
+            'mAP': float(trial_best.get('mAP', 0.0)),
+            'loss_total': float(trial_best.get('loss_total', float('inf'))),
+        }
+        if best_candidate is None:
+            best_candidate = candidate
+        else:
+            current_key = (-candidate['R1'], -candidate['mAP'], candidate['loss_total'], candidate['base_lr'])
+            best_key = (-best_candidate['R1'], -best_candidate['mAP'], best_candidate['loss_total'], best_candidate['base_lr'])
+            if current_key < best_key:
+                best_candidate = candidate
+
+    logger.info('[LR_ABLATION] Summary')
+    logger.info('base_lr | best_epoch | selected_task | R1 | R5 | R10 | mAP | mINP | rSum | loss | component_losses')
+    for trial in trial_summaries:
+        selected = trial.get('selected_metrics', {})
+        losses = trial.get('losses', {})
+        logger.info(
+            '%.6g | %d | %s | %.4f | %.4f | %.4f | %.4f | %.4f | %.4f | %.6f | %s',
+            float(trial.get('base_lr', 0.0)),
+            int(trial.get('best_epoch', 0)),
+            str(trial.get('selected_task', '')),
+            float(selected.get('R1', 0.0)),
+            float(selected.get('R5', 0.0)),
+            float(selected.get('R10', 0.0)),
+            float(selected.get('mAP', 0.0)),
+            float(selected.get('mINP', 0.0)),
+            float(selected.get('rSum', 0.0)),
+            float(losses.get('loss_total', losses.get('loss', 0.0))),
+            losses,
+        )
+    if best_candidate is None:
+        raise RuntimeError('LR ablation finished without valid trial metrics.')
+    logger.info('[LR_ABLATION] Best base_lr = %.6g', float(best_candidate['base_lr']))
+
+    summary = {
+        'mode': 'lr_ablation',
+        'optimizer_policy': 'itself_original',
+        'base_lrs': [float(item) for item in base_lrs],
+        'num_epochs': int(num_epochs),
+        'selection_task': selection_task,
+        'selection_metric': selection_metric,
+        'selection_task_missing': bool(selection_task_missing_any),
+        'trials': [
+            {
+                'base_lr': float(item.get('base_lr', 0.0)),
+                'lr_factor': float(item.get('lr_factor', getattr(args, 'lr_factor', 1.0))),
+                'bias_lr_factor': float(item.get('bias_lr_factor', getattr(args, 'bias_lr_factor', 1.0))),
+                'best_epoch': int(item.get('best_epoch', 0)),
+                'selection_task_missing': bool(item.get('selection_task_missing', False)),
+                'selected_task': str(item.get('selected_task', '')),
+                'selected_metrics': dict(item.get('selected_metrics', {})),
+                'losses': dict(item.get('losses', {})),
+                'rows': list(item.get('rows', [])),
+            }
+            for item in trial_summaries
+        ],
+        'best': {
+            'base_lr': float(best_candidate['base_lr']),
+            'best_epoch': int(best_candidate['epoch']),
+            'R1': float(best_candidate['R1']),
+            'mAP': float(best_candidate['mAP']),
+            'loss_total': float(best_candidate['loss_total']),
+        },
+    }
+
+    if write_summary_json and get_rank() == 0:
+        summary_path = summary_path_cfg
+        if not op.isabs(summary_path):
+            summary_path = op.join(args.output_dir, summary_path)
+        os.makedirs(op.dirname(summary_path), exist_ok=True)
+        with open(summary_path, 'w', encoding='utf-8') as handle:
+            json.dump(summary, handle, indent=2)
+        logger.info('[LR_ABLATION] wrote summary json: %s', summary_path)
+
+    if experiment_tracker is not None and get_rank() == 0:
+        experiment_tracker.log(
+            {
+                'lr_ablation/summary/best_base_lr': float(best_candidate['base_lr']),
+                'lr_ablation/summary/best_R1': float(best_candidate['R1']),
+            }
+        )
+
+    return summary
+
+
 if __name__ == '__main__':
     load_runtime_environment()
     args = get_args()
@@ -553,6 +1053,23 @@ if __name__ == '__main__':
     if use_original_itself:
         do_train_fn, evaluator_class = get_original_itself_training_components(args)
     evaluator = evaluator_class(val_img_loader, val_txt_loader, args)
+
+    if str(getattr(args, 'runtime_mode', 'auto')).lower() == 'lr_ablation':
+        if not bool(getattr(args, 'lr_ablation_enabled', False)):
+            logger.warning(
+                '[LR_ABLATION] runtime_mode=lr_ablation requested while lr_ablation.enabled=false; proceeding because runtime_mode is authoritative.'
+            )
+        _run_lr_ablation(
+            args=args,
+            logger=logger,
+            model=model,
+            train_loader=train_loader,
+            eval_loss_loader=eval_loss_loader,
+            evaluator=evaluator,
+            checkpointer=checkpointer,
+            experiment_tracker=experiment_tracker,
+        )
+        raise SystemExit(0)
 
     start_epoch = 1
     resume_state = None
