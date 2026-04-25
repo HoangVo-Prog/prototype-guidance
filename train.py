@@ -392,9 +392,18 @@ if __name__ == '__main__':
             module_paths['metrics'],
         )
 
-    experiment_tracker = None
-    if not use_original_itself:
-        experiment_tracker = ExperimentTracker(args, args.output_dir, distributed_rank=get_rank())
+    # Keep W&B availability consistent across runtime modes (including original ITSELF host-only path).
+    experiment_tracker = ExperimentTracker(args, args.output_dir, distributed_rank=get_rank())
+    if experiment_tracker is not None and get_rank() == 0:
+        experiment_tracker.log(
+            {
+                'train/epoch': 0.0,
+                'train/runtime_mode_host_only': float(
+                    str(getattr(args, 'runtime_mode', '')).strip().lower() == 'host_only'
+                ),
+                'train/runtime_uses_original_itself': float(use_original_itself),
+            }
+        )
 
     if bool(getattr(args, 'use_prototype_bank', False)) and modular_checkpoint_manager.has_group_loading_enabled('prototype_bank'):
         init_mode = str(getattr(args, 'prototype_init', 'normalized_random'))
@@ -635,4 +644,3 @@ if __name__ == '__main__':
     finally:
         if experiment_tracker is not None:
             experiment_tracker.finish()
-
