@@ -510,8 +510,13 @@ def _get_metric(row, key, default=0.0):
 
 def _choose_best_row_for_trial(epoch_rows, selection_task, base_lr):
     selection_task = str(selection_task or '').strip()
-    candidates = [row for row in epoch_rows if str(row.get('task', '')) == selection_task]
-    selection_task_missing = len(candidates) == 0
+    auto_select_from_best_row = selection_task.lower() in {'best_eval_row', 'auto'}
+    if auto_select_from_best_row:
+        candidates = list(epoch_rows)
+        selection_task_missing = False
+    else:
+        candidates = [row for row in epoch_rows if str(row.get('task', '')) == selection_task]
+        selection_task_missing = len(candidates) == 0
     if selection_task_missing:
         candidates = list(epoch_rows)
     if not candidates:
