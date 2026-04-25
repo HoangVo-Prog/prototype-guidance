@@ -127,7 +127,7 @@ def build_dataloader(args, tranforms=None):
                 logger.info('DISTRIBUTED TRAIN START')
                 mini_batch_size = args.batch_size // get_world_size()
                 data_sampler = RandomIdentitySampler_DDP(
-                    dataset.train, args.batch_size, args.num_instance)
+                    dataset.train, args.batch_size, args.num_instance, seed=getattr(args, 'seed', 0))
                 batch_sampler = torch.utils.data.sampler.BatchSampler(
                     data_sampler, mini_batch_size, True)
                 train_loader = DataLoader(train_set,
@@ -142,7 +142,8 @@ def build_dataloader(args, tranforms=None):
                                           batch_size=args.batch_size,
                                           sampler=RandomIdentitySampler(
                                               dataset.train, args.batch_size,
-                                              args.num_instance),
+                                              args.num_instance,
+                                              seed=getattr(args, 'seed', 0)),
                                           num_workers=num_workers,
                                           collate_fn=collate)
         elif args.sampler == 'random':

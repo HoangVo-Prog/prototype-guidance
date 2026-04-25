@@ -538,6 +538,17 @@ def _format_lr_key(base_lr: float) -> str:
     return str(f'{float(base_lr):.2e}')
 
 
+def _resolve_epoch_aware_sampler(train_loader):
+    sampler = getattr(train_loader, 'sampler', None)
+    if sampler is not None and hasattr(sampler, 'set_epoch'):
+        return sampler
+    batch_sampler = getattr(train_loader, 'batch_sampler', None)
+    batch_sampler_sampler = getattr(batch_sampler, 'sampler', None)
+    if batch_sampler_sampler is not None and hasattr(batch_sampler_sampler, 'set_epoch'):
+        return batch_sampler_sampler
+    return None
+
+
 def _log_lr_ablation_optimizer_groups(logger, optimizer_group_summaries):
     logger.info('[LR_ABLATION] Optimizer param groups:')
     for group_summary in optimizer_group_summaries:
@@ -595,9 +606,8 @@ def _run_lr_ablation(
 
     initial_state_dict_cpu = _clone_model_state_dict_cpu(model)
     initial_rng_state = _capture_rng_state()
-    sampler_set_epoch_supported = bool(
-        getattr(getattr(train_loader, 'sampler', None), 'set_epoch', None)
-    )
+    epoch_sampler = _resolve_epoch_aware_sampler(train_loader)
+    sampler_set_epoch_supported = epoch_sampler is not None
     if not sampler_set_epoch_supported:
         logger.warning('[LR_ABLATION] Sampler does not expose set_epoch; full dataloader order determinism may be limited.')
 
@@ -625,7 +635,7 @@ def _run_lr_ablation(
 
         for epoch in range(1, num_epochs + 1):
             if sampler_set_epoch_supported:
-                train_loader.sampler.set_epoch(epoch)
+                epoch_sampler.set_epoch(epoch)
             model.train()
             running_totals = {}
             running_counts = {}
