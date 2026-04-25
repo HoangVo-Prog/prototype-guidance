@@ -139,7 +139,7 @@ logging:
   notes: 
   log_interval: 50
   log_code: false
-  log_debug_metrics: false
+  log_debug_metrics: true
 
 evaluation:
   checkpoint_path: ''
