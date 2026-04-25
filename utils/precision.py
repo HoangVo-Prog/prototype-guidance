@@ -35,10 +35,9 @@ def is_amp_enabled(args=None, device=None) -> bool:
 
 
 def build_autocast_context(args, device):
-    del args
-    if not is_cuda_device(device):
-        return nullcontext()
-    return torch.autocast(device_type='cuda', dtype=torch.float16)
+    del args, device
+    # Parameters are already forced to fp16; keep execution path stable by disabling autocast.
+    return nullcontext()
 
 
 def build_grad_scaler(args, device):
