@@ -135,18 +135,11 @@ Notes:
 - Primary Config Keys: `model.use_custom_projector`
 - Alias Config Keys: `host.use_custom_projector`
 
-## `backbone_precision`
-- Flags: `--backbone_precision`
-- Type/Action: type=str
-- Default: `'fp16'`
-- Primary Config Keys: `model.backbone_precision`
-- Alias Config Keys: -
-
-## `prototype_precision`
-- Flags: `--prototype_precision`
-- Type/Action: type=str
-- Default: `'fp32'`
-- Primary Config Keys: `model.prototype_precision`
+## `precision_policy`
+- Flags: -
+- Type/Action: -
+- Default: `forced_fp16`
+- Primary Config Keys: -
 - Alias Config Keys: -
 
 ## `temperature`
@@ -780,18 +773,11 @@ Notes:
 - Primary Config Keys: `training.grad_clip`
 - Alias Config Keys: -
 
-## `amp`
-- Flags: `--amp`
-- Type/Action: type=_str2bool, nargs='?'
-- Default: `False`
-- Primary Config Keys: `training.amp`
-- Alias Config Keys: -
-
-## `amp_dtype`
-- Flags: `--amp_dtype`
-- Type/Action: type=str
-- Default: `'fp16'`
-- Primary Config Keys: `training.amp_dtype`
+## `amp_policy`
+- Flags: -
+- Type/Action: -
+- Default: `forced_cuda_autocast_fp16`
+- Primary Config Keys: -
 - Alias Config Keys: -
 
 ## `resume`

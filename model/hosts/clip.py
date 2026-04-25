@@ -8,8 +8,6 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from utils.precision import canonicalize_backbone_precision
 from utils.freeze_schedule import set_group_requires_grad
 
 from .itself import get_original_itself_components
@@ -237,15 +235,9 @@ class ClipHostModel(nn.Module):
         return base_model, base_cfg, model_build.convert_weights
 
     def _apply_precision_policy(self):
-        host_precision = canonicalize_backbone_precision(getattr(self.args, 'backbone_precision', 'fp16'))
-        if host_precision == 'fp16':
-            self._convert_clip_weights(self.base_model)
-            self.host_head.half()
-            self.losses.half()
-        else:
-            self.base_model.float()
-            self.host_head.float()
-            self.losses.float()
+        self._convert_clip_weights(self.base_model)
+        self.host_head.half()
+        self.losses.half()
 
     def _apply_freeze_policy(self):
         freeze_image_backbone = bool(getattr(self.args, 'freeze_image_backbone', True))

@@ -6,7 +6,6 @@ import yaml
 
 from utils.freeze_schedule import parse_freeze_schedule_config
 from utils.module_group_registry import CHECKPOINT_GROUPS
-from utils.precision import AMP_DTYPE_ALIASES, BACKBONE_PRECISION_ALIASES, PROTOTYPE_PRECISION_ALIASES
 
 
 PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
@@ -32,8 +31,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'projector_type'): 'projector_type',
     ('model', 'normalize_projector_outputs'): 'normalize_projector_outputs',
     ('model', 'use_custom_projector'): 'use_custom_projector',
-    ('model', 'backbone_precision'): 'backbone_precision',
-    ('model', 'prototype_precision'): 'prototype_precision',
     ('model', 'temperature'): 'temperature',
     ('model', 'img_size'): 'img_size',
     ('model', 'stride_size'): 'stride_size',
@@ -178,8 +175,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'freeze_image_backbone'): 'freeze_image_backbone',
     ('training', 'freeze_text_backbone'): 'freeze_text_backbone',
     ('training', 'grad_clip'): 'grad_clip',
-    ('training', 'amp'): 'amp',
-    ('training', 'amp_dtype'): 'amp_dtype',
     ('training', 'proxy_temperature'): 'proxy_temperature',
     ('training', 'diag_temperature'): 'diag_temperature',
 
@@ -539,8 +534,6 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('host', 'type'): ('clip', 'itself'),
     ('host', 'itself_topk_type'): ('mean', 'std', 'layer_index', 'custom'),
     ('model', 'projector_type'): ('mlp2', 'linear'),
-    ('model', 'backbone_precision'): tuple(BACKBONE_PRECISION_ALIASES.keys()),
-    ('model', 'prototype_precision'): tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
     ('prototype', 'prototype_init'): (
         'normalized_random',
         'sampled_image_embeddings',
@@ -561,7 +554,6 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('semantic_structure', 'text_teacher_source'): ('exact_diagonal',),
     ('semantic_structure', 'text_student_source'): ('surrogate_diagonal',),
     ('semantic_structure', 'image_student_source'): ('image_semantic_feature',),
-    ('training', 'amp_dtype'): tuple(AMP_DTYPE_ALIASES.keys()),
     ('training', 'early_stopping_mode'): ('max', 'min'),
     ('training', 'stage'): ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     ('optimizer', 'type'): ('SGD', 'Adam', 'AdamW'),
@@ -578,8 +570,6 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'host_type': ('clip', 'itself'),
     'itself_topk_type': ('mean', 'std', 'layer_index', 'custom'),
     'projector_type': ('mlp2', 'linear'),
-    'backbone_precision': tuple(BACKBONE_PRECISION_ALIASES.keys()),
-    'prototype_precision': tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
     'prototype_init': (
         'normalized_random',
         'sampled_image_embeddings',
@@ -599,7 +589,6 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'semantic_text_teacher_source': ('exact_diagonal',),
     'semantic_text_student_source': ('surrogate_diagonal',),
     'semantic_image_student_source': ('image_semantic_feature',),
-    'amp_dtype': tuple(AMP_DTYPE_ALIASES.keys()),
     'early_stopping_mode': ('max', 'min'),
     'training_stage': ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     'optimizer': ('SGD', 'Adam', 'AdamW'),

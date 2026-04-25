@@ -44,7 +44,7 @@ from utils.metrics_prototype import (
     collect_prototype_debug_metrics,
     resolve_prototype_bank_tensor,
 )
-from utils.precision import build_autocast_context, build_grad_scaler, canonicalize_amp_dtype, is_amp_enabled, is_cuda_device
+from utils.precision import build_autocast_context, build_grad_scaler, is_cuda_device
 
 
 METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key != 'loss_total')
@@ -680,8 +680,8 @@ def _do_train_runtime(
             'training.prototype_selection_metric is deprecated by checkpointing.metric/checkpointing.save.*. '
             'Use checkpointing for per-group best/latest artifacts.'
         )
-    if bool(getattr(args, 'amp', False)) and not is_cuda_device(device):
-        raise ValueError('training.amp=true requires a CUDA device.')
+    if not is_cuda_device(device):
+        logger.warning('CUDA is unavailable; fp16-only execution will run without CUDA autocast.')
     scaler = build_grad_scaler(args, device)
     scaler = _maybe_disable_grad_scaler_for_fp16_params(scaler, optimizer, logger)
     resume_scaler_state = resume_bundle.get('scaler_state_dict')
@@ -697,11 +697,8 @@ def _do_train_runtime(
                 'Resume checkpoint contains AMP scaler state, but active scaler is disabled; skipping scaler restore.'
             )
     logger.info(
-        'Precision config: backbone_precision=%s, prototype_precision=%s, amp=%s, amp_dtype=%s',
-        getattr(args, 'backbone_precision', 'fp16'),
-        getattr(args, 'prototype_precision', 'fp32'),
-        is_amp_enabled(args, device),
-        canonicalize_amp_dtype(getattr(args, 'amp_dtype', 'fp16')),
+        'Precision policy: forced_fp16=true scaler_enabled=%s',
+        bool(getattr(scaler, 'is_enabled', lambda: False)()),
     )
     meters = _make_meters()
     wandb_interval_meters = _make_meters()

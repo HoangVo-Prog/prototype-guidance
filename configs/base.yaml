@@ -27,8 +27,6 @@ model:
   projector_type: mlp2
   normalize_projector_outputs: true
   use_custom_projector: true
-  backbone_precision: fp32
-  prototype_precision: fp32
   temperature: 0.02
   img_size: [384, 128]
   stride_size: 16

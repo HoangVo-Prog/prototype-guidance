@@ -31,8 +31,6 @@ model:
   projector_type: mlp2
   normalize_projector_outputs: true
   use_custom_projector: true
-  backbone_precision: fp32
-  prototype_precision: fp32
   temperature: 0.02
   img_size: [384, 128]         # [CANONICAL]
   stride_size: 16
@@ -191,8 +189,6 @@ training:
   freeze_prototype_side: true
   freeze_host_projectors: false
   grad_clip: 0.0
-  amp: false
-  amp_dtype: fp16
   proxy_temperature: 0.07
   diag_temperature: 0.07  # Optional: epoch-based freeze/lr/loss schedule.
   # If omitted, runtime keeps the legacy static freeze flags and optimizer setup.

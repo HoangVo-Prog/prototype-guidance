@@ -435,8 +435,8 @@ class PASRuntimeModel(nn.Module):
             host_type=self.host_type,
             image_backbone=getattr(legacy_model, 'image_backbone', getattr(args, 'image_backbone', args.pretrain_choice)),
             text_backbone=getattr(legacy_model, 'text_backbone', getattr(args, 'text_backbone', 'clip_text_transformer')),
-            backbone_precision=str(getattr(legacy_model, 'backbone_precision', getattr(args, 'backbone_precision', 'fp16'))),
-            prototype_precision=str(getattr(legacy_model, 'prototype_precision', getattr(args, 'prototype_precision', 'fp32'))),
+            backbone_precision='fp16',
+            prototype_precision='fp16',
             use_prototype_branch=self.use_prototype_branch,
             use_image_conditioned_pooling=self.use_image_conditioned_pooling,
             itself_return_all=bool(getattr(legacy_model, 'itself_return_all', False)),
@@ -446,7 +446,7 @@ class PASRuntimeModel(nn.Module):
         if getattr(legacy_model, 'prototype_head', None) is not None:
             self.prototype_plugin = PrototypePlugin(
                 prototype_head=legacy_model.prototype_head,
-                prototype_precision=str(getattr(legacy_model, 'prototype_precision', getattr(args, 'prototype_precision', 'fp32'))),
+                prototype_precision='fp16',
                 eval_image_chunk_size=int(getattr(legacy_model, 'prototype_eval_image_chunk_size', getattr(args, 'prototype_eval_image_chunk_size', 32))),
                 eval_text_chunk_size=int(getattr(legacy_model, 'prototype_eval_text_chunk_size', getattr(args, 'prototype_eval_text_chunk_size', 128))),
                 use_prototype_bank=self.use_prototype_bank,

@@ -134,8 +134,6 @@ def build_parser():
     parser.add_argument('--projector_type', type=str, default='mlp2')
     parser.add_argument('--normalize_projector_outputs', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_custom_projector', type=_str2bool, nargs='?', const=True, default=True)
-    parser.add_argument('--backbone_precision', type=str, default='fp16')
-    parser.add_argument('--prototype_precision', type=str, default='fp32')
     parser.add_argument('--temperature', type=float, default=0.07)
     parser.add_argument('--proxy_temperature', type=float, default=0.07)
     parser.add_argument('--host_type', type=str, default='clip')
@@ -273,8 +271,6 @@ def build_parser():
         help='Deprecated. Use checkpointing.metric/checkpointing.save for modular best/latest checkpointing.',
     )
     parser.add_argument('--grad_clip', type=float, default=1.0)
-    parser.add_argument('--amp', type=_str2bool, nargs='?', const=True, default=False)
-    parser.add_argument('--amp_dtype', type=str, default='fp16')
     parser.add_argument('--resume', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--resume_ckpt_file', default='', help='Resume from checkpoint path')
     parser.add_argument('--resume_strict', type=_str2bool, nargs='?', const=True, default=False)

@@ -7,7 +7,7 @@ from prettytable import PrettyTable
 import torch
 import torch.nn.functional as F
 
-from utils.precision import build_autocast_context, is_cuda_device
+from utils.precision import build_autocast_context
 from utils.metric_logging import build_validation_debug_metrics, build_validation_retrieval_metrics
 
 
@@ -333,8 +333,6 @@ class Evaluator:
     def _compute_similarity(self, model):
         model = model.eval()
         device = next(model.parameters()).device
-        if bool(getattr(self.args, 'amp', False)) and not is_cuda_device(device):
-            raise ValueError('training.amp=true requires a CUDA device.')
 
         text_ids, image_ids = [], []
         text_batches, image_batches = [], []

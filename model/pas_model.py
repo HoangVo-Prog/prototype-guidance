@@ -13,9 +13,6 @@ from .prototype import TokenMaskBuilder, build_prototype_head, init_mode_require
 from .host_heads import build_host_head
 from utils.precision import (
     build_autocast_context,
-    canonicalize_amp_dtype,
-    canonicalize_backbone_precision,
-    canonicalize_prototype_precision,
     precision_to_torch_dtype,
 )
 from utils.freeze_schedule import set_group_requires_grad
@@ -58,8 +55,8 @@ class PASModel(nn.Module):
         self.prototype_dim = getattr(args, 'prototype_dim', self.embed_dim)
         self.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
         self.retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
-        self.backbone_precision = canonicalize_backbone_precision(getattr(args, 'backbone_precision', 'fp16'))
-        self.prototype_precision = canonicalize_prototype_precision(getattr(args, 'prototype_precision', 'fp32'))
+        self.backbone_precision = 'fp16'
+        self.prototype_precision = 'fp16'
         self.return_debug_outputs = bool(getattr(args, 'return_debug_outputs', False))
         self.itself_return_all = bool(getattr(args, 'itself_return_all', False)) and self.host_type == 'itself'
         self.itself_average_attn_weights = bool(getattr(args, 'itself_average_attn_weights', True))
@@ -235,17 +232,6 @@ class PASModel(nn.Module):
                 'special_token_ids must be configured explicitly so token masking does not rely on hardcoded '
                 'tokenizer assumptions.'
             )
-        if self.backbone_precision == 'fp16' and bool(getattr(self.args, 'amp', False)):
-            if canonicalize_amp_dtype(getattr(self.args, 'amp_dtype', 'fp16')) != 'fp16':
-                raise ValueError('model.backbone_precision=fp16 requires training.amp_dtype=fp16 when AMP is enabled.')
-        if self.prototype_precision == 'fp16' and bool(getattr(self.args, 'amp', False)):
-            if canonicalize_amp_dtype(getattr(self.args, 'amp_dtype', 'fp16')) != 'fp16':
-                raise ValueError('model.prototype_precision=fp16 requires training.amp_dtype=fp16 when AMP is enabled.')
-        if bool(getattr(self.args, 'training', True)) and self.backbone_precision == 'fp16':
-            if (not bool(getattr(self.args, 'freeze_image_backbone', True)) or not bool(getattr(self.args, 'freeze_text_backbone', True))) and not bool(getattr(self.args, 'amp', False)):
-                raise ValueError('Unfrozen fp16 backbone training requires training.amp=true so the backbone is updated under proper AMP scaling.')
-        if bool(getattr(self.args, 'training', True)) and self.prototype_precision == 'fp16' and not bool(getattr(self.args, 'amp', False)):
-            raise ValueError('model.prototype_precision=fp16 requires training.amp=true so prototype modules are updated under proper AMP scaling.')
         legacy_retrieval_flags = {
             'use_loss_ret_exact': 'Legacy exact retrieval training is removed. Use loss.use_loss_ret for row-wise surrogate image-to-text retrieval only.',
             'use_loss_ret_exact_image': 'Legacy exact image-side retrieval training is removed. The only valid retrieval loss is row-wise surrogate image-to-text retrieval.',
@@ -1289,25 +1275,16 @@ def build_model(args, num_classes, train_loader=None):
         str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
         and bool(getattr(args, 'itself_use_original_impl', True))
     )
-    if model.backbone_precision == 'fp16':
-        convert_weights(model.base_model)
-    else:
-        model.base_model.float()
+    convert_weights(model.base_model)
 
     # `host_retrieval` belongs to the host side and follows `backbone_precision`.
-    if model.backbone_precision == 'fp16':
-        if use_original_itself_host_impl:
-            convert_weights(model.host_head)
-        else:
-            model.host_head.half()
+    if use_original_itself_host_impl:
+        convert_weights(model.host_head)
     else:
-        model.host_head.float()
+        model.host_head.half()
 
     # Prototype-side groups (`prototype_bank`, `prototype_projector`, `routing`, `fusion`)
     # follow `prototype_precision`.
     if model.prototype_head is not None:
-        if model.prototype_precision == 'fp16':
-            model.prototype_head.half()
-        else:
-            model.prototype_head.float()
+        model.prototype_head.half()
     return model
