@@ -556,21 +556,135 @@ def _log_lr_ablation_optimizer_groups(logger, optimizer_group_summaries):
     for group_summary in optimizer_group_summaries:
         if int(group_summary.get('tensor_count', 0)) <= 0:
             continue
+        logical_group_name = str(group_summary.get('logical_group_name', group_summary.get('name', '')))
+        status = str(group_summary.get('lr_ablation_status', 'fixed'))
+        reason = str(group_summary.get('lr_ablation_reason', ''))
         logger.info(
-            '  group_name=%s, lr=%.6g, weight_decay=%.6g, num_params=%d',
+            '  group_name=%s, logical_group=%s, status=%s, lr=%.6g, weight_decay=%.6g, num_params=%d%s',
             group_summary.get('name'),
+            logical_group_name,
+            status,
             float(group_summary.get('lr', 0.0)),
             float(group_summary.get('weight_decay', 0.0)),
             int(group_summary.get('parameter_count', 0)),
+            f', reason={reason}' if reason else '',
         )
 
 
-def _apply_lr_ablation_base_lr(args, base_lr: float):
-    args.lr = float(base_lr)
-    # Keep host-side ITSELF groups anchored to base_lr, while preserving lr_factor and bias_lr_factor.
-    for attr_name in ('lr_host_projectors', 'lr_image_backbone', 'lr_text_backbone'):
-        if hasattr(args, attr_name):
-            setattr(args, attr_name, float(base_lr))
+_LR_ABLATION_AUX_GROUP_TO_ATTR = {
+    'prototype_bank': 'lr_prototype_bank',
+    'prototype_projectors': 'lr_projectors',
+    'prototype_routing': 'lr_prototype_routing',
+    'prototype_pooling': 'lr_prototype_pooling',
+    'prototype_contextualization': 'lr_prototype_contextualization',
+    'class_proxies': 'lr_class_proxies',
+}
+
+_LR_ABLATION_HOST_GROUPS = frozenset(
+    {
+        'image_backbone',
+        'text_backbone',
+        'host_projectors',
+        'other',
+    }
+)
+
+
+def _group_name_from_summary(group_summary):
+    return str(group_summary.get('logical_group_name', group_summary.get('name', ''))).strip()
+
+
+def _resolve_lr_ablation_sweep_plan(args, optimizer_group_summaries):
+    trainable_groups = set()
+    for group_summary in optimizer_group_summaries:
+        if int(group_summary.get('tensor_count', 0)) <= 0:
+            continue
+        if int(group_summary.get('parameter_count', 0)) <= 0:
+            continue
+        group_name = _group_name_from_summary(group_summary)
+        if group_name:
+            trainable_groups.add(group_name)
+
+    swept_group_to_attr = {}
+    fixed_group_reasons = {}
+    for group_name in sorted(trainable_groups):
+        lr_attr = _LR_ABLATION_AUX_GROUP_TO_ATTR.get(group_name)
+        if lr_attr and hasattr(args, lr_attr):
+            swept_group_to_attr[group_name] = lr_attr
+            continue
+
+        if group_name in _LR_ABLATION_HOST_GROUPS:
+            fixed_group_reasons[group_name] = (
+                'excluded host-related group: host learning recipe is already stable; keep fixed during LR ablation.'
+            )
+            continue
+
+        if lr_attr and not hasattr(args, lr_attr):
+            fixed_group_reasons[group_name] = (
+                f'auxiliary group has no configurable field `{lr_attr}` on args; kept fixed.'
+            )
+            continue
+
+        if group_name.startswith('prototype_'):
+            fixed_group_reasons[group_name] = (
+                'prototype-related group without a dedicated LR override field; kept fixed to avoid implicit global rewrites.'
+            )
+            continue
+
+        fixed_group_reasons[group_name] = (
+            'non-auxiliary or ambiguous group; kept fixed so ablation only sweeps less-established auxiliary modules.'
+        )
+
+    return {
+        'swept_group_to_attr': swept_group_to_attr,
+        'fixed_group_reasons': fixed_group_reasons,
+        'trainable_groups': sorted(trainable_groups),
+    }
+
+
+def _log_lr_ablation_trial_scope(logger, base_lr: float, sweep_plan):
+    swept = sweep_plan.get('swept_group_to_attr', {})
+    fixed = sweep_plan.get('fixed_group_reasons', {})
+    logger.info('[LR_ABLATION] Trial scope: base_lr_candidate=%.6g', float(base_lr))
+    if swept:
+        logger.info('[LR_ABLATION] Swept groups:')
+        for group_name in sorted(swept.keys()):
+            logger.info(
+                '  group=%s, lr_field=optimizer.%s, assigned_lr=%.6g',
+                group_name,
+                swept[group_name],
+                float(base_lr),
+            )
+    else:
+        logger.warning('[LR_ABLATION] No eligible auxiliary groups selected for LR sweep.')
+
+    if fixed:
+        logger.info('[LR_ABLATION] Fixed groups:')
+        for group_name in sorted(fixed.keys()):
+            logger.info('  group=%s, reason=%s', group_name, fixed[group_name])
+
+
+def _tag_lr_ablation_group_summaries(optimizer_group_summaries, sweep_plan):
+    swept_groups = set((sweep_plan or {}).get('swept_group_to_attr', {}).keys())
+    fixed_group_reasons = dict((sweep_plan or {}).get('fixed_group_reasons', {}))
+    tagged = []
+    for group_summary in optimizer_group_summaries:
+        updated = dict(group_summary)
+        logical_group_name = _group_name_from_summary(group_summary)
+        if logical_group_name in swept_groups:
+            updated['lr_ablation_status'] = 'swept'
+            updated['lr_ablation_reason'] = 'auxiliary group selected for LR ablation sweep.'
+        else:
+            updated['lr_ablation_status'] = 'fixed'
+            updated['lr_ablation_reason'] = fixed_group_reasons.get(logical_group_name, '')
+        tagged.append(updated)
+    return tagged
+
+
+def _apply_lr_ablation_base_lr(args, base_lr: float, sweep_plan):
+    for lr_attr in sorted(set((sweep_plan or {}).get('swept_group_to_attr', {}).values())):
+        if hasattr(args, lr_attr):
+            setattr(args, lr_attr, float(base_lr))
 
 
 def _run_lr_ablation(
@@ -601,10 +715,26 @@ def _run_lr_ablation(
     logger.info('[LR_ABLATION] base_lrs = %s', base_lrs)
     logger.info('[LR_ABLATION] num_epochs = %d', num_epochs)
     logger.info('[LR_ABLATION] selection_task = %s', selection_task)
-    logger.info('[LR_ABLATION] optimizer policy = ITSELF original policy')
-    logger.info('[LR_ABLATION] host_backbone_lr = base_lr')
-    logger.info('[LR_ABLATION] host_retrieval_lr = base_lr * lr_factor')
-    logger.info('[LR_ABLATION] bias_lr = base_lr * bias_lr_factor')
+    logger.info('[LR_ABLATION] policy = auxiliary-group LR sweep; host-related groups remain fixed.')
+
+    model_for_optimizer = model.module if hasattr(model, 'module') else model
+    optimizer_group_summaries_baseline = summarize_optimizer_param_groups_observability(
+        args=args,
+        model=model_for_optimizer,
+        optimizer=build_optimizer(args, model_for_optimizer),
+    )
+    sweep_plan = _resolve_lr_ablation_sweep_plan(args, optimizer_group_summaries_baseline)
+    swept_group_to_attr = dict(sweep_plan.get('swept_group_to_attr', {}))
+    logger.info(
+        '[LR_ABLATION] selected_aux_groups=%s fixed_groups=%s',
+        sorted(swept_group_to_attr.keys()),
+        sorted(sweep_plan.get('fixed_group_reasons', {}).keys()),
+    )
+    if not swept_group_to_attr:
+        raise RuntimeError(
+            '[LR_ABLATION] No eligible auxiliary trainable groups found to sweep. '
+            'Refusing to retune host groups via global LR candidates.'
+        )
 
     initial_state_dict_cpu = _clone_model_state_dict_cpu(model)
     initial_rng_state = _capture_rng_state()
@@ -620,15 +750,23 @@ def _run_lr_ablation(
 
     for trial_index, base_lr in enumerate(base_lrs):
         logger.info('[LR_ABLATION] Trial start: base_lr=%s', base_lr)
+        _log_lr_ablation_trial_scope(logger, base_lr=float(base_lr), sweep_plan=sweep_plan)
         if restore_initial_state_each_run or trial_index == 0:
             _restore_model_state_dict_cpu(model, initial_state_dict_cpu)
             _restore_rng_state(initial_rng_state)
 
-        _apply_lr_ablation_base_lr(args, base_lr)
-        optimizer = build_optimizer(args, model.module if hasattr(model, 'module') else model)
+        _apply_lr_ablation_base_lr(args, base_lr, sweep_plan=sweep_plan)
+        optimizer = build_optimizer(args, model_for_optimizer)
         scheduler = build_lr_scheduler(args, optimizer)
-        optimizer_group_summaries = summarize_optimizer_param_groups(optimizer)
-        _log_lr_ablation_optimizer_groups(logger, optimizer_group_summaries)
+        optimizer_group_summaries = summarize_optimizer_param_groups_observability(
+            args=args,
+            model=model_for_optimizer,
+            optimizer=optimizer,
+        )
+        _log_lr_ablation_optimizer_groups(
+            logger,
+            _tag_lr_ablation_group_summaries(optimizer_group_summaries, sweep_plan),
+        )
 
         checkpointer.optimizer = optimizer
         checkpointer.scheduler = scheduler

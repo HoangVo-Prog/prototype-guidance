@@ -153,7 +153,7 @@ training:
   early_stopping_mode: max
   early_stopping_patience: 5
   early_stopping_min_delta: 0.0
-  early_stopping_start_epoch: 1
+  early_stopping_start_epoch: 10
   early_stopping_monitored_bucket: host
   early_stopping_monitored_task_pattern:
   early_stopping_stop_on_nan: false
