@@ -68,7 +68,8 @@ def set_seed(seed=1):
     np.random.seed(seed)
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+    # Keep CuDNN algorithm selection fixed for reproducibility.
+    torch.backends.cudnn.benchmark = False
 
 
 def _count_parameters(parameters):
