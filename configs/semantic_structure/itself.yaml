@@ -7,7 +7,6 @@ model:
   runtime_mode: joint_training 
   variant: itself_semantic_structure
   temperature: 0.02
-
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
   text_backbone: clip_text_transformer
@@ -145,7 +144,7 @@ text_pooling:
 
 training:
   batch_size: 256
-  epochs: 15
+  epochs: 25
   log_period: 50
   eval_frequency: 1
   early_stopping_enabled: true

@@ -270,8 +270,8 @@ checkpointing:
 
 lr_ablation:
   enabled: true
-  base_lrs: [5.0e-6, 1.0e-5, 2.0e-5]
-  num_epochs: 5
+  base_lrs: [1.0e-6, 2.0e-6, 3.0e-6, 5.0e-6, 7.5e-6, 1.0e-5, 1.5e-5, 2.0e-5]
+  num_epochs: 10
   selection_metric: val_r1
   selection_task: best_eval_row
   save_each_run: true
