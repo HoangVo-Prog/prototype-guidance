@@ -492,19 +492,10 @@ def build_original_itself_dataloader(args, tranforms=None):
 def get_original_itself_training_components(args) -> Tuple[Callable, type]:
     prepare_itself_legacy_args(args)
     components = get_original_itself_components()
-    evaluator_class = _build_static_mix_evaluator_class(components.metrics)
-    return components.processor.do_train, evaluator_class
+    return components.processor.do_train, components.metrics.Evaluator
 
 
 def get_original_itself_inference_fn(args) -> Callable:
     prepare_itself_legacy_args(args)
     components = get_original_itself_components()
-    evaluator_class = _build_static_mix_evaluator_class(components.metrics)
-
-    def _wrapped_do_inference(model, test_img_loader, test_txt_loader, runtime_args):
-        logger = logging.getLogger('ITSELF.test')
-        logger.info('Enter inferencing')
-        evaluator = evaluator_class(test_img_loader, test_txt_loader, runtime_args)
-        _ = evaluator.eval(model.eval())
-
-    return _wrapped_do_inference
+    return components.processor.do_inference
