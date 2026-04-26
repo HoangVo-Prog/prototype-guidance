@@ -212,6 +212,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('optimizer', 'warmup_epochs'): 'warmup_epochs',
     ('optimizer', 'warmup_method'): 'warmup_method',
     ('optimizer', 'scheduler'): 'lrscheduler',
+    ('optimizer', 'scheduler_total_epochs'): 'scheduler_total_epochs',
     ('optimizer', 'target_lr'): 'target_lr',
     ('optimizer', 'power'): 'power',
 
@@ -265,6 +266,7 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'eval_period'): 'eval_period',
     ('optimizer', 'optimizer'): 'optimizer',
     ('optimizer', 'lrscheduler'): 'lrscheduler',
+    ('optimizer', 'scheduler_total_epochs'): 'scheduler_total_epochs',
     ('evaluation', 'checkpoint'): 'checkpoint',
     ('evaluation', 'test_batch_size'): 'test_batch_size',
     ('model', 'projector_output_dim'): 'projection_dim',
@@ -1032,6 +1034,7 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     semantic_pred_temperature = float(flat.get('semantic_pred_temperature', 0.07))
     semantic_recompute_interval = int(flat.get('semantic_recompute_interval', 1))
     semantic_min_cluster_count_for_pbt = float(flat.get('semantic_min_cluster_count_for_pbt', 1.0))
+    scheduler_total_epochs_raw = flat.get('scheduler_total_epochs', None)
     use_loss_semantic_pbt = bool(flat.get('use_loss_semantic_pbt', False))
     use_loss_semantic_hardneg_margin = bool(flat.get('use_loss_semantic_hardneg_margin', False))
     use_loss_semantic_hosthard_weighted = bool(flat.get('use_loss_semantic_hosthard_weighted', False))
@@ -1077,6 +1080,13 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         raise ValueError('semantic_structure.recompute_interval must be a positive integer.')
     if semantic_min_cluster_count_for_pbt <= 0.0:
         raise ValueError('semantic_structure.min_cluster_count_for_pbt must be positive.')
+    if scheduler_total_epochs_raw is not None:
+        try:
+            scheduler_total_epochs = int(scheduler_total_epochs_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('optimizer.scheduler_total_epochs must be a positive integer when provided.') from exc
+        if scheduler_total_epochs <= 0:
+            raise ValueError('optimizer.scheduler_total_epochs must be a positive integer when provided.')
     if semantic_hardneg_margin < 0.0:
         raise ValueError('objectives.semantic_hardneg_margin must be non-negative.')
     if semantic_hardneg_eps <= 0.0:
@@ -1185,6 +1195,7 @@ def validate_runtime_args_namespace(args) -> None:
     semantic_pred_temperature = float(getattr(args, 'semantic_pred_temperature', 0.07))
     semantic_recompute_interval = int(getattr(args, 'semantic_recompute_interval', 1))
     semantic_min_cluster_count_for_pbt = float(getattr(args, 'semantic_min_cluster_count_for_pbt', 1.0))
+    scheduler_total_epochs_raw = getattr(args, 'scheduler_total_epochs', None)
     use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
     use_loss_semantic_hardneg_margin = bool(getattr(args, 'use_loss_semantic_hardneg_margin', False))
     use_loss_semantic_hosthard_weighted = bool(getattr(args, 'use_loss_semantic_hosthard_weighted', False))
@@ -1229,6 +1240,13 @@ def validate_runtime_args_namespace(args) -> None:
         raise ValueError('semantic_recompute_interval must be a positive integer.')
     if semantic_min_cluster_count_for_pbt <= 0.0:
         raise ValueError('semantic_min_cluster_count_for_pbt must be positive.')
+    if scheduler_total_epochs_raw is not None:
+        try:
+            scheduler_total_epochs = int(scheduler_total_epochs_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('scheduler_total_epochs must be a positive integer when provided.') from exc
+        if scheduler_total_epochs <= 0:
+            raise ValueError('scheduler_total_epochs must be a positive integer when provided.')
     if semantic_hardneg_margin < 0.0:
         raise ValueError('semantic_hardneg_margin must be non-negative.')
     if semantic_hardneg_eps <= 0.0:

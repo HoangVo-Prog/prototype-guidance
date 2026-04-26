@@ -213,6 +213,7 @@ optimizer:
   warmup_epochs: 5
   warmup_method: linear
   scheduler: cosine
+  scheduler_total_epochs: 15
   target_lr: 0.0
   power: 0.9
 

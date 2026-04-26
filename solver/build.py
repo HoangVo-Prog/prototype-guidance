@@ -579,6 +579,8 @@ def build_optimizer(args, model):
 def build_lr_scheduler(args, optimizer):
     if should_use_original_itself_runtime(args):
         return build_original_itself_lr_scheduler(args, optimizer)
+    scheduler_total_epochs = getattr(args, 'scheduler_total_epochs', None)
+    effective_total_epochs = int(scheduler_total_epochs) if scheduler_total_epochs is not None else int(args.num_epoch)
     return LRSchedulerWithWarmup(
         optimizer,
         milestones=args.milestones,
@@ -586,7 +588,7 @@ def build_lr_scheduler(args, optimizer):
         warmup_factor=args.warmup_factor,
         warmup_epochs=args.warmup_epochs,
         warmup_method=args.warmup_method,
-        total_epochs=args.num_epoch,
+        total_epochs=effective_total_epochs,
         mode=args.lrscheduler,
         target_lr=args.target_lr,
         power=args.power,

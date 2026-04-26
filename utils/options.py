@@ -329,6 +329,7 @@ def build_parser():
     parser.add_argument('--warmup_epochs', type=int, default=5)
     parser.add_argument('--warmup_method', type=str, default='linear')
     parser.add_argument('--lr_scheduler', '--lrscheduler', dest='lrscheduler', type=str, default='cosine')
+    parser.add_argument('--scheduler_total_epochs', '--optimizer.scheduler_total_epochs', dest='scheduler_total_epochs', type=int, default=None)
     parser.add_argument('--target_lr', type=float, default=0.0)
     parser.add_argument('--power', type=float, default=0.9)
 
@@ -501,6 +502,13 @@ def _finalize_args(args):
     args.lr_ablation_summary_path = str(
         getattr(args, 'lr_ablation_summary_path', 'outputs/lr_ablation_summary.json') or ''
     ).strip() or 'outputs/lr_ablation_summary.json'
+    scheduler_total_epochs_raw = getattr(args, 'scheduler_total_epochs', None)
+    if scheduler_total_epochs_raw in ('', None):
+        args.scheduler_total_epochs = None
+    else:
+        args.scheduler_total_epochs = int(scheduler_total_epochs_raw)
+        if args.scheduler_total_epochs <= 0:
+            raise ValueError('optimizer.scheduler_total_epochs must be a positive integer when provided.')
     if args.runtime_mode == 'lr_ablation':
         args.lr_ablation_enabled = True
     args.training_stage = str(getattr(args, 'training_stage', 'joint')).lower()
