@@ -24,6 +24,7 @@ _ADAPTER_ROOT = Path(__file__).resolve().parents[2] / 'adapter' / 'WACV2026-Oral
 _ADAPTER_NAMESPACE = '_itself_original_source'
 _IMPORT_LOCK = threading.Lock()
 _CACHED_COMPONENTS = None
+_CACHED_DATASET_BUILD_MODULE = None
 _STATIC_MIX_EVALUATOR_CACHE = None
 _DEFAULT_ITSELF_ABLATION_ALPHAS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32)
 
@@ -103,6 +104,7 @@ def _ensure_adapter_namespace() -> None:
     _ensure_namespace_package(f'{_ADAPTER_NAMESPACE}.solver', _ADAPTER_ROOT / 'solver')
     _ensure_namespace_package(f'{_ADAPTER_NAMESPACE}.processor', _ADAPTER_ROOT / 'processor')
     _ensure_namespace_package(f'{_ADAPTER_NAMESPACE}.utils', _ADAPTER_ROOT / 'utils')
+    _ensure_namespace_package(f'{_ADAPTER_NAMESPACE}.datasets', _ADAPTER_ROOT / 'datasets')
 
 
 @contextmanager
@@ -444,6 +446,47 @@ def build_original_itself_lr_scheduler(args, optimizer):
     prepare_itself_legacy_args(args)
     components = get_original_itself_components()
     return components.solver_build.build_lr_scheduler(args, optimizer)
+
+
+def _get_original_itself_dataset_build_module() -> ModuleType:
+    global _CACHED_DATASET_BUILD_MODULE
+    with _IMPORT_LOCK:
+        if _CACHED_DATASET_BUILD_MODULE is not None:
+            return _CACHED_DATASET_BUILD_MODULE
+
+        _ensure_adapter_namespace()
+        datasets_pkg = sys.modules[f'{_ADAPTER_NAMESPACE}.datasets']
+        utils_pkg = sys.modules[f'{_ADAPTER_NAMESPACE}.utils']
+
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.bases', _ADAPTER_ROOT / 'datasets' / 'bases.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.preprocessing', _ADAPTER_ROOT / 'datasets' / 'preprocessing.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.cuhkpedes', _ADAPTER_ROOT / 'datasets' / 'cuhkpedes.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.icfgpedes', _ADAPTER_ROOT / 'datasets' / 'icfgpedes.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.rstpreid', _ADAPTER_ROOT / 'datasets' / 'rstpreid.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.sampler', _ADAPTER_ROOT / 'datasets' / 'sampler.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.sampler_ddp', _ADAPTER_ROOT / 'datasets' / 'sampler_ddp.py')
+
+        # Adapter dataset modules import from top-level `utils.*`.
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.utils.comm', _ADAPTER_ROOT / 'utils' / 'comm.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.utils.iotools', _ADAPTER_ROOT / 'utils' / 'iotools.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.utils.simple_tokenizer', _ADAPTER_ROOT / 'utils' / 'simple_tokenizer.py')
+
+        with _temporary_module_alias('datasets', datasets_pkg):
+            with _temporary_module_alias('utils', utils_pkg):
+                dataset_build = _load_module_from_file(
+                    f'{_ADAPTER_NAMESPACE}.datasets.build',
+                    _ADAPTER_ROOT / 'datasets' / 'build.py',
+                )
+        _CACHED_DATASET_BUILD_MODULE = dataset_build
+        return _CACHED_DATASET_BUILD_MODULE
+
+
+def build_original_itself_dataloader(args, tranforms=None):
+    """Build dataloaders with the original ITSELF adapter datasets pipeline."""
+
+    prepare_itself_legacy_args(args)
+    dataset_build = _get_original_itself_dataset_build_module()
+    return dataset_build.build_dataloader(args, tranforms=tranforms)
 
 
 def get_original_itself_training_components(args) -> Tuple[Callable, type]:

@@ -13,6 +13,7 @@ import torch
 from datasets import build_dataloader
 from model import build_model
 from model.hosts import (
+    build_original_itself_dataloader,
     get_original_itself_module_paths,
     get_original_itself_training_components,
     prepare_itself_legacy_args,
@@ -928,7 +929,10 @@ if __name__ == '__main__':
     save_train_configs(args.output_dir, args)
     os.makedirs(op.join(args.output_dir, 'img'), exist_ok=True)
 
-    train_loader, val_img_loader, val_txt_loader, num_classes = build_dataloader(args)
+    if use_original_itself:
+        train_loader, val_img_loader, val_txt_loader, num_classes = build_original_itself_dataloader(args)
+    else:
+        train_loader, val_img_loader, val_txt_loader, num_classes = build_dataloader(args)
     eval_loss_loader = getattr(train_loader, 'eval_loss_loader', None)
     model = build_model(args, num_classes, train_loader=train_loader)
     if modular_checkpoint_manager.has_enabled_group_loading():
