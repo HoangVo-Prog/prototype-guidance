@@ -90,6 +90,24 @@ def _group_weight_decay(args, group_name: str) -> float:
     return value
 
 
+def _is_itself_host(args) -> bool:
+    return str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
+
+
+def _resolve_effective_optimizer_eps(args) -> float:
+    optimizer_name = str(getattr(args, 'optimizer', 'Adam')).strip().lower()
+    declared_raw = _coerce_optional_float(getattr(args, 'optimizer_eps', 1e-8), 'optimizer_eps')
+    declared_eps = 1e-8 if declared_raw is None else float(declared_raw)
+
+    # Match the original ITSELF adapter optimizer defaults for both runtime modes.
+    if _is_itself_host(args):
+        if optimizer_name == 'adam':
+            return 1e-3
+        if optimizer_name == 'adamw':
+            return 1e-8
+    return declared_eps
+
+
 def _use_original_itself_stage0_optimizer(args, model) -> bool:
     del model
     return should_use_original_itself_runtime(args)
@@ -194,8 +212,10 @@ def _should_apply_itself_legacy_paramwise_lr_policy(args, group_name: str) -> bo
 
 
 def _build_itself_legacy_paramwise_groups(args, group_name: str, named_params):
-    base_lr = _group_lr(args, group_name)
-    base_weight_decay = _group_weight_decay(args, group_name)
+    # Original ITSELF optimizer policy uses global lr/weight_decay as the base
+    # for all host parameters, then applies name-based overrides.
+    base_lr = float(args.lr)
+    base_weight_decay = float(args.weight_decay)
     lr_factor = float(getattr(args, 'lr_factor', 5.0))
     bias_lr_factor = float(getattr(args, 'bias_lr_factor', 2.0))
     weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))
@@ -318,6 +338,8 @@ def _group_ownership_tag(group_name: str, split_applied: bool):
 
 
 def _declared_and_effective_base_lr(args, group_name: str):
+    if _should_apply_itself_legacy_paramwise_lr_policy(args, group_name):
+        return 'optimizer.lr (itself_legacy_policy)', float(args.lr)
     lr_attr = GROUP_TO_LR_ATTR[group_name]
     declared_raw = _coerce_optional_float(getattr(args, lr_attr, None), lr_attr)
     uses_global_fallback = declared_raw is None or float(declared_raw) < 0.0
@@ -338,8 +360,8 @@ def _reconstruct_optimizer_observability_rows(args, model):
             continue
         source_key, base_lr_declared = _declared_and_effective_base_lr(args, group_name)
         if _should_apply_itself_legacy_paramwise_lr_policy(args, group_name):
-            base_lr = _group_lr(args, group_name)
-            base_weight_decay = _group_weight_decay(args, group_name)
+            base_lr = float(args.lr)
+            base_weight_decay = float(args.weight_decay)
             lr_factor = float(getattr(args, 'lr_factor', 5.0))
             bias_lr_factor = float(getattr(args, 'bias_lr_factor', 2.0))
             weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))
@@ -494,7 +516,9 @@ def summarize_config_declared_optimizer_settings(args):
         'declared_weight_decays': declared_wds,
         'lr_factor': getattr(args, 'lr_factor', None),
         'bias_lr_factor': getattr(args, 'bias_lr_factor', None),
-        'optimizer_eps': getattr(args, 'optimizer_eps', None),
+        'optimizer_eps_declared': getattr(args, 'optimizer_eps', None),
+        'optimizer_eps_effective': _resolve_effective_optimizer_eps(args),
+        'optimizer_eps': _resolve_effective_optimizer_eps(args),
         'freeze_schedule_lr_overrides': schedule_lr_overrides,
     }
 
@@ -538,7 +562,7 @@ def build_optimizer(args, model):
             }
         )
 
-    optimizer_eps = float(getattr(args, 'optimizer_eps', 1e-8))
+    optimizer_eps = _resolve_effective_optimizer_eps(args)
     if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(param_groups, lr=args.lr, momentum=args.momentum)
     elif args.optimizer == 'Adam':
