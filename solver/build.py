@@ -94,6 +94,13 @@ def _is_itself_host(args) -> bool:
     return str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
 
 
+def _is_joint_training_with_prototype(args) -> bool:
+    return (
+        str(getattr(args, 'runtime_mode', '') or '').strip().lower() == 'joint_training'
+        and bool(getattr(args, 'use_prototype_branch', False))
+    )
+
+
 def _resolve_effective_optimizer_eps(args) -> float:
     optimizer_name = str(getattr(args, 'optimizer', 'Adam')).strip().lower()
     declared_raw = _coerce_optional_float(getattr(args, 'optimizer_eps', 1e-8), 'optimizer_eps')
@@ -212,10 +219,15 @@ def _should_apply_itself_legacy_paramwise_lr_policy(args, group_name: str) -> bo
 
 
 def _build_itself_legacy_paramwise_groups(args, group_name: str, named_params):
-    # Original ITSELF optimizer policy uses global lr/weight_decay as the base
-    # for all host parameters, then applies name-based overrides.
-    base_lr = float(args.lr)
-    base_weight_decay = float(args.weight_decay)
+    if _is_joint_training_with_prototype(args):
+        # Joint PAS training compatibility path: keep pre-regression base sources.
+        base_lr = _group_lr(args, group_name)
+        base_weight_decay = _group_weight_decay(args, group_name)
+    else:
+        # Original ITSELF optimizer policy uses global lr/weight_decay as the base
+        # for all host parameters, then applies name-based overrides.
+        base_lr = float(args.lr)
+        base_weight_decay = float(args.weight_decay)
     lr_factor = float(getattr(args, 'lr_factor', 5.0))
     bias_lr_factor = float(getattr(args, 'bias_lr_factor', 2.0))
     weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))
@@ -338,7 +350,7 @@ def _group_ownership_tag(group_name: str, split_applied: bool):
 
 
 def _declared_and_effective_base_lr(args, group_name: str):
-    if _should_apply_itself_legacy_paramwise_lr_policy(args, group_name):
+    if _should_apply_itself_legacy_paramwise_lr_policy(args, group_name) and not _is_joint_training_with_prototype(args):
         return 'optimizer.lr (itself_legacy_policy)', float(args.lr)
     lr_attr = GROUP_TO_LR_ATTR[group_name]
     declared_raw = _coerce_optional_float(getattr(args, lr_attr, None), lr_attr)
@@ -360,8 +372,12 @@ def _reconstruct_optimizer_observability_rows(args, model):
             continue
         source_key, base_lr_declared = _declared_and_effective_base_lr(args, group_name)
         if _should_apply_itself_legacy_paramwise_lr_policy(args, group_name):
-            base_lr = float(args.lr)
-            base_weight_decay = float(args.weight_decay)
+            if _is_joint_training_with_prototype(args):
+                base_lr = _group_lr(args, group_name)
+                base_weight_decay = _group_weight_decay(args, group_name)
+            else:
+                base_lr = float(args.lr)
+                base_weight_decay = float(args.weight_decay)
             lr_factor = float(getattr(args, 'lr_factor', 5.0))
             bias_lr_factor = float(getattr(args, 'bias_lr_factor', 2.0))
             weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))

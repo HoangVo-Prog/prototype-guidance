@@ -61,15 +61,21 @@ _ITSELF_LEGACY_KEY_PREFIXES = (
 )
 
 
-def set_seed(seed=1):
+def _is_joint_training_with_prototype(args) -> bool:
+    return (
+        str(getattr(args, 'runtime_mode', '') or '').strip().lower() == 'joint_training'
+        and bool(getattr(args, 'use_prototype_branch', False))
+    )
+
+
+def set_seed(seed=1, *, cudnn_benchmark: bool = False):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
-    # Keep CuDNN algorithm selection fixed for reproducibility.
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.benchmark = bool(cudnn_benchmark)
 
 
 def _count_parameters(parameters):
@@ -1007,7 +1013,10 @@ if __name__ == '__main__':
         print(f'Launched PAS training in background with PID {pid}. Log: {log_path}')
         raise SystemExit(0)
 
-    set_seed(args.seed + get_rank())
+    set_seed(
+        args.seed + get_rank(),
+        cudnn_benchmark=_is_joint_training_with_prototype(args),
+    )
 
     num_gpus = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
     args.distributed = num_gpus > 1
