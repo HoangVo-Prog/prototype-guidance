@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -111,6 +111,20 @@ class PrototypeConditionedTextHead(nn.Module):
         learnable_contrastive_temperature: bool = False,
         dead_prototype_threshold: float = 0.005,
         collect_debug_metrics: bool = True,
+        adaptive_k_enabled: bool = False,
+        adaptive_k_method: str = 'spb',
+        adaptive_k_select_once: bool = True,
+        adaptive_k_recompute_schedule: str = 'semantic',
+        adaptive_k_recompute_interval: int = 1,
+        adaptive_k_recompute_start_epoch: int = 0,
+        adaptive_k_recompute_start_step: int = 0,
+        adaptive_k_candidates: Optional[List[int]] = None,
+        adaptive_k_usage_threshold: float = 0.5,
+        adaptive_k_min_p10_cluster_size: float = 4.0,
+        adaptive_k_max_calib_batches: int = 8,
+        adaptive_k_use_one_standard_error_rule: bool = True,
+        adaptive_k_fallback_to_current_k: bool = True,
+        adaptive_k_log_candidate_metrics: bool = True,
     ):
         super().__init__()
         self.input_dim = int(input_dim)
@@ -120,6 +134,35 @@ class PrototypeConditionedTextHead(nn.Module):
         self.dead_prototype_threshold = float(dead_prototype_threshold)
         self.use_image_conditioned_pooling = bool(use_image_conditioned_pooling)
         self.collect_debug_metrics = bool(collect_debug_metrics)
+        self.active_num_prototypes = max(int(num_prototypes), 1)
+        resolved_adaptive_candidates = (
+            [16, 32, 64] if adaptive_k_candidates is None else [int(candidate) for candidate in adaptive_k_candidates]
+        )
+        self.adaptive_k_state: Dict[str, Any] = {
+            'enabled': bool(adaptive_k_enabled),
+            'selection_done': False,
+            'selected_k': None,
+            'current_k': int(self.active_num_prototypes),
+            'fallback_used': False,
+            'last_selection_epoch': None,
+            'last_selection_step': None,
+            'candidate_metrics': {},
+        }
+        self.adaptive_k_config: Dict[str, Any] = {
+            'method': str(adaptive_k_method or 'spb').lower(),
+            'select_once': bool(adaptive_k_select_once),
+            'recompute_schedule': str(adaptive_k_recompute_schedule or 'semantic').lower(),
+            'recompute_interval': max(int(adaptive_k_recompute_interval), 1),
+            'recompute_start_epoch': max(int(adaptive_k_recompute_start_epoch), 0),
+            'recompute_start_step': max(int(adaptive_k_recompute_start_step), 0),
+            'candidates': resolved_adaptive_candidates,
+            'usage_threshold': float(adaptive_k_usage_threshold),
+            'min_p10_cluster_size': float(adaptive_k_min_p10_cluster_size),
+            'max_calib_batches': max(int(adaptive_k_max_calib_batches), 1),
+            'use_one_standard_error_rule': bool(adaptive_k_use_one_standard_error_rule),
+            'fallback_to_current_k': bool(adaptive_k_fallback_to_current_k),
+            'log_candidate_metrics': bool(adaptive_k_log_candidate_metrics),
+        }
         self.routing_source = str(routing_source).lower()
         if self.routing_source not in {'global', 'local_evidence'}:
             raise ValueError(
@@ -226,12 +269,12 @@ class PrototypeConditionedTextHead(nn.Module):
         # checkpoint compatibility when older checkpoints are loaded.
         self.register_buffer(
             'semantic_base_prototypes_cache',
-            torch.empty(self.prototype_bank.num_prototypes, self.prototype_dim),
+            torch.empty(self.active_num_prototypes, self.prototype_dim),
             persistent=False,
         )
         self.register_buffer(
             'semantic_cluster_counts_cache',
-            torch.zeros(self.prototype_bank.num_prototypes),
+            torch.zeros(self.active_num_prototypes),
             persistent=False,
         )
         self.contextualizer = PrototypeContextualizer(
@@ -525,6 +568,116 @@ class PrototypeConditionedTextHead(nn.Module):
             and self.semantic_structure_enabled
         )
 
+    def get_active_num_prototypes(self) -> int:
+        return int(self.active_num_prototypes)
+
+    def _ensure_semantic_cache_shape(self, num_prototypes: int) -> None:
+        target_k = max(int(num_prototypes), 1)
+        if self.semantic_base_prototypes_cache.ndim != 2 or self.semantic_base_prototypes_cache.size(0) != target_k:
+            self.semantic_base_prototypes_cache = torch.empty(
+                target_k,
+                self.prototype_dim,
+                device=self.semantic_base_prototypes_cache.device,
+                dtype=self.semantic_base_prototypes_cache.dtype,
+            )
+        if self.semantic_cluster_counts_cache.ndim != 1 or self.semantic_cluster_counts_cache.size(0) != target_k:
+            self.semantic_cluster_counts_cache = torch.zeros(
+                target_k,
+                device=self.semantic_cluster_counts_cache.device,
+                dtype=self.semantic_cluster_counts_cache.dtype,
+            )
+        self.active_num_prototypes = target_k
+        self.adaptive_k_state['current_k'] = int(target_k)
+
+    def export_adaptive_k_runtime_state(self) -> Dict[str, Any]:
+        return {
+            'active_num_prototypes': int(self.active_num_prototypes),
+            'semantic_base_prototypes_cache': self.semantic_base_prototypes_cache.detach().clone(),
+            'semantic_cluster_counts_cache': self.semantic_cluster_counts_cache.detach().clone(),
+            'semantic_cache_initialized': bool(self._semantic_cache_initialized),
+            'semantic_recompute_count': int(self._semantic_recompute_count),
+            'semantic_last_recompute_epoch': self._semantic_last_recompute_epoch,
+            'semantic_last_recompute_step': self._semantic_last_recompute_step,
+            'adaptive_k_state': dict(self.adaptive_k_state),
+        }
+
+    def restore_adaptive_k_runtime_state(self, state: Dict[str, Any]) -> None:
+        if not isinstance(state, dict):
+            return
+        active_num = int(state.get('active_num_prototypes', self.active_num_prototypes))
+        self._ensure_semantic_cache_shape(active_num)
+        semantic_base = state.get('semantic_base_prototypes_cache')
+        semantic_counts = state.get('semantic_cluster_counts_cache')
+        if isinstance(semantic_base, torch.Tensor):
+            self.semantic_base_prototypes_cache = semantic_base.to(
+                device=self.semantic_base_prototypes_cache.device,
+                dtype=self.semantic_base_prototypes_cache.dtype,
+            )
+        if isinstance(semantic_counts, torch.Tensor):
+            self.semantic_cluster_counts_cache = semantic_counts.to(
+                device=self.semantic_cluster_counts_cache.device,
+                dtype=self.semantic_cluster_counts_cache.dtype,
+            )
+        self._semantic_cache_initialized = bool(state.get('semantic_cache_initialized', self._semantic_cache_initialized))
+        self._semantic_recompute_count = int(state.get('semantic_recompute_count', self._semantic_recompute_count))
+        self._semantic_last_recompute_epoch = state.get('semantic_last_recompute_epoch', self._semantic_last_recompute_epoch)
+        self._semantic_last_recompute_step = state.get('semantic_last_recompute_step', self._semantic_last_recompute_step)
+        adaptive_state = state.get('adaptive_k_state')
+        if isinstance(adaptive_state, dict):
+            merged = dict(self.adaptive_k_state)
+            merged.update(adaptive_state)
+            self.adaptive_k_state = merged
+            self.adaptive_k_state['current_k'] = int(self.active_num_prototypes)
+
+    def install_semantic_anchor_cache(self, centers: torch.Tensor, counts: torch.Tensor, *, mark_initialized: bool = True) -> None:
+        if centers.ndim != 2:
+            raise ValueError(f'Expected semantic centers with shape [K, D], got {tuple(centers.shape)}.')
+        if counts.ndim != 1:
+            raise ValueError(f'Expected semantic cluster counts with shape [K], got {tuple(counts.shape)}.')
+        if centers.size(0) != counts.size(0):
+            raise ValueError(
+                'Semantic anchor install requires matching K between centers and counts; '
+                f'got centers={tuple(centers.shape)} counts={tuple(counts.shape)}.'
+            )
+        if centers.size(1) != self.prototype_dim:
+            raise ValueError(
+                f'Semantic anchor install expected prototype_dim={self.prototype_dim}, got {centers.size(1)}.'
+            )
+        self._ensure_semantic_cache_shape(int(centers.size(0)))
+        self.semantic_base_prototypes_cache = centers.to(
+            device=self.semantic_base_prototypes_cache.device,
+            dtype=self.semantic_base_prototypes_cache.dtype,
+        )
+        self.semantic_cluster_counts_cache = counts.to(
+            device=self.semantic_cluster_counts_cache.device,
+            dtype=self.semantic_cluster_counts_cache.dtype,
+        )
+        if mark_initialized:
+            self._semantic_cache_initialized = True
+
+    def mark_adaptive_k_selection(
+        self,
+        *,
+        selected_k: int,
+        fallback_used: bool,
+        candidate_metrics: Dict[int, Dict[str, float]],
+        selection_done: bool,
+        epoch: Optional[int] = None,
+        current_step: Optional[int] = None,
+    ) -> None:
+        self._ensure_semantic_cache_shape(int(selected_k))
+        self.adaptive_k_state.update(
+            {
+                'selection_done': bool(selection_done),
+                'selected_k': int(selected_k),
+                'current_k': int(self.active_num_prototypes),
+                'fallback_used': bool(fallback_used),
+                'last_selection_epoch': None if epoch is None else int(epoch),
+                'last_selection_step': None if current_step is None else int(current_step),
+                'candidate_metrics': dict(candidate_metrics),
+            }
+        )
+
     def _semantic_schedule_started(self, *, epoch: Optional[int], current_step: Optional[int]) -> bool:
         if epoch is not None and int(epoch) < int(self.semantic_recompute_start_epoch):
             return False
@@ -698,6 +851,7 @@ class PrototypeConditionedTextHead(nn.Module):
         return {
             'centers': F.normalize(centers, dim=-1),
             'counts': final_counts,
+            'assignments': final_assignments,
             'empty_cluster_count': final_counts.eq(0).sum().to(dtype=detached.dtype),
             'empty_cluster_reseed_events': detached.new_tensor(float(empty_cluster_count)),
         }
@@ -710,6 +864,7 @@ class PrototypeConditionedTextHead(nn.Module):
         current_step: Optional[int],
     ) -> Dict[str, torch.Tensor]:
         diagnostics: Dict[str, torch.Tensor] = {}
+        self._ensure_semantic_cache_shape(self.active_num_prototypes)
         if not self._should_recompute_semantic_anchors(epoch=epoch, current_step=current_step):
             diagnostics['semantic_recompute_triggered'] = self.semantic_cluster_counts_cache.new_zeros(())
             return diagnostics
@@ -721,7 +876,7 @@ class PrototypeConditionedTextHead(nn.Module):
         with torch.no_grad():
             recomputed = self._recompute_kmeans_anchors(
                 features=features,
-                num_clusters=self.prototype_bank.num_prototypes,
+                num_clusters=self.active_num_prototypes,
                 max_iters=max(int(getattr(self.prototype_bank, 'init_max_iters', 15)), 1),
             )
             centers = recomputed['centers'].to(
@@ -808,6 +963,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 ):
                     self.prototype_bank.initialize_if_needed()
         legacy_prototypes, bank_debug = self.prototype_bank(return_debug=True)
+        self._ensure_semantic_cache_shape(self.active_num_prototypes)
         recompute_debug = self._maybe_refresh_semantic_anchor_cache(
             features=semantic_recompute_features,
             epoch=epoch,
@@ -825,11 +981,14 @@ class PrototypeConditionedTextHead(nn.Module):
                 device=legacy_prototypes.device,
                 dtype=legacy_prototypes.dtype,
             )
+        elif legacy_prototypes.size(0) >= self.active_num_prototypes:
+            base_prototypes = legacy_prototypes[: self.active_num_prototypes]
 
         contextualized, contextual_debug = self._compute_contextualized_from_base(
             base_prototypes,
             return_debug=True,
         )
+        self.adaptive_k_state['current_k'] = int(base_prototypes.size(0))
         routing_prototypes = contextualized
 
         outputs = {
@@ -1426,6 +1585,17 @@ class PrototypeConditionedTextHead(nn.Module):
                 'semantic_empty_cluster_reseed_events': context.get('semantic_empty_cluster_reseed_events', image_outputs['image_projected'].new_zeros(())),
                 'semantic_active_cluster_count': semantic_active_clusters.detach(),
                 'semantic_empty_cluster_count': semantic_empty_clusters.detach(),
+                'adaptive_k/enabled': image_outputs['image_projected'].new_tensor(float(bool(self.adaptive_k_state.get('enabled', False)))).detach(),
+                'adaptive_k/selected_k': image_outputs['image_projected'].new_tensor(
+                    float(self.adaptive_k_state.get('selected_k') or self.get_active_num_prototypes())
+                ).detach(),
+                'adaptive_k/current_k': image_outputs['image_projected'].new_tensor(float(self.get_active_num_prototypes())).detach(),
+                'adaptive_k/selection_done': image_outputs['image_projected'].new_tensor(
+                    float(bool(self.adaptive_k_state.get('selection_done', False)))
+                ).detach(),
+                'adaptive_k/fallback_used': image_outputs['image_projected'].new_tensor(
+                    float(bool(self.adaptive_k_state.get('fallback_used', False)))
+                ).detach(),
             }
         )
         prototype_usage_enabled = True

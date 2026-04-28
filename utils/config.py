@@ -81,6 +81,22 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'normalize_for_self_interaction'): 'normalize_for_self_interaction',
     ('prototype', 'normalize_for_routing'): 'normalize_for_routing',
     ('prototype', 'dead_prototype_threshold'): 'prototype_dead_threshold',
+    ('prototype', 'adaptive_k', 'enabled'): 'adaptive_k_enabled',
+    ('prototype', 'adaptive_k', 'method'): 'adaptive_k_method',
+    ('prototype', 'adaptive_k', 'select_once'): 'adaptive_k_select_once',
+    ('prototype', 'adaptive_k', 'recompute_schedule'): 'adaptive_k_recompute_schedule',
+    ('prototype', 'adaptive_k', 'recompute_interval'): 'adaptive_k_recompute_interval',
+    ('prototype', 'adaptive_k', 'recompute_start_epoch'): 'adaptive_k_recompute_start_epoch',
+    ('prototype', 'adaptive_k', 'recompute_start_step'): 'adaptive_k_recompute_start_step',
+    ('prototype', 'adaptive_k', 'candidates'): 'adaptive_k_candidates',
+    ('prototype', 'adaptive_k', 'usage_threshold'): 'adaptive_k_usage_threshold',
+    ('prototype', 'adaptive_k', 'min_p10_cluster_size'): 'adaptive_k_min_p10_cluster_size',
+    ('prototype', 'adaptive_k', 'max_calib_batches'): 'adaptive_k_max_calib_batches',
+    ('prototype', 'adaptive_k', 'use_one_standard_error_rule'): 'adaptive_k_use_one_standard_error_rule',
+    ('prototype', 'adaptive_k', 'fallback_to_current_k'): 'adaptive_k_fallback_to_current_k',
+    ('prototype', 'adaptive_k', 'log_candidate_metrics'): 'adaptive_k_log_candidate_metrics',
+    # Backward-compatible alias; replaced by adaptive_k.recompute_start_epoch.
+    ('prototype', 'adaptive_k', 'select_epoch'): 'adaptive_k_recompute_start_epoch',
 
     ('semantic_structure', 'enabled'): 'semantic_structure_enabled',
     ('semantic_structure', 'feature_space'): 'semantic_feature_space',
@@ -391,6 +407,24 @@ AUXILIARY_SECTION_KEYS = {'loss'}
 SECTION_KEYS = set(SECTION_TEMPLATE.keys()) | AUXILIARY_SECTION_KEYS
 OBJECTIVES_NESTED_SECTION_KEYS = {'objectives', 'lambda'}
 TRAINING_NESTED_SECTION_KEYS = {'freeze_schedule'}
+PROTOTYPE_NESTED_SECTION_KEYS = {'adaptive_k'}
+PROTOTYPE_ADAPTIVE_K_KEYS = {
+    'enabled',
+    'method',
+    'select_once',
+    'recompute_schedule',
+    'recompute_interval',
+    'recompute_start_epoch',
+    'recompute_start_step',
+    'select_epoch',
+    'candidates',
+    'usage_threshold',
+    'min_p10_cluster_size',
+    'max_calib_batches',
+    'use_one_standard_error_rule',
+    'fallback_to_current_k',
+    'log_candidate_metrics',
+}
 CHECKPOINTING_GROUP_KEYS = set(CHECKPOINT_GROUPS)
 CHECKPOINTING_METRIC_KEYS = {'name', 'mode'}
 CHECKPOINTING_SAVE_KEYS = {'dir', 'save_latest', 'save_best', 'keep_last_n', 'artifacts'}
@@ -547,6 +581,8 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('prototype', 'routing_type'): ('cosine', 'dot'),
     ('prototype', 'contextualization_type'): ('self_attention', 'dense_self_attention', 'none'),
     ('prototype', 'bank_source'): ('learnable_legacy', 'recomputed_kmeans', 'auto'),
+    ('prototype', 'adaptive_k', 'method'): ('spb',),
+    ('prototype', 'adaptive_k', 'recompute_schedule'): ('epoch', 'steps', 'stage', 'semantic'),
     ('text_pooling', 'token_policy'): ('content_only', 'content_plus_special', 'eos_only'),
     ('text_pooling', 'scoring_type'): ('cosine', 'dot'),
     ('objectives', 'objectives', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
@@ -583,6 +619,8 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'prototype_routing_type': ('cosine', 'dot'),
     'prototype_contextualization_type': ('self_attention', 'dense_self_attention', 'none'),
     'prototype_bank_source': ('learnable_legacy', 'recomputed_kmeans', 'auto'),
+    'adaptive_k_method': ('spb',),
+    'adaptive_k_recompute_schedule': ('epoch', 'steps', 'stage', 'semantic'),
     'token_policy': ('content_only', 'content_plus_special', 'eos_only'),
     'token_scoring_type': ('cosine', 'dot'),
     'retrieval_mode': ('surrogate_i2t', 'clip_bidirectional'),
@@ -955,6 +993,24 @@ def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
                             )
                 continue
 
+            if section_name == 'prototype' and key in PROTOTYPE_NESTED_SECTION_KEYS:
+                if key == 'adaptive_k':
+                    if not isinstance(value, dict):
+                        raise ValueError('prototype.adaptive_k must be a mapping.')
+                    unknown_nested = sorted(set(value.keys()) - PROTOTYPE_ADAPTIVE_K_KEYS)
+                    if unknown_nested:
+                        raise ValueError(
+                            'Unknown config keys under prototype.adaptive_k: '
+                            f'{unknown_nested}. Supported keys: {sorted(PROTOTYPE_ADAPTIVE_K_KEYS)}'
+                        )
+                    for nested_key, nested_value in value.items():
+                        nested_path = (section_name, key, nested_key)
+                        if isinstance(nested_value, dict):
+                            raise ValueError(f'Unsupported nested config mapping at `prototype.adaptive_k.{nested_key}`.')
+                        if nested_path not in supported_paths and nested_path not in UNSUPPORTED_CONFIG_PATHS:
+                            raise ValueError(f'Unknown config key `prototype.adaptive_k.{nested_key}`.')
+                continue
+
             if isinstance(value, dict):
                 raise ValueError(f'Unsupported nested config mapping at `{section_name}.{key}`.')
             if path not in supported_leafs and path not in UNSUPPORTED_CONFIG_PATHS:
@@ -1034,6 +1090,17 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
     semantic_pred_temperature = float(flat.get('semantic_pred_temperature', 0.07))
     semantic_recompute_interval = int(flat.get('semantic_recompute_interval', 1))
     semantic_min_cluster_count_for_pbt = float(flat.get('semantic_min_cluster_count_for_pbt', 1.0))
+    adaptive_k_recompute_interval_raw = flat.get('adaptive_k_recompute_interval', None)
+    if adaptive_k_recompute_interval_raw in (None, ''):
+        adaptive_k_recompute_interval = semantic_recompute_interval
+    else:
+        adaptive_k_recompute_interval = int(adaptive_k_recompute_interval_raw)
+    adaptive_k_recompute_start_epoch = int(flat.get('adaptive_k_recompute_start_epoch', flat.get('adaptive_k_select_epoch', 0)))
+    adaptive_k_recompute_start_step = int(flat.get('adaptive_k_recompute_start_step', 0))
+    adaptive_k_candidates = flat.get('adaptive_k_candidates', [16, 32, 64])
+    adaptive_k_usage_threshold = float(flat.get('adaptive_k_usage_threshold', 0.5))
+    adaptive_k_min_p10_cluster_size = float(flat.get('adaptive_k_min_p10_cluster_size', 4.0))
+    adaptive_k_max_calib_batches = int(flat.get('adaptive_k_max_calib_batches', 8))
     scheduler_total_epochs_raw = flat.get('scheduler_total_epochs', None)
     use_loss_semantic_pbt = bool(flat.get('use_loss_semantic_pbt', False))
     use_loss_semantic_hardneg_margin = bool(flat.get('use_loss_semantic_hardneg_margin', False))
@@ -1080,6 +1147,24 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         raise ValueError('semantic_structure.recompute_interval must be a positive integer.')
     if semantic_min_cluster_count_for_pbt <= 0.0:
         raise ValueError('semantic_structure.min_cluster_count_for_pbt must be positive.')
+    if adaptive_k_recompute_interval <= 0:
+        raise ValueError('prototype.adaptive_k.recompute_interval must be a positive integer.')
+    if adaptive_k_recompute_start_epoch < 0:
+        raise ValueError('prototype.adaptive_k.recompute_start_epoch must be >= 0.')
+    if adaptive_k_recompute_start_step < 0:
+        raise ValueError('prototype.adaptive_k.recompute_start_step must be >= 0.')
+    if not isinstance(adaptive_k_candidates, (list, tuple)) or len(adaptive_k_candidates) == 0:
+        raise ValueError('prototype.adaptive_k.candidates must be a non-empty list of positive integers.')
+    for candidate in adaptive_k_candidates:
+        candidate_value = int(candidate)
+        if candidate_value <= 0:
+            raise ValueError('prototype.adaptive_k.candidates must contain only positive integers.')
+    if adaptive_k_usage_threshold < 0.0 or adaptive_k_usage_threshold > 1.0:
+        raise ValueError('prototype.adaptive_k.usage_threshold must be in [0, 1].')
+    if adaptive_k_min_p10_cluster_size < 0.0:
+        raise ValueError('prototype.adaptive_k.min_p10_cluster_size must be >= 0.')
+    if adaptive_k_max_calib_batches <= 0:
+        raise ValueError('prototype.adaptive_k.max_calib_batches must be a positive integer.')
     if scheduler_total_epochs_raw is not None:
         try:
             scheduler_total_epochs = int(scheduler_total_epochs_raw)
@@ -1195,6 +1280,17 @@ def validate_runtime_args_namespace(args) -> None:
     semantic_pred_temperature = float(getattr(args, 'semantic_pred_temperature', 0.07))
     semantic_recompute_interval = int(getattr(args, 'semantic_recompute_interval', 1))
     semantic_min_cluster_count_for_pbt = float(getattr(args, 'semantic_min_cluster_count_for_pbt', 1.0))
+    adaptive_k_recompute_interval_raw = getattr(args, 'adaptive_k_recompute_interval', None)
+    if adaptive_k_recompute_interval_raw in (None, ''):
+        adaptive_k_recompute_interval = semantic_recompute_interval
+    else:
+        adaptive_k_recompute_interval = int(adaptive_k_recompute_interval_raw)
+    adaptive_k_recompute_start_epoch = int(getattr(args, 'adaptive_k_recompute_start_epoch', getattr(args, 'adaptive_k_select_epoch', 0)))
+    adaptive_k_recompute_start_step = int(getattr(args, 'adaptive_k_recompute_start_step', 0))
+    adaptive_k_candidates = getattr(args, 'adaptive_k_candidates', [16, 32, 64])
+    adaptive_k_usage_threshold = float(getattr(args, 'adaptive_k_usage_threshold', 0.5))
+    adaptive_k_min_p10_cluster_size = float(getattr(args, 'adaptive_k_min_p10_cluster_size', 4.0))
+    adaptive_k_max_calib_batches = int(getattr(args, 'adaptive_k_max_calib_batches', 8))
     scheduler_total_epochs_raw = getattr(args, 'scheduler_total_epochs', None)
     use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
     use_loss_semantic_hardneg_margin = bool(getattr(args, 'use_loss_semantic_hardneg_margin', False))
@@ -1240,6 +1336,24 @@ def validate_runtime_args_namespace(args) -> None:
         raise ValueError('semantic_recompute_interval must be a positive integer.')
     if semantic_min_cluster_count_for_pbt <= 0.0:
         raise ValueError('semantic_min_cluster_count_for_pbt must be positive.')
+    if adaptive_k_recompute_interval <= 0:
+        raise ValueError('adaptive_k_recompute_interval must be a positive integer.')
+    if adaptive_k_recompute_start_epoch < 0:
+        raise ValueError('adaptive_k_recompute_start_epoch must be >= 0.')
+    if adaptive_k_recompute_start_step < 0:
+        raise ValueError('adaptive_k_recompute_start_step must be >= 0.')
+    if not isinstance(adaptive_k_candidates, (list, tuple)) or len(adaptive_k_candidates) == 0:
+        raise ValueError('adaptive_k_candidates must be a non-empty list of positive integers.')
+    for candidate in adaptive_k_candidates:
+        candidate_value = int(candidate)
+        if candidate_value <= 0:
+            raise ValueError('adaptive_k_candidates must contain only positive integers.')
+    if adaptive_k_usage_threshold < 0.0 or adaptive_k_usage_threshold > 1.0:
+        raise ValueError('adaptive_k_usage_threshold must be in [0, 1].')
+    if adaptive_k_min_p10_cluster_size < 0.0:
+        raise ValueError('adaptive_k_min_p10_cluster_size must be >= 0.')
+    if adaptive_k_max_calib_batches <= 0:
+        raise ValueError('adaptive_k_max_calib_batches must be a positive integer.')
     if scheduler_total_epochs_raw is not None:
         try:
             scheduler_total_epochs = int(scheduler_total_epochs_raw)

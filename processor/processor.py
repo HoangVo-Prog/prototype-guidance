@@ -2,9 +2,10 @@ import copy
 import logging
 import math
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from model.runtime_modes import (
@@ -358,6 +359,416 @@ def _collect_loss_grad_norm_metrics(outputs, parameters):
 
 def _unwrap_model(model):
     return model.module if hasattr(model, 'module') else model
+
+
+def _normalize_adaptive_k_candidates(raw_candidates) -> List[int]:
+    if raw_candidates is None:
+        return [16, 32, 64]
+    if not isinstance(raw_candidates, (list, tuple)):
+        raw_candidates = [raw_candidates]
+    candidates: List[int] = []
+    for raw_candidate in raw_candidates:
+        candidate = int(raw_candidate)
+        if candidate <= 0:
+            continue
+        if candidate in candidates:
+            continue
+        candidates.append(candidate)
+    return candidates
+
+
+def _resolve_adaptive_k_config(args) -> Dict[str, Any]:
+    semantic_schedule = str(getattr(args, 'semantic_recompute_schedule', 'epoch') or 'epoch').lower()
+    semantic_interval = max(int(getattr(args, 'semantic_recompute_interval', 1)), 1)
+    recompute_schedule = str(getattr(args, 'adaptive_k_recompute_schedule', 'semantic') or 'semantic').lower()
+    if recompute_schedule == 'semantic':
+        recompute_schedule = semantic_schedule
+    recompute_interval_raw = getattr(args, 'adaptive_k_recompute_interval', None)
+    recompute_interval = semantic_interval if recompute_interval_raw in (None, '') else max(int(recompute_interval_raw), 1)
+    return {
+        'enabled': bool(getattr(args, 'adaptive_k_enabled', False)),
+        'method': str(getattr(args, 'adaptive_k_method', 'spb') or 'spb').lower(),
+        'select_once': bool(getattr(args, 'adaptive_k_select_once', True)),
+        'recompute_schedule': recompute_schedule,
+        'recompute_interval': recompute_interval,
+        'recompute_start_epoch': max(int(getattr(args, 'adaptive_k_recompute_start_epoch', 0)), 0),
+        'recompute_start_step': max(int(getattr(args, 'adaptive_k_recompute_start_step', 0)), 0),
+        'candidates': _normalize_adaptive_k_candidates(getattr(args, 'adaptive_k_candidates', [16, 32, 64])),
+        'usage_threshold': float(getattr(args, 'adaptive_k_usage_threshold', 0.5)),
+        'min_p10_cluster_size': float(getattr(args, 'adaptive_k_min_p10_cluster_size', 4.0)),
+        'max_calib_batches': max(int(getattr(args, 'adaptive_k_max_calib_batches', 8)), 1),
+        'use_one_standard_error_rule': bool(getattr(args, 'adaptive_k_use_one_standard_error_rule', True)),
+        'fallback_to_current_k': bool(getattr(args, 'adaptive_k_fallback_to_current_k', True)),
+        'log_candidate_metrics': bool(getattr(args, 'adaptive_k_log_candidate_metrics', True)),
+}
+
+
+def _adaptive_k_schedule_started(adaptive_cfg: Dict[str, Any], *, epoch: int, current_step: int) -> bool:
+    if int(epoch) < int(adaptive_cfg.get('recompute_start_epoch', 0)):
+        return False
+    if int(current_step) < int(adaptive_cfg.get('recompute_start_step', 0)):
+        return False
+    return True
+
+
+def _should_run_adaptive_k_recompute(adaptive_cfg: Dict[str, Any], adaptive_k_state: Dict[str, Any], *, epoch: int, current_step: int) -> bool:
+    if not _adaptive_k_schedule_started(adaptive_cfg, epoch=epoch, current_step=current_step):
+        return False
+    if bool(adaptive_k_state.get('selection_done', False)) and bool(adaptive_cfg.get('select_once', True)):
+        return False
+    if not bool(adaptive_k_state.get('selection_done', False)):
+        return True
+
+    schedule = str(adaptive_cfg.get('recompute_schedule', 'epoch')).lower()
+    interval = max(int(adaptive_cfg.get('recompute_interval', 1)), 1)
+    last_epoch = adaptive_k_state.get('last_selection_epoch')
+    last_step = adaptive_k_state.get('last_selection_step')
+    if schedule in {'epoch', 'stage'}:
+        if last_epoch is None:
+            return True
+        return (int(epoch) - int(last_epoch)) >= interval
+    if schedule == 'steps':
+        if last_step is None:
+            return True
+        return (int(current_step) - int(last_step)) >= interval
+    return False
+
+
+def _collect_calibration_batches(train_loader, device: str, max_batches: int) -> List[Dict[str, Any]]:
+    calibration_batches: List[Dict[str, Any]] = []
+    for batch_index, batch in enumerate(train_loader):
+        if batch_index >= int(max_batches):
+            break
+        moved = {
+            key: value.to(device) if isinstance(value, torch.Tensor) else value
+            for key, value in batch.items()
+        }
+        calibration_batches.append(moved)
+    return calibration_batches
+
+
+def _collect_semantic_recompute_features(runtime_model, prototype_head, calibration_batches, args, device: str) -> Optional[torch.Tensor]:
+    feature_batches: List[torch.Tensor] = []
+    with torch.no_grad():
+        for batch in calibration_batches:
+            with build_autocast_context(args, device):
+                image_output = runtime_model.extract_image_features(batch['images'])
+            image_embeddings = runtime_model._cast_to_prototype_dtype(image_output.projected_pooled)
+            semantic_features = prototype_head.image_adapter(image_embeddings.detach())
+            feature_batches.append(semantic_features.detach().float())
+    if not feature_batches:
+        return None
+    return torch.cat(feature_batches, dim=0)
+
+
+def _compute_p10_cluster_size(cluster_counts: Optional[torch.Tensor]) -> float:
+    if not isinstance(cluster_counts, torch.Tensor) or cluster_counts.numel() == 0:
+        return float('nan')
+    return float(torch.quantile(cluster_counts.float(), 0.10).item())
+
+
+def _evaluate_spb_k_candidates(
+    *,
+    model,
+    runtime_model,
+    prototype_head,
+    calibration_batches: List[Dict[str, Any]],
+    semantic_recompute_features: torch.Tensor,
+    epoch: int,
+    current_step: int,
+    total_training_steps: int,
+    args,
+    adaptive_cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    candidate_metrics: Dict[int, Dict[str, float]] = {}
+    saved_state = prototype_head.export_adaptive_k_runtime_state()
+    previous_mode = bool(model.training)
+    model.eval()
+    try:
+        with torch.no_grad():
+            num_semantic_samples = int(semantic_recompute_features.size(0))
+            for candidate_k in adaptive_cfg['candidates']:
+                metrics: Dict[str, float] = {
+                    'diag_cal_loss_mean': float('inf'),
+                    'diag_cal_loss_se': 0.0,
+                    'routing_usage': float('nan'),
+                    'active_basis_count': float('nan'),
+                    'p10_cluster_size_img': float('nan'),
+                    'p10_cluster_size_txt': float('nan'),
+                    'feasible': 0.0,
+                    'num_calib_batches': float(len(calibration_batches)),
+                    'num_calib_samples': 0.0,
+                }
+                prototype_head.restore_adaptive_k_runtime_state(saved_state)
+                if int(candidate_k) > num_semantic_samples:
+                    metrics['reason_infeasible_too_few_samples'] = 1.0
+                    candidate_metrics[int(candidate_k)] = metrics
+                    continue
+
+                recomputed = prototype_head._recompute_kmeans_anchors(
+                    features=semantic_recompute_features,
+                    num_clusters=int(candidate_k),
+                    max_iters=max(int(getattr(prototype_head.prototype_bank, 'init_max_iters', 15)), 1),
+                )
+                centers = recomputed['centers'].detach()
+                counts_img = recomputed['counts'].detach()
+                prototype_head.install_semantic_anchor_cache(centers=centers, counts=counts_img, mark_initialized=True)
+
+                diag_losses: List[float] = []
+                alpha_sum: Optional[torch.Tensor] = None
+                num_alpha_samples = 0
+                counts_txt: Optional[torch.Tensor] = None
+
+                for batch in calibration_batches:
+                    with build_autocast_context(args, getattr(args, 'device', 'cuda')):
+                        outputs = model(
+                            batch,
+                            epoch=epoch,
+                            current_step=current_step,
+                            total_steps=total_training_steps,
+                            disable_proxy_losses=True,
+                        )
+                    alpha = outputs.get('alpha')
+                    if isinstance(alpha, torch.Tensor) and alpha.ndim == 2 and alpha.size(1) == int(candidate_k):
+                        detached_alpha = alpha.detach().float()
+                        alpha_sum = detached_alpha.sum(dim=0) if alpha_sum is None else (alpha_sum + detached_alpha.sum(dim=0))
+                        num_alpha_samples += int(detached_alpha.size(0))
+
+                    surrogate_diag = outputs.get('z_t_hat_diag')
+                    exact_diag = outputs.get('z_t_exact_diag')
+                    if isinstance(surrogate_diag, torch.Tensor) and isinstance(exact_diag, torch.Tensor):
+                        diag_loss = prototype_head.losses.diagonal_fidelity_loss(surrogate_diag, exact_diag)
+                        diag_losses.append(float(diag_loss.detach().float().item()))
+
+                        anchors_txt, _ = prototype_head._prepare_semantic_anchor_features(
+                            centers.to(device=exact_diag.device, dtype=exact_diag.dtype),
+                            target_feature_dim=exact_diag.size(-1),
+                        )
+                        normalized_text = F.normalize(exact_diag.detach().float(), dim=-1)
+                        normalized_anchors = F.normalize(anchors_txt.detach().float(), dim=-1)
+                        text_assignments = (normalized_text @ normalized_anchors.t()).argmax(dim=-1)
+                        text_counts = torch.bincount(text_assignments, minlength=int(candidate_k)).float()
+                        counts_txt = text_counts if counts_txt is None else (counts_txt + text_counts)
+
+                if diag_losses:
+                    diag_tensor = torch.tensor(diag_losses, dtype=torch.float32)
+                    metrics['diag_cal_loss_mean'] = float(diag_tensor.mean().item())
+                    if diag_tensor.numel() > 1:
+                        metrics['diag_cal_loss_se'] = float(diag_tensor.std(unbiased=True).item() / math.sqrt(float(diag_tensor.numel())))
+                    else:
+                        metrics['diag_cal_loss_se'] = 0.0
+                else:
+                    metrics['reason_infeasible_no_diag_batches'] = 1.0
+
+                metrics['num_calib_samples'] = float(num_alpha_samples)
+                metrics['p10_cluster_size_img'] = _compute_p10_cluster_size(counts_img)
+                metrics['p10_cluster_size_txt'] = _compute_p10_cluster_size(counts_txt)
+                if alpha_sum is not None and num_alpha_samples > 0:
+                    mean_alpha = (alpha_sum / float(num_alpha_samples)).clamp_min(1e-12)
+                    entropy = -(mean_alpha * mean_alpha.log()).sum()
+                    active_basis_count = entropy.exp()
+                    routing_usage = active_basis_count / float(int(candidate_k))
+                    metrics['active_basis_count'] = float(active_basis_count.item())
+                    metrics['routing_usage'] = float(routing_usage.item())
+                else:
+                    metrics['reason_infeasible_no_routing'] = 1.0
+
+                feasible = True
+                if not math.isfinite(metrics['diag_cal_loss_mean']):
+                    feasible = False
+                if not math.isfinite(metrics['routing_usage']) or metrics['routing_usage'] < float(adaptive_cfg['usage_threshold']):
+                    feasible = False
+                if not math.isfinite(metrics['p10_cluster_size_img']) or metrics['p10_cluster_size_img'] < float(adaptive_cfg['min_p10_cluster_size']):
+                    feasible = False
+                if math.isfinite(metrics['p10_cluster_size_txt']):
+                    if metrics['p10_cluster_size_txt'] < float(adaptive_cfg['min_p10_cluster_size']):
+                        feasible = False
+                metrics['feasible'] = 1.0 if feasible else 0.0
+                candidate_metrics[int(candidate_k)] = metrics
+    finally:
+        prototype_head.restore_adaptive_k_runtime_state(saved_state)
+        if previous_mode:
+            model.train()
+    return {
+        'candidate_metrics': candidate_metrics,
+    }
+
+
+def _select_spb_k_from_metrics(candidate_metrics: Dict[int, Dict[str, float]], adaptive_cfg: Dict[str, Any], current_k: int) -> Tuple[int, bool, bool]:
+    feasible_candidates = []
+    for candidate_k, metrics in candidate_metrics.items():
+        if float(metrics.get('feasible', 0.0)) >= 0.5 and math.isfinite(float(metrics.get('diag_cal_loss_mean', float('inf')))):
+            feasible_candidates.append(int(candidate_k))
+
+    if not feasible_candidates:
+        return int(current_k), True, True
+
+    best_k = min(
+        feasible_candidates,
+        key=lambda candidate: float(candidate_metrics[candidate]['diag_cal_loss_mean']),
+    )
+    selected_k = int(best_k)
+    if bool(adaptive_cfg.get('use_one_standard_error_rule', True)):
+        threshold = (
+            float(candidate_metrics[best_k]['diag_cal_loss_mean'])
+            + float(candidate_metrics[best_k].get('diag_cal_loss_se', 0.0))
+        )
+        selected_k = min(
+            candidate
+            for candidate in feasible_candidates
+            if float(candidate_metrics[candidate]['diag_cal_loss_mean']) <= threshold
+        )
+    return int(selected_k), False, True
+
+
+def _maybe_run_adaptive_k_selection(
+    *,
+    args,
+    model,
+    train_loader,
+    epoch: int,
+    current_step: int,
+    total_training_steps: int,
+    logger,
+) -> None:
+    # SPB-K adapts the sufficient semantic basis width of the prototype-mediated
+    # surrogate construction module. It does not adapt the capacity of a retrieval expert.
+    runtime_model = _unwrap_model(model)
+    prototype_head = getattr(runtime_model, 'prototype_head', None)
+    if prototype_head is None:
+        return
+
+    adaptive_cfg = _resolve_adaptive_k_config(args)
+    if not bool(adaptive_cfg['enabled']):
+        return
+    if str(adaptive_cfg['method']).lower() != 'spb':
+        return
+    if not getattr(runtime_model, 'use_prototype_branch', False):
+        return
+    if not hasattr(prototype_head, 'adaptive_k_state'):
+        return
+    if not _should_run_adaptive_k_recompute(
+        adaptive_cfg,
+        prototype_head.adaptive_k_state,
+        epoch=epoch,
+        current_step=current_step,
+    ):
+        return
+    if str(getattr(prototype_head, 'prototype_bank_source', '')).lower() != 'recomputed_kmeans':
+        if get_rank() == 0:
+            logger.warning(
+                'adaptive_k enabled but prototype.bank_source=%s; skipping SPB-K because detached recompute anchors are unavailable.',
+                getattr(prototype_head, 'prototype_bank_source', None),
+            )
+        return
+    if not bool(getattr(prototype_head, '_semantic_mode_enabled', lambda: False)()):
+        if get_rank() == 0:
+            logger.warning('adaptive_k enabled but semantic structure mode is inactive; skipping SPB-K.')
+        return
+
+    device = getattr(args, 'device', 'cuda')
+    calibration_batches = _collect_calibration_batches(
+        train_loader=train_loader,
+        device=device,
+        max_batches=int(adaptive_cfg['max_calib_batches']),
+    )
+    if not calibration_batches:
+        if get_rank() == 0:
+            logger.warning('adaptive_k selection skipped because no calibration batches were available.')
+        return
+
+    semantic_recompute_features = _collect_semantic_recompute_features(
+        runtime_model=runtime_model,
+        prototype_head=prototype_head,
+        calibration_batches=calibration_batches,
+        args=args,
+        device=device,
+    )
+    if not isinstance(semantic_recompute_features, torch.Tensor) or semantic_recompute_features.numel() == 0:
+        if get_rank() == 0:
+            logger.warning('adaptive_k selection skipped because semantic recompute features were unavailable.')
+        return
+
+    eval_result = _evaluate_spb_k_candidates(
+        model=model,
+        runtime_model=runtime_model,
+        prototype_head=prototype_head,
+        calibration_batches=calibration_batches,
+        semantic_recompute_features=semantic_recompute_features,
+        epoch=epoch,
+        current_step=current_step,
+        total_training_steps=total_training_steps,
+        args=args,
+        adaptive_cfg=adaptive_cfg,
+    )
+    candidate_metrics = eval_result.get('candidate_metrics', {})
+    current_k = int(prototype_head.get_active_num_prototypes())
+    selected_k_local, fallback_used_local, selection_done_local = _select_spb_k_from_metrics(
+        candidate_metrics=candidate_metrics,
+        adaptive_cfg=adaptive_cfg,
+        current_k=current_k,
+    )
+
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        selection_tensor = torch.tensor(
+            [selected_k_local, int(fallback_used_local), int(selection_done_local)],
+            device=semantic_recompute_features.device,
+            dtype=torch.long,
+        )
+        torch.distributed.broadcast(selection_tensor, src=0)
+        selected_k = int(selection_tensor[0].item())
+        fallback_used = bool(int(selection_tensor[1].item()))
+        selection_done = bool(int(selection_tensor[2].item()))
+    else:
+        selected_k = int(selected_k_local)
+        fallback_used = bool(fallback_used_local)
+        selection_done = bool(selection_done_local)
+
+    if int(selected_k) <= int(semantic_recompute_features.size(0)):
+        recomputed_selected = prototype_head._recompute_kmeans_anchors(
+            features=semantic_recompute_features,
+            num_clusters=int(selected_k),
+            max_iters=max(int(getattr(prototype_head.prototype_bank, 'init_max_iters', 15)), 1),
+        )
+        prototype_head.install_semantic_anchor_cache(
+            centers=recomputed_selected['centers'].detach(),
+            counts=recomputed_selected['counts'].detach(),
+            mark_initialized=True,
+        )
+    else:
+        prototype_head._ensure_semantic_cache_shape(int(selected_k))
+        prototype_head._semantic_cache_initialized = False
+
+    prototype_head.mark_adaptive_k_selection(
+        selected_k=int(selected_k),
+        fallback_used=bool(fallback_used),
+        candidate_metrics=candidate_metrics,
+        selection_done=bool(selection_done),
+        epoch=epoch,
+        current_step=current_step,
+    )
+
+    if get_rank() == 0:
+        if bool(adaptive_cfg['log_candidate_metrics']) and isinstance(candidate_metrics, dict):
+            for candidate_k, metrics in sorted(candidate_metrics.items(), key=lambda item: int(item[0])):
+                logger.info('adaptive_k/candidate_%s/diag_cal_loss_mean=%.6f', candidate_k, float(metrics.get('diag_cal_loss_mean', float('nan'))))
+                logger.info('adaptive_k/candidate_%s/diag_cal_loss_se=%.6f', candidate_k, float(metrics.get('diag_cal_loss_se', float('nan'))))
+                logger.info('adaptive_k/candidate_%s/routing_usage=%.6f', candidate_k, float(metrics.get('routing_usage', float('nan'))))
+                logger.info('adaptive_k/candidate_%s/active_basis_count=%.6f', candidate_k, float(metrics.get('active_basis_count', float('nan'))))
+                logger.info('adaptive_k/candidate_%s/p10_cluster_size_img=%.6f', candidate_k, float(metrics.get('p10_cluster_size_img', float('nan'))))
+                logger.info('adaptive_k/candidate_%s/p10_cluster_size_txt=%.6f', candidate_k, float(metrics.get('p10_cluster_size_txt', float('nan'))))
+                logger.info('adaptive_k/candidate_%s/feasible=%.1f', candidate_k, float(metrics.get('feasible', 0.0)))
+
+        logger.info('adaptive_k/enabled=%.1f', float(bool(adaptive_cfg['enabled'])))
+        logger.info('adaptive_k/selected_k=%d', int(selected_k))
+        logger.info('adaptive_k/current_k=%d', int(prototype_head.get_active_num_prototypes()))
+        logger.info('adaptive_k/selection_done=%.1f', float(bool(prototype_head.adaptive_k_state.get('selection_done', False))))
+        logger.info('adaptive_k/fallback_used=%.1f', float(bool(fallback_used)))
+        if bool(fallback_used):
+            logger.warning(
+                'adaptive_k fallback to current K=%d because no feasible SPB-K candidate satisfied routing/support constraints.',
+                int(selected_k),
+            )
 
 
 def _copy_optimizer_state(old_optimizer, new_optimizer):
@@ -1048,6 +1459,16 @@ def _do_train_runtime(
         start_time = time.time()
         for meter in meters.values():
             meter.reset()
+
+        _maybe_run_adaptive_k_selection(
+            args=args,
+            model=model,
+            train_loader=train_loader,
+            epoch=epoch,
+            current_step=current_steps,
+            total_training_steps=total_training_steps,
+            logger=logger,
+        )
 
         model.train()
         for n_iter, batch in enumerate(train_loader):

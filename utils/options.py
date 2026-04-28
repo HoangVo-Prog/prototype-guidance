@@ -239,6 +239,22 @@ def build_parser():
     parser.add_argument('--use_balancing_loss', type=_str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--lambda_bal', '--prototype_balance_loss_weight', dest='prototype_balance_loss_weight', type=float, default=0.0)
     parser.add_argument('--prototype_dead_threshold', type=float, default=0.005)
+    parser.add_argument('--adaptive_k_enabled', type=_str2bool, nargs='?', const=True, default=False)
+    parser.add_argument('--adaptive_k_method', type=str, default='spb')
+    parser.add_argument('--adaptive_k_select_once', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--adaptive_k_recompute_schedule', type=str, default='semantic')
+    parser.add_argument('--adaptive_k_recompute_interval', type=int, default=None)
+    parser.add_argument('--adaptive_k_recompute_start_epoch', type=int, default=0)
+    parser.add_argument('--adaptive_k_recompute_start_step', type=int, default=0)
+    # Backward-compatible alias; prefer adaptive_k_recompute_start_epoch.
+    parser.add_argument('--adaptive_k_select_epoch', type=int, default=None)
+    parser.add_argument('--adaptive_k_candidates', type=int, nargs='+', default=[16, 32, 64])
+    parser.add_argument('--adaptive_k_usage_threshold', type=float, default=0.5)
+    parser.add_argument('--adaptive_k_min_p10_cluster_size', type=float, default=4.0)
+    parser.add_argument('--adaptive_k_max_calib_batches', type=int, default=8)
+    parser.add_argument('--adaptive_k_use_one_standard_error_rule', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--adaptive_k_fallback_to_current_k', type=_str2bool, nargs='?', const=True, default=True)
+    parser.add_argument('--adaptive_k_log_candidate_metrics', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--use_diversity_loss', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument('--lambda_div', '--diversity_loss_weight', dest='diversity_loss_weight', type=float, default=0.01)
 
@@ -630,6 +646,41 @@ def _finalize_args(args):
         getattr(args, 'semantic_ramp_loss_semantic_hosthard_weighted', True)
     )
     args.semantic_ramp_use_prototype = bool(getattr(args, 'semantic_ramp_use_prototype', False))
+    args.adaptive_k_enabled = bool(getattr(args, 'adaptive_k_enabled', False))
+    args.adaptive_k_method = str(getattr(args, 'adaptive_k_method', 'spb') or 'spb').lower()
+    args.adaptive_k_select_once = bool(getattr(args, 'adaptive_k_select_once', True))
+    raw_adaptive_schedule = str(
+        getattr(args, 'adaptive_k_recompute_schedule', 'semantic') or 'semantic'
+    ).strip().lower()
+    args.adaptive_k_recompute_schedule = raw_adaptive_schedule
+    semantic_interval_default = max(int(getattr(args, 'semantic_recompute_interval', 1)), 1)
+    raw_adaptive_interval = getattr(args, 'adaptive_k_recompute_interval', None)
+    if raw_adaptive_interval in (None, ''):
+        args.adaptive_k_recompute_interval = semantic_interval_default
+    else:
+        args.adaptive_k_recompute_interval = max(int(raw_adaptive_interval), 1)
+    legacy_select_epoch = getattr(args, 'adaptive_k_select_epoch', None)
+    raw_recompute_start_epoch = getattr(args, 'adaptive_k_recompute_start_epoch', None)
+    if raw_recompute_start_epoch in (None, '') and legacy_select_epoch not in (None, ''):
+        raw_recompute_start_epoch = legacy_select_epoch
+    if raw_recompute_start_epoch in (None, ''):
+        raw_recompute_start_epoch = 0
+    args.adaptive_k_recompute_start_epoch = max(int(raw_recompute_start_epoch), 0)
+    args.adaptive_k_recompute_start_step = max(int(getattr(args, 'adaptive_k_recompute_start_step', 0)), 0)
+    raw_adaptive_candidates = getattr(args, 'adaptive_k_candidates', [16, 32, 64])
+    if raw_adaptive_candidates is None:
+        raw_adaptive_candidates = [16, 32, 64]
+    if not isinstance(raw_adaptive_candidates, (list, tuple)):
+        raw_adaptive_candidates = [raw_adaptive_candidates]
+    args.adaptive_k_candidates = [int(candidate) for candidate in raw_adaptive_candidates]
+    args.adaptive_k_usage_threshold = float(getattr(args, 'adaptive_k_usage_threshold', 0.5))
+    args.adaptive_k_min_p10_cluster_size = float(getattr(args, 'adaptive_k_min_p10_cluster_size', 4.0))
+    args.adaptive_k_max_calib_batches = max(int(getattr(args, 'adaptive_k_max_calib_batches', 8)), 1)
+    args.adaptive_k_use_one_standard_error_rule = bool(
+        getattr(args, 'adaptive_k_use_one_standard_error_rule', True)
+    )
+    args.adaptive_k_fallback_to_current_k = bool(getattr(args, 'adaptive_k_fallback_to_current_k', True))
+    args.adaptive_k_log_candidate_metrics = bool(getattr(args, 'adaptive_k_log_candidate_metrics', True))
     args.prototype_inference_mode = 'host_only'
 
     legacy_contextualization = getattr(args, 'use_prototype_contextualization', None)

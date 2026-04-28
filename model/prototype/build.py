@@ -152,6 +152,11 @@ def build_prototype_head(
         raise ValueError('use_balancing_loss=true requires lambda_bal / balance_loss_weight to be positive.')
     if not use_balancing_loss and balance_loss_weight != 0.0:
         raise ValueError('lambda_bal / balance_loss_weight must be 0.0 when use_balancing_loss is disabled.')
+    adaptive_k_recompute_interval_raw = getattr(args, 'adaptive_k_recompute_interval', None)
+    if adaptive_k_recompute_interval_raw in (None, ''):
+        adaptive_k_recompute_interval = semantic_recompute_interval
+    else:
+        adaptive_k_recompute_interval = max(int(adaptive_k_recompute_interval_raw), 1)
     return PrototypeConditionedTextHead(
         input_dim=input_dim,
         num_prototypes=getattr(args, 'prototype_num_prototypes', 32),
@@ -246,4 +251,18 @@ def build_prototype_head(
         learnable_contrastive_temperature=False,
         dead_prototype_threshold=getattr(args, 'prototype_dead_threshold', 0.005),
         collect_debug_metrics=bool(getattr(args, 'log_debug_metrics', True)),
+        adaptive_k_enabled=bool(getattr(args, 'adaptive_k_enabled', False)),
+        adaptive_k_method=str(getattr(args, 'adaptive_k_method', 'spb')),
+        adaptive_k_select_once=bool(getattr(args, 'adaptive_k_select_once', True)),
+        adaptive_k_recompute_schedule=str(getattr(args, 'adaptive_k_recompute_schedule', 'semantic')),
+        adaptive_k_recompute_interval=adaptive_k_recompute_interval,
+        adaptive_k_recompute_start_epoch=int(getattr(args, 'adaptive_k_recompute_start_epoch', 0)),
+        adaptive_k_recompute_start_step=int(getattr(args, 'adaptive_k_recompute_start_step', 0)),
+        adaptive_k_candidates=list(getattr(args, 'adaptive_k_candidates', [16, 32, 64])),
+        adaptive_k_usage_threshold=float(getattr(args, 'adaptive_k_usage_threshold', 0.5)),
+        adaptive_k_min_p10_cluster_size=float(getattr(args, 'adaptive_k_min_p10_cluster_size', 4.0)),
+        adaptive_k_max_calib_batches=int(getattr(args, 'adaptive_k_max_calib_batches', 8)),
+        adaptive_k_use_one_standard_error_rule=bool(getattr(args, 'adaptive_k_use_one_standard_error_rule', True)),
+        adaptive_k_fallback_to_current_k=bool(getattr(args, 'adaptive_k_fallback_to_current_k', True)),
+        adaptive_k_log_candidate_metrics=bool(getattr(args, 'adaptive_k_log_candidate_metrics', True)),
     )
