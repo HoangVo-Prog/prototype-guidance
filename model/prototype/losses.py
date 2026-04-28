@@ -23,6 +23,8 @@ class PrototypeLosses(nn.Module):
         lambda_semantic_hardneg_margin: float = 0.0,
         semantic_hardneg_margin: float = 0.05,
         semantic_hardneg_eps: float = 1e-8,
+        semantic_hardneg_host_global_weight: float = 1.0,
+        semantic_hardneg_host_global_tau: float = 0.1,
         use_loss_semantic_hosthard_weighted: bool = False,
         lambda_semantic_hosthard_weighted: float = 0.0,
         semantic_hosthard_margin_ref: float = 0.0,
@@ -74,6 +76,8 @@ class PrototypeLosses(nn.Module):
         self.lambda_semantic_hardneg_margin = float(lambda_semantic_hardneg_margin)
         self.semantic_hardneg_margin = float(semantic_hardneg_margin)
         self.semantic_hardneg_eps = float(semantic_hardneg_eps)
+        self.semantic_hardneg_host_global_weight = float(semantic_hardneg_host_global_weight)
+        self.semantic_hardneg_host_global_tau = float(semantic_hardneg_host_global_tau)
         self.use_loss_semantic_hosthard_weighted = bool(use_loss_semantic_hosthard_weighted)
         self.lambda_semantic_hosthard_weighted = float(lambda_semantic_hosthard_weighted)
         self.semantic_hosthard_margin_ref = float(semantic_hosthard_margin_ref)
@@ -105,6 +109,10 @@ class PrototypeLosses(nn.Module):
             raise ValueError('semantic_hardneg_margin must be non-negative.')
         if self.semantic_hardneg_eps <= 0.0:
             raise ValueError('semantic_hardneg_eps must be positive.')
+        if self.semantic_hardneg_host_global_weight < 0.0:
+            raise ValueError('semantic_hardneg_host_global_weight must be non-negative.')
+        if self.semantic_hardneg_host_global_tau <= 0.0:
+            raise ValueError('semantic_hardneg_host_global_tau must be positive.')
         if self.semantic_hosthard_tau <= 0.0:
             raise ValueError('semantic_hosthard_tau must be positive.')
         if self.semantic_hosthard_eps <= 0.0:
@@ -291,6 +299,51 @@ class PrototypeLosses(nn.Module):
             'surrogate_pairwise_hardest_negative_logit_mean': hardest_negative_logits.mean().detach(),
             'surrogate_pairwise_logit_mean': surrogate_pairwise_logits.mean().detach(),
             'surrogate_pairwise_logit_std': surrogate_pairwise_logits.std(unbiased=False).detach(),
+        }
+
+    def _host_hard_margin_debug_metrics(
+        self,
+        host_pairwise_logits: Optional[torch.Tensor],
+        pids: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        if not isinstance(host_pairwise_logits, torch.Tensor):
+            return {}
+        if host_pairwise_logits.ndim != 2 or host_pairwise_logits.size(0) != host_pairwise_logits.size(1):
+            return {}
+
+        batch_size = int(host_pairwise_logits.size(0))
+        if batch_size < 2:
+            zero = host_pairwise_logits.new_zeros(())
+            return {
+                'host_margin_mean': zero.detach(),
+                'host_margin_min': zero.detach(),
+            }
+
+        host_scores = host_pairwise_logits.detach()
+        diagonal = host_scores.diagonal()
+        if diagonal.numel() != batch_size:
+            return {}
+
+        if isinstance(pids, torch.Tensor) and pids.ndim == 1 and pids.numel() == batch_size:
+            pids_local = pids.to(device=host_scores.device, dtype=torch.long)
+            negative_mask = ~pids_local.view(-1, 1).eq(pids_local.view(1, -1))
+        else:
+            negative_mask = ~torch.eye(batch_size, device=host_scores.device, dtype=torch.bool)
+
+        if not negative_mask.any(dim=1).all():
+            negative_mask = ~torch.eye(batch_size, device=host_scores.device, dtype=torch.bool)
+        if not negative_mask.any(dim=1).all():
+            zero = host_pairwise_logits.new_zeros(())
+            return {
+                'host_margin_mean': zero.detach(),
+                'host_margin_min': zero.detach(),
+            }
+
+        hardest_negative = host_scores.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+        margins = diagonal - hardest_negative
+        return {
+            'host_margin_mean': margins.mean().detach(),
+            'host_margin_min': margins.min().detach(),
         }
 
     def _normalized_norm_stats(self, prefix: str, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -540,6 +593,7 @@ class PrototypeLosses(nn.Module):
         *,
         semantic_info: Dict[str, torch.Tensor],
         host_pairwise_logits: Optional[torch.Tensor],
+        host_global_pairwise_logits: Optional[torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         image_probs = semantic_info.get('image_student_probs')
         text_probs = semantic_info.get('text_student_probs')
@@ -574,6 +628,11 @@ class PrototypeLosses(nn.Module):
                 'neg_img_mean': zero.detach(),
                 'pos_txt_mean': zero.detach(),
                 'neg_txt_mean': zero.detach(),
+                'pos_host_global_mean': zero.detach(),
+                'neg_host_global_mean': zero.detach(),
+                'margin_host_global_mean': zero.detach(),
+                'bridge_weight_mean': zero.detach(),
+                'bridge_loss_mean': zero.detach(),
             }
 
         if image_probs.ndim != 2 or text_probs.ndim != 2 or text_targets.ndim != 2 or image_targets.ndim != 2:
@@ -601,11 +660,53 @@ class PrototypeLosses(nn.Module):
 
         pos_img = (text_targets * log_p_i_from_t).sum(dim=-1)
         neg_img = (text_targets.index_select(0, hardest_neg_caption) * log_p_i_from_t).sum(dim=-1)
-        loss_img = F.relu(self.semantic_hardneg_margin - pos_img + neg_img).mean()
+        loss_img_sem = F.relu(self.semantic_hardneg_margin - pos_img + neg_img)
 
         pos_txt = (image_targets * log_p_t_from_i).sum(dim=-1)
         neg_txt = (image_targets.index_select(0, hardest_neg_image) * log_p_t_from_i).sum(dim=-1)
-        loss_txt = F.relu(self.semantic_hardneg_margin - pos_txt + neg_txt).mean()
+        loss_txt_sem = F.relu(self.semantic_hardneg_margin - pos_txt + neg_txt)
+
+        bridge_loss_img = torch.zeros_like(loss_img_sem)
+        bridge_loss_txt = torch.zeros_like(loss_txt_sem)
+        host_global_pos = pos_img.new_zeros(pos_img.shape)
+        host_global_neg = neg_img.new_zeros(neg_img.shape)
+        host_global_margin = pos_img.new_zeros(pos_img.shape)
+        bridge_weight = pos_img.new_zeros(pos_img.shape)
+        if (
+            isinstance(host_global_pairwise_logits, torch.Tensor)
+            and host_global_pairwise_logits.ndim == 2
+            and host_global_pairwise_logits.size(0) == batch_size
+            and host_global_pairwise_logits.size(1) == batch_size
+            and self.semantic_hardneg_host_global_weight > 0.0
+        ):
+            host_global_scores = host_global_pairwise_logits.to(device=image_probs.device, dtype=image_probs.dtype)
+            row_index = torch.arange(batch_size, device=host_global_scores.device)
+            host_global_pos = host_global_scores.diagonal()
+            host_global_neg_img = host_global_scores[row_index, hardest_neg_caption]
+            host_global_neg_txt = host_global_scores[hardest_neg_image, row_index]
+            host_global_neg = 0.5 * (host_global_neg_img + host_global_neg_txt)
+            host_global_margin_img = host_global_pos - host_global_neg_img
+            host_global_margin_txt = host_global_pos - host_global_neg_txt
+            host_global_margin = 0.5 * (host_global_margin_img + host_global_margin_txt)
+
+            semantic_gap_img = (pos_img - neg_img).detach()
+            semantic_gap_txt = (pos_txt - neg_txt).detach()
+            bridge_weight_img = torch.sigmoid((self.semantic_hardneg_margin - semantic_gap_img) / self.semantic_hardneg_host_global_tau)
+            bridge_weight_txt = torch.sigmoid((self.semantic_hardneg_margin - semantic_gap_txt) / self.semantic_hardneg_host_global_tau)
+            bridge_weight = 0.5 * (bridge_weight_img + bridge_weight_txt)
+
+            bridge_loss_img = bridge_weight_img * F.relu(self.semantic_hardneg_margin - host_global_margin_img)
+            bridge_loss_txt = bridge_weight_txt * F.relu(self.semantic_hardneg_margin - host_global_margin_txt)
+
+        loss_img = (
+            loss_img_sem
+            + self.semantic_hardneg_host_global_weight * bridge_loss_img
+        ).mean()
+        loss_txt = (
+            loss_txt_sem
+            + self.semantic_hardneg_host_global_weight * bridge_loss_txt
+        ).mean()
+        bridge_loss_mean = 0.5 * (bridge_loss_img.mean() + bridge_loss_txt.mean())
 
         return {
             'loss': 0.5 * (loss_img + loss_txt),
@@ -615,6 +716,11 @@ class PrototypeLosses(nn.Module):
             'neg_img_mean': neg_img.mean().detach(),
             'pos_txt_mean': pos_txt.mean().detach(),
             'neg_txt_mean': neg_txt.mean().detach(),
+            'pos_host_global_mean': host_global_pos.mean().detach(),
+            'neg_host_global_mean': host_global_neg.mean().detach(),
+            'margin_host_global_mean': host_global_margin.mean().detach(),
+            'bridge_weight_mean': bridge_weight.mean().detach(),
+            'bridge_loss_mean': bridge_loss_mean.detach(),
         }
 
     def _semantic_hosthard_weighted_loss(
@@ -713,6 +819,7 @@ class PrototypeLosses(nn.Module):
         routing_weights: Optional[torch.Tensor] = None,
         surrogate_pairwise_logits: Optional[torch.Tensor] = None,
         host_pairwise_logits: Optional[torch.Tensor] = None,
+        host_global_pairwise_logits: Optional[torch.Tensor] = None,
         semantic_image_student_embeddings: Optional[torch.Tensor] = None,
         semantic_text_student_embeddings: Optional[torch.Tensor] = None,
         semantic_text_teacher_embeddings: Optional[torch.Tensor] = None,
@@ -735,6 +842,7 @@ class PrototypeLosses(nn.Module):
         # Preserve a stable reference for downstream logic that may need host logits.
         # This guards against accidental local deletion/regression of `host_pairwise_logits`.
         host_pairwise_logits_ref = host_pairwise_logits
+        host_global_pairwise_logits_ref = host_global_pairwise_logits
         batch_size = image_embeddings.size(0)
 
         pids_for_metrics = pids
@@ -849,6 +957,7 @@ class PrototypeLosses(nn.Module):
                 hardneg_info = self._semantic_hardneg_margin_loss(
                     semantic_info=semantic_info,
                     host_pairwise_logits=host_pairwise_logits_ref,
+                    host_global_pairwise_logits=host_global_pairwise_logits_ref,
                 )
                 loss_semantic_hardneg_margin = hardneg_info['loss']
                 loss_semantic_hardneg_margin_image = hardneg_info['loss_image']
@@ -863,6 +972,11 @@ class PrototypeLosses(nn.Module):
                     'neg_img_mean': zero.detach(),
                     'pos_txt_mean': zero.detach(),
                     'neg_txt_mean': zero.detach(),
+                    'pos_host_global_mean': zero.detach(),
+                    'neg_host_global_mean': zero.detach(),
+                    'margin_host_global_mean': zero.detach(),
+                    'bridge_weight_mean': zero.detach(),
+                    'bridge_loss_mean': zero.detach(),
                 }
             else:
                 raise ValueError(
@@ -878,6 +992,11 @@ class PrototypeLosses(nn.Module):
                 'neg_img_mean': zero.detach(),
                 'pos_txt_mean': zero.detach(),
                 'neg_txt_mean': zero.detach(),
+                'pos_host_global_mean': zero.detach(),
+                'neg_host_global_mean': zero.detach(),
+                'margin_host_global_mean': zero.detach(),
+                'bridge_weight_mean': zero.detach(),
+                'bridge_loss_mean': zero.detach(),
             }
 
         if should_compute_semantic_hosthard_weighted:
@@ -954,8 +1073,9 @@ class PrototypeLosses(nn.Module):
         diag_gap_margin_mean = zero.detach()
         routing_support_mean = support_values.mean().detach() if support_values is not None else zero.detach()
         routing_support_std = support_values.std(unbiased=False).detach() if support_values is not None else zero.detach()
-        host_margin_mean = zero.detach()
-        host_margin_min = zero.detach()
+        host_margin_metrics = self._host_hard_margin_debug_metrics(host_pairwise_logits_ref, pids_for_metrics)
+        host_margin_mean = host_margin_metrics.get('host_margin_mean', zero.detach())
+        host_margin_min = host_margin_metrics.get('host_margin_min', zero.detach())
         host_weight_mean = zero.detach()
         host_weight_std = zero.detach()
         proto_score_mean = zero.detach()
@@ -1013,6 +1133,16 @@ class PrototypeLosses(nn.Module):
             ),
             'semantic_hardneg_eps': torch.tensor(
                 self.semantic_hardneg_eps,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'semantic_hardneg_host_global_weight': torch.tensor(
+                self.semantic_hardneg_host_global_weight,
+                device=loss_total.device,
+                dtype=loss_total.dtype,
+            ),
+            'semantic_hardneg_host_global_tau': torch.tensor(
+                self.semantic_hardneg_host_global_tau,
                 device=loss_total.device,
                 dtype=loss_total.dtype,
             ),
@@ -1087,6 +1217,11 @@ class PrototypeLosses(nn.Module):
                 'sem_hardneg_neg_img_mean': hardneg_info['neg_img_mean'],
                 'sem_hardneg_pos_txt_mean': hardneg_info['pos_txt_mean'],
                 'sem_hardneg_neg_txt_mean': hardneg_info['neg_txt_mean'],
+                'sem_hardneg_pos_host_global_mean': hardneg_info['pos_host_global_mean'],
+                'sem_hardneg_neg_host_global_mean': hardneg_info['neg_host_global_mean'],
+                'sem_hardneg_margin_host_global_mean': hardneg_info['margin_host_global_mean'],
+                'sem_hardneg_bridge_weight_mean': hardneg_info['bridge_weight_mean'],
+                'sem_hardneg_bridge_loss_mean': hardneg_info['bridge_loss_mean'],
                 'semantic_hosthard_weight_mean': hosthard_info['weight_mean'],
                 'semantic_hosthard_weight_max': hosthard_info['weight_max'],
                 'semantic_hosthard_margin_row_mean': hosthard_info['margin_row_mean'],

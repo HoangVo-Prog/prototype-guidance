@@ -695,6 +695,8 @@ class PASModel(nn.Module):
             'lambda_semantic_hardneg_margin': zero,
             'semantic_hardneg_margin': zero,
             'semantic_hardneg_eps': zero,
+            'semantic_hardneg_host_global_weight': zero,
+            'semantic_hardneg_host_global_tau': zero,
             'use_loss_semantic_hosthard_weighted': zero,
             'lambda_semantic_hosthard_weighted': zero,
             'semantic_hosthard_margin_ref': zero,
@@ -923,6 +925,29 @@ class PASModel(nn.Module):
                 debug[key] = value
         return debug
 
+    @staticmethod
+    def _compute_host_global_pairwise_logits(
+        *,
+        host_outputs: Dict[str, object],
+        image_output: EncoderOutput,
+        text_output: EncoderOutput,
+    ) -> Optional[torch.Tensor]:
+        image_embeddings = host_outputs.get('global_image_embedding')
+        text_embeddings = host_outputs.get('global_text_embedding')
+        if not isinstance(image_embeddings, torch.Tensor):
+            image_embeddings = image_output.projected_pooled
+        if not isinstance(text_embeddings, torch.Tensor):
+            text_embeddings = text_output.projected_pooled
+        if not isinstance(image_embeddings, torch.Tensor) or not isinstance(text_embeddings, torch.Tensor):
+            return None
+        if image_embeddings.ndim != 2 or text_embeddings.ndim != 2:
+            return None
+        if image_embeddings.size(0) != text_embeddings.size(0):
+            return None
+        image_norm = torch.nn.functional.normalize(image_embeddings.float(), dim=-1)
+        text_norm = torch.nn.functional.normalize(text_embeddings.float(), dim=-1)
+        return image_norm @ text_norm.t()
+
     def named_optimizer_groups(self) -> OrderedDict:
         groups = OrderedDict(
             prototype_bank=[],
@@ -1050,6 +1075,11 @@ class PASModel(nn.Module):
             }
         else:
             host_pairwise_logits_for_prototype = host_outputs.get('surrogate_pairwise_logits')
+            host_global_pairwise_logits_for_prototype = self._compute_host_global_pairwise_logits(
+                host_outputs=host_outputs,
+                image_output=image_output,
+                text_output=text_output,
+            )
             if isinstance(host_pairwise_logits_for_prototype, torch.Tensor) and self.host_type == 'itself':
                 host_pairwise_logits_for_prototype = host_pairwise_logits_for_prototype.t().contiguous()
             prototype_outputs = self.prototype_head(
@@ -1061,6 +1091,7 @@ class PASModel(nn.Module):
                 attention_mask=text_output.token_mask,
                 special_token_positions=text_output.special_token_positions,
                 host_pairwise_logits=host_pairwise_logits_for_prototype,
+                host_global_pairwise_logits=host_global_pairwise_logits_for_prototype,
                 epoch=epoch,
                 current_step=current_step,
                 return_debug=should_return_debug,
@@ -1177,6 +1208,14 @@ class PASModel(nn.Module):
             ),
             'semantic_hardneg_eps': prototype_losses.get(
                 'semantic_hardneg_eps',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hardneg_host_global_weight': prototype_losses.get(
+                'semantic_hardneg_host_global_weight',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hardneg_host_global_tau': prototype_losses.get(
+                'semantic_hardneg_host_global_tau',
                 host_losses['loss_total'].new_zeros(()),
             ),
             'semantic_hosthard_margin_ref': prototype_losses.get(

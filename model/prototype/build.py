@@ -79,6 +79,8 @@ def build_prototype_head(
     lambda_semantic_hardneg_margin = float(getattr(args, 'lambda_semantic_hardneg_margin', 0.0))
     semantic_hardneg_margin = float(getattr(args, 'semantic_hardneg_margin', 0.05))
     semantic_hardneg_eps = float(getattr(args, 'semantic_hardneg_eps', 1e-8))
+    semantic_hardneg_host_global_weight = float(getattr(args, 'semantic_hardneg_host_global_weight', 1.0))
+    semantic_hardneg_host_global_tau = float(getattr(args, 'semantic_hardneg_host_global_tau', 0.1))
     use_loss_semantic_hosthard_weighted = bool(getattr(args, 'use_loss_semantic_hosthard_weighted', False))
     lambda_semantic_hosthard_weighted = float(getattr(args, 'lambda_semantic_hosthard_weighted', 0.0))
     semantic_hosthard_margin_ref = float(getattr(args, 'semantic_hosthard_margin_ref', 0.0))
@@ -114,6 +116,8 @@ def build_prototype_head(
         lambda_semantic_hardneg_margin=lambda_semantic_hardneg_margin,
         semantic_hardneg_margin=semantic_hardneg_margin,
         semantic_hardneg_eps=semantic_hardneg_eps,
+        semantic_hardneg_host_global_weight=semantic_hardneg_host_global_weight,
+        semantic_hardneg_host_global_tau=semantic_hardneg_host_global_tau,
         use_loss_semantic_hosthard_weighted=use_loss_semantic_hosthard_weighted,
         lambda_semantic_hosthard_weighted=lambda_semantic_hosthard_weighted,
         semantic_hosthard_margin_ref=semantic_hosthard_margin_ref,
@@ -226,6 +230,8 @@ def build_prototype_head(
         lambda_semantic_hardneg_margin=lambda_semantic_hardneg_margin,
         semantic_hardneg_margin=semantic_hardneg_margin,
         semantic_hardneg_eps=semantic_hardneg_eps,
+        semantic_hardneg_host_global_weight=semantic_hardneg_host_global_weight,
+        semantic_hardneg_host_global_tau=semantic_hardneg_host_global_tau,
         use_loss_semantic_hosthard_weighted=use_loss_semantic_hosthard_weighted,
         lambda_semantic_hosthard_weighted=lambda_semantic_hosthard_weighted,
         semantic_hosthard_margin_ref=semantic_hosthard_margin_ref,

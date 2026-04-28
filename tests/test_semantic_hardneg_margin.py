@@ -80,6 +80,7 @@ class SemanticHardnegMarginTests(unittest.TestCase):
         manual = losses._semantic_hardneg_margin_loss(
             semantic_info=semantic_info,
             host_pairwise_logits=host_scores,
+            host_global_pairwise_logits=None,
         )
 
         torch.testing.assert_close(outputs['loss_semantic_hardneg_margin'], manual['loss'])
@@ -185,6 +186,30 @@ class SemanticHardnegMarginTests(unittest.TestCase):
                 semantic_text_teacher_embeddings=None,
                 semantic_base_prototypes=None,
             )
+
+    def test_host_global_bridge_propagates_gradients(self):
+        losses = self._build_losses()
+        x = torch.randn(4, 4)
+        base_prototypes = torch.randn(3, 4)
+        host_scores = torch.randn(4, 4, requires_grad=True)
+        host_global_scores = torch.randn(4, 4, requires_grad=True)
+
+        outputs = losses(
+            x,
+            x,
+            x,
+            pids=torch.arange(4, dtype=torch.long),
+            host_pairwise_logits=host_scores,
+            host_global_pairwise_logits=host_global_scores,
+            semantic_image_student_embeddings=x,
+            semantic_text_student_embeddings=x,
+            semantic_text_teacher_embeddings=x,
+            semantic_base_prototypes=base_prototypes,
+        )
+        outputs['loss_semantic_hardneg_margin_weighted'].backward()
+        self.assertIsNone(host_scores.grad)
+        self.assertIsNotNone(host_global_scores.grad)
+        self.assertGreater(float(host_global_scores.grad.abs().sum().item()), 0.0)
 
     def test_new_loss_keys_are_in_tracked_loss_surface(self):
         for key in (

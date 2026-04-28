@@ -307,6 +307,7 @@ class PrototypePlugin(nn.Module):
         self,
         *,
         interface: HostPluginInterface,
+        host_global_pairwise_logits: Optional[torch.Tensor],
         pids: Optional[torch.Tensor],
         epoch: Optional[int],
         current_step: Optional[int],
@@ -328,6 +329,7 @@ class PrototypePlugin(nn.Module):
             attention_mask=interface.attention_mask,
             special_token_positions=interface.special_token_positions,
             host_pairwise_logits=interface.host_pairwise_logits,
+            host_global_pairwise_logits=host_global_pairwise_logits,
             epoch=epoch,
             current_step=current_step,
             return_debug=return_debug,
@@ -568,6 +570,29 @@ class PASRuntimeModel(nn.Module):
             include_image_local_tokens=False,
         )
 
+    @staticmethod
+    def _compute_host_global_pairwise_logits(
+        *,
+        host_outputs: Dict[str, object],
+        image_output: EncoderOutput,
+        text_output: EncoderOutput,
+    ) -> Optional[torch.Tensor]:
+        image_embeddings = host_outputs.get('global_image_embedding')
+        text_embeddings = host_outputs.get('global_text_embedding')
+        if not isinstance(image_embeddings, torch.Tensor):
+            image_embeddings = image_output.projected_pooled
+        if not isinstance(text_embeddings, torch.Tensor):
+            text_embeddings = text_output.projected_pooled
+        if not isinstance(image_embeddings, torch.Tensor) or not isinstance(text_embeddings, torch.Tensor):
+            return None
+        if image_embeddings.ndim != 2 or text_embeddings.ndim != 2:
+            return None
+        if image_embeddings.size(0) != text_embeddings.size(0):
+            return None
+        image_norm = torch.nn.functional.normalize(image_embeddings.float(), dim=-1)
+        text_norm = torch.nn.functional.normalize(text_embeddings.float(), dim=-1)
+        return image_norm @ text_norm.t()
+
     def _zero_loss_outputs(self, reference: torch.Tensor) -> Dict[str, torch.Tensor]:
         zero = reference.new_zeros(())
         return {
@@ -595,6 +620,8 @@ class PASRuntimeModel(nn.Module):
             'lambda_semantic_hardneg_margin': zero,
             'semantic_hardneg_margin': zero,
             'semantic_hardneg_eps': zero,
+            'semantic_hardneg_host_global_weight': zero,
+            'semantic_hardneg_host_global_tau': zero,
             'use_loss_semantic_hosthard_weighted': zero,
             'lambda_semantic_hosthard_weighted': zero,
             'semantic_hosthard_margin_ref': zero,
@@ -808,6 +835,11 @@ class PASRuntimeModel(nn.Module):
             host_pairwise_logits_for_plugin = (
                 host_outputs.get('surrogate_pairwise_logits') if policy.allow_host_pairwise_logits else None
             )
+            host_global_pairwise_logits_for_plugin = self._compute_host_global_pairwise_logits(
+                host_outputs=host_outputs,
+                image_output=image_output,
+                text_output=text_output,
+            )
             if isinstance(host_pairwise_logits_for_plugin, torch.Tensor) and self.host_type == 'itself':
                 # ITSELF host similarity is returned as [text, image]; semantic hard-neg mining expects [image, text].
                 host_pairwise_logits_for_plugin = host_pairwise_logits_for_plugin.t().contiguous()
@@ -826,6 +858,7 @@ class PASRuntimeModel(nn.Module):
             )
             prototype_outputs = self.prototype_plugin.forward_from_interface(
                 interface=interface,
+                host_global_pairwise_logits=host_global_pairwise_logits_for_plugin,
                 pids=pids,
                 epoch=epoch,
                 current_step=current_step,
@@ -891,6 +924,14 @@ class PASRuntimeModel(nn.Module):
             'lambda_semantic_hardneg_margin': prototype_losses.get('lambda_semantic_hardneg_margin', metric_zero),
             'semantic_hardneg_margin': prototype_losses.get('semantic_hardneg_margin', metric_zero),
             'semantic_hardneg_eps': prototype_losses.get('semantic_hardneg_eps', metric_zero),
+            'semantic_hardneg_host_global_weight': prototype_losses.get(
+                'semantic_hardneg_host_global_weight',
+                metric_zero,
+            ),
+            'semantic_hardneg_host_global_tau': prototype_losses.get(
+                'semantic_hardneg_host_global_tau',
+                metric_zero,
+            ),
             'use_loss_semantic_hosthard_weighted': prototype_losses.get(
                 'use_loss_semantic_hosthard_weighted',
                 metric_zero,
