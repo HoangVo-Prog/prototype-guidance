@@ -1637,6 +1637,11 @@ def _do_train_runtime(
                     'value': float(best_top1),
                     'best_epoch': int(best_epoch),
                 }
+            elif math.isclose(float(top1), float(best_top1), rel_tol=0.0, abs_tol=1e-8) and int(epoch) > int(best_epoch):
+                # Reproducible tie policy for logging/state: keep the most recent epoch for equal best metric values.
+                best_epoch = int(epoch)
+                if isinstance(best_metric_state_current, dict):
+                    best_metric_state_current['best_epoch'] = int(best_epoch)
             early_stopping_state = _update_early_stopping_monitor(
                 logger=logger,
                 eval_epoch=epoch,
