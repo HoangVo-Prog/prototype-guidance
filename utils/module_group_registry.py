@@ -13,12 +13,20 @@ LOGICAL_MODULE_GROUP_PREFIXES: Dict[str, Tuple[str, ...]] = {
         'base_model.positional_embedding',
         'base_model.ln_final',
         'base_model.text_projection',
+        'host_core.base_model.visual',
+        'host_core.base_model.transformer',
+        'host_core.base_model.token_embedding',
+        'host_core.base_model.positional_embedding',
+        'host_core.base_model.ln_final',
+        'host_core.base_model.text_projection',
     ),
     'host_retrieval': (
         'host_head',
+        'host_core.host_head',
     ),
     'prototype_bank': (
         'prototype_head.prototype_bank',
+        'prototype_plugin.prototype_head.prototype_bank',
     ),
     'prototype_projector': (
         'prototype_head.image_projector',
@@ -27,11 +35,20 @@ LOGICAL_MODULE_GROUP_PREFIXES: Dict[str, Tuple[str, ...]] = {
         'prototype_head.image_adapter',
         'prototype_head.text_adapter',
         'prototype_head.losses.class_proxies',
+        'prototype_plugin.prototype_head.image_projector',
+        'prototype_plugin.prototype_head.text_projector',
+        'prototype_plugin.prototype_head.proto_query_proj',
+        'prototype_plugin.prototype_head.image_adapter',
+        'prototype_plugin.prototype_head.text_adapter',
+        'prototype_plugin.prototype_head.losses.class_proxies',
     ),
     'routing': (
         'prototype_head.router',
         'prototype_head.local_routing_adapter',
         'prototype_head.contextualizer',
+        'prototype_plugin.prototype_head.router',
+        'prototype_plugin.prototype_head.local_routing_adapter',
+        'prototype_plugin.prototype_head.contextualizer',
     ),
     'fusion': (
         'prototype_head.text_pool_query',
@@ -40,6 +57,11 @@ LOGICAL_MODULE_GROUP_PREFIXES: Dict[str, Tuple[str, ...]] = {
         'prototype_head.token_mask_builder',
         'prototype_head.aggregator',
         'fusion_module',
+        'prototype_plugin.prototype_head.text_pool_query',
+        'prototype_plugin.prototype_head.token_pooler',
+        'prototype_plugin.prototype_head.token_scorer',
+        'prototype_plugin.prototype_head.token_mask_builder',
+        'prototype_plugin.prototype_head.aggregator',
     ),
 }
 
@@ -49,7 +71,6 @@ CHECKPOINT_GROUP_MEMBERS: Dict[str, Tuple[str, ...]] = {
     'host': ('host_backbone', 'host_retrieval'),
     'prototype_bank': ('prototype_bank',),
     'prototype_projector': ('prototype_projector',),
-    'fusion': ('fusion',),
 }
 
 CHECKPOINT_GROUPS: Tuple[str, ...] = tuple(CHECKPOINT_GROUP_MEMBERS.keys())

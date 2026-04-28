@@ -24,7 +24,9 @@ _ADAPTER_ROOT = Path(__file__).resolve().parents[2] / 'adapter' / 'WACV2026-Oral
 _ADAPTER_NAMESPACE = '_itself_original_source'
 _IMPORT_LOCK = threading.Lock()
 _CACHED_COMPONENTS = None
+_CACHED_DATASET_BUILD_MODULE = None
 _STATIC_MIX_EVALUATOR_CACHE = None
+_DEFAULT_ITSELF_ABLATION_ALPHAS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32)
 
 
 @dataclass(frozen=True)
@@ -102,6 +104,7 @@ def _ensure_adapter_namespace() -> None:
     _ensure_namespace_package(f'{_ADAPTER_NAMESPACE}.solver', _ADAPTER_ROOT / 'solver')
     _ensure_namespace_package(f'{_ADAPTER_NAMESPACE}.processor', _ADAPTER_ROOT / 'processor')
     _ensure_namespace_package(f'{_ADAPTER_NAMESPACE}.utils', _ADAPTER_ROOT / 'utils')
+    _ensure_namespace_package(f'{_ADAPTER_NAMESPACE}.datasets', _ADAPTER_ROOT / 'datasets')
 
 
 @contextmanager
@@ -161,6 +164,55 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
     class ITSELFStaticMixEvaluator(metrics_module.Evaluator):
         """Evaluator variant with static global/grab mixing from config."""
 
+        @staticmethod
+        def _format_alpha(alpha: float) -> str:
+            return f'{alpha:.2f}'.rstrip('0').rstrip('.')
+
+        @staticmethod
+        def _to_row_dict(row):
+            # Original ITSELF get_metrics returns:
+            # [task, R1, R5, R10, mAP, mINP, rSum]
+            return {
+                'task': str(row[0]),
+                'R1': float(row[1]),
+                'R5': float(row[2]),
+                'R10': float(row[3]),
+                'mAP': float(row[4]),
+                'mINP': float(row[5]),
+                'rSum': float(row[6]),
+                'bucket': 'host',
+            }
+
+        def _ablation_enabled(self) -> bool:
+            return bool(
+                str(getattr(self.args, 'host_type', 'itself')).lower() == 'itself'
+                and bool(getattr(self.args, 'itself_lambda_ablation_enabled', False))
+            )
+
+        def _resolve_alphas(self):
+            configured = getattr(self.args, 'itself_lambda_ablation_alphas', None)
+            if configured in (None, []):
+                alphas = list(_DEFAULT_ITSELF_ABLATION_ALPHAS)
+            else:
+                alphas = [float(alpha) for alpha in configured]
+            if bool(getattr(self.args, 'itself_lambda_ablation_include_default', True)):
+                default_alpha = getattr(self.args, 'score_weight_global', None)
+                if default_alpha is None:
+                    default_alpha = getattr(self.args, 'itself_score_weight_global', None)
+                if default_alpha is not None:
+                    alphas.append(float(default_alpha))
+            deduped = []
+            seen = set()
+            for alpha in alphas:
+                if alpha < 0.0 or alpha > 1.0:
+                    continue
+                rounded = round(float(alpha), 6)
+                if rounded in seen:
+                    continue
+                seen.add(rounded)
+                deduped.append(float(alpha))
+            return deduped
+
         def eval(self, model, i2t_metric=False):
             if bool(getattr(self.args, 'only_global', False)):
                 return super().eval(model, i2t_metric=i2t_metric)
@@ -191,15 +243,41 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
             vg_feats = F.normalize(vg_feats, p=2, dim=1)
             sims_grab = vq_feats @ vg_feats.t()
 
-            sims = alpha * sims_global + (1.0 - alpha) * sims_grab
-            row = metrics_module.get_metrics(sims, qids, gids, f'global+grab({alpha:.2f})-t2i', False)
-            top1 = float(row[1])
-
             table = PrettyTable(['task', 'R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum'])
-            table.add_row(row)
+            if self._ablation_enabled():
+                rows = [
+                    metrics_module.get_metrics(sims_global, qids, gids, 'global-t2i', False),
+                    metrics_module.get_metrics(sims_grab, qids, gids, 'grab-t2i', False),
+                ]
+                for alpha_sweep in self._resolve_alphas():
+                    sims_mix = alpha_sweep * sims_global + (1.0 - alpha_sweep) * sims_grab
+                    rows.append(
+                        metrics_module.get_metrics(
+                            sims_mix,
+                            qids,
+                            gids,
+                            f'global+grab({self._format_alpha(alpha_sweep)})-t2i',
+                            False,
+                        )
+                    )
+                top1 = 0.0
+                top1_row = None
+                for row in rows:
+                    table.add_row(row)
+                    row_r1 = float(row[1])
+                    if (top1_row is None) or (row_r1 > top1):
+                        top1 = row_r1
+                        top1_row = row
+            else:
+                sims = alpha * sims_global + (1.0 - alpha) * sims_grab
+                row = metrics_module.get_metrics(sims, qids, gids, f'global+grab({alpha:.2f})-t2i', False)
+                top1 = float(row[1])
+                table.add_row(row)
+                top1_row = row
             if i2t_metric:
+                i2t_similarity = sims if 'sims' in locals() else sims_global
                 i2t_cmc, i2t_mAP, i2t_mINP, _ = metrics_module.rank(
-                    similarity=sims.t(),
+                    similarity=i2t_similarity.t(),
                     q_pids=gids,
                     g_pids=qids,
                     max_rank=10,
@@ -215,9 +293,47 @@ def _build_static_mix_evaluator_class(metrics_module: ModuleType):
             table.custom_format['mINP'] = lambda _, value: f'{value:.2f}'
             table.custom_format['RSum'] = lambda _, value: f'{value:.2f}'
             self.logger.info('\n' + str(table))
-            self.logger.info('\n' + f'static global-grab alpha = {alpha:.4f}')
+            if self._ablation_enabled():
+                self.logger.info('\n' + f'itself lambda ablation enabled with {len(self._resolve_alphas())} mix settings.')
+            else:
+                self.logger.info('\n' + f'static global-grab alpha = {alpha:.4f}')
             self.logger.info('\n' + f'best R1 = {top1}')
             self.logger.info('Static ITSELF evaluation finished in %.1fs.', time.time() - start_time)
+
+            structured_rows = [self._to_row_dict(row) for row in rows] if self._ablation_enabled() else [self._to_row_dict(top1_row)]
+            top1_task = str(top1_row[0]) if top1_row is not None else 'host-t2i'
+            self.latest_eval_rows = [dict(item) for item in structured_rows]
+            self.latest_authority = {
+                'display_row': top1_task,
+                'source_row': top1_task,
+                'mismatch': False,
+                'selected_source_role': 'host',
+                'candidates': {'host': top1_task},
+                'row_roles': {str(item['task']): 'host' for item in structured_rows},
+                'row_metrics': {
+                    str(item['task']): {
+                        'R1': float(item['R1']),
+                        'R5': float(item['R5']),
+                        'R10': float(item['R10']),
+                        'mAP': float(item['mAP']),
+                        'mINP': float(item['mINP']),
+                        'rSum': float(item['rSum']),
+                    }
+                    for item in structured_rows
+                },
+            }
+            self.latest_metrics = {
+                'val/retrieval/R1': float(top1_row[1]) if top1_row is not None else float(top1),
+                'val/retrieval/R5': float(top1_row[2]) if top1_row is not None else 0.0,
+                'val/retrieval/R10': float(top1_row[3]) if top1_row is not None else 0.0,
+                'val/retrieval/mAP': float(top1_row[4]) if top1_row is not None else 0.0,
+                'val/retrieval/mINP': float(top1_row[5]) if top1_row is not None else 0.0,
+                'val/retrieval/rSum': float(top1_row[6]) if top1_row is not None else 0.0,
+                'val/top1': float(top1),
+                'val/top1_row': top1_task,
+                'val/top1_source_row': top1_task,
+                'val/top1_display_row': top1_task,
+            }
             return top1
 
     _STATIC_MIX_EVALUATOR_CACHE = ITSELFStaticMixEvaluator
@@ -330,6 +446,47 @@ def build_original_itself_lr_scheduler(args, optimizer):
     prepare_itself_legacy_args(args)
     components = get_original_itself_components()
     return components.solver_build.build_lr_scheduler(args, optimizer)
+
+
+def _get_original_itself_dataset_build_module() -> ModuleType:
+    global _CACHED_DATASET_BUILD_MODULE
+    with _IMPORT_LOCK:
+        if _CACHED_DATASET_BUILD_MODULE is not None:
+            return _CACHED_DATASET_BUILD_MODULE
+
+        _ensure_adapter_namespace()
+        datasets_pkg = sys.modules[f'{_ADAPTER_NAMESPACE}.datasets']
+        utils_pkg = sys.modules[f'{_ADAPTER_NAMESPACE}.utils']
+
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.bases', _ADAPTER_ROOT / 'datasets' / 'bases.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.preprocessing', _ADAPTER_ROOT / 'datasets' / 'preprocessing.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.cuhkpedes', _ADAPTER_ROOT / 'datasets' / 'cuhkpedes.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.icfgpedes', _ADAPTER_ROOT / 'datasets' / 'icfgpedes.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.rstpreid', _ADAPTER_ROOT / 'datasets' / 'rstpreid.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.sampler', _ADAPTER_ROOT / 'datasets' / 'sampler.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.datasets.sampler_ddp', _ADAPTER_ROOT / 'datasets' / 'sampler_ddp.py')
+
+        # Adapter dataset modules import from top-level `utils.*`.
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.utils.comm', _ADAPTER_ROOT / 'utils' / 'comm.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.utils.iotools', _ADAPTER_ROOT / 'utils' / 'iotools.py')
+        _load_module_from_file(f'{_ADAPTER_NAMESPACE}.utils.simple_tokenizer', _ADAPTER_ROOT / 'utils' / 'simple_tokenizer.py')
+
+        with _temporary_module_alias('datasets', datasets_pkg):
+            with _temporary_module_alias('utils', utils_pkg):
+                dataset_build = _load_module_from_file(
+                    f'{_ADAPTER_NAMESPACE}.datasets.build',
+                    _ADAPTER_ROOT / 'datasets' / 'build.py',
+                )
+        _CACHED_DATASET_BUILD_MODULE = dataset_build
+        return _CACHED_DATASET_BUILD_MODULE
+
+
+def build_original_itself_dataloader(args, tranforms=None):
+    """Build dataloaders with the original ITSELF adapter datasets pipeline."""
+
+    prepare_itself_legacy_args(args)
+    dataset_build = _get_original_itself_dataset_build_module()
+    return dataset_build.build_dataloader(args, tranforms=tranforms)
 
 
 def get_original_itself_training_components(args) -> Tuple[Callable, type]:

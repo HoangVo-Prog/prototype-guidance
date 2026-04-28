@@ -8,6 +8,20 @@ from model.hosts import (
 from .lr_scheduler import LRSchedulerWithWarmup
 
 
+_OWNERSHIP_BY_GROUP = {
+    'prototype_bank': 'prototype_added',
+    'prototype_projectors': 'prototype_added',
+    'prototype_routing': 'prototype_added',
+    'prototype_pooling': 'prototype_added',
+    'prototype_contextualization': 'prototype_added',
+    'class_proxies': 'prototype_added',
+    'host_projectors': 'itself_original',
+    'image_backbone': 'itself_original',
+    'text_backbone': 'itself_original',
+    'other': 'pas_wrapper',
+}
+
+
 GROUP_TO_LR_ATTR = {
     'prototype_bank': 'lr_prototype_bank',
     'prototype_projectors': 'lr_projectors',
@@ -33,6 +47,14 @@ GROUP_TO_WD_ATTR = {
     'text_backbone': 'weight_decay_text_backbone',
     'other': 'weight_decay',
 }
+
+ITSELF_LEGACY_PARAMWISE_GROUPS = frozenset(
+    {
+        'host_projectors',
+        'image_backbone',
+        'text_backbone',
+    }
+)
 
 
 def _coerce_optional_float(value, attr_name: str):
@@ -68,12 +90,45 @@ def _group_weight_decay(args, group_name: str) -> float:
     return value
 
 
+def _is_itself_host(args) -> bool:
+    return str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
+
+
+def _is_joint_training_with_prototype(args) -> bool:
+    return (
+        str(getattr(args, 'runtime_mode', '') or '').strip().lower() == 'joint_training'
+        and bool(getattr(args, 'use_prototype_branch', False))
+    )
+
+
+def _resolve_effective_optimizer_eps(args) -> float:
+    optimizer_name = str(getattr(args, 'optimizer', 'Adam')).strip().lower()
+    declared_raw = _coerce_optional_float(getattr(args, 'optimizer_eps', 1e-8), 'optimizer_eps')
+    declared_eps = 1e-8 if declared_raw is None else float(declared_raw)
+
+    # Match the original ITSELF adapter optimizer defaults for both runtime modes.
+    if _is_itself_host(args):
+        if optimizer_name == 'adam':
+            return 1e-3
+        if optimizer_name == 'adamw':
+            return 1e-8
+    return declared_eps
+
+
 def _use_original_itself_stage0_optimizer(args, model) -> bool:
     del model
     return should_use_original_itself_runtime(args)
 
 
-def _itself_stage0_group_spec(name: str, base_lr: float, base_weight_decay: float, lr_factor: float, bias_lr_factor: float, weight_decay_bias: float):
+def _itself_stage0_group_spec(
+    name: str,
+    base_lr: float,
+    base_weight_decay: float,
+    lr_factor: float,
+    bias_lr_factor: float,
+    weight_decay_bias: float,
+    grab_embedding_lr: float = 1e-3,
+):
     lr = base_lr
     weight_decay = base_weight_decay
     label = 'base'
@@ -89,13 +144,119 @@ def _itself_stage0_group_spec(name: str, base_lr: float, base_weight_decay: floa
         lr = base_lr * lr_factor
         label = 'classifier_bias' if 'bias' in name else 'classifier'
     if 'visul_emb_layer' in name or 'visual_embedding_layer' in name:
-        lr = base_lr * lr_factor
+        lr = float(grab_embedding_lr)
         label = 'visual_embedding_bias' if 'bias' in name else 'visual_embedding'
     if 'texual_emb_layer' in name or 'textual_embedding_layer' in name:
-        lr = base_lr * lr_factor
+        lr = float(grab_embedding_lr)
         label = 'textual_embedding_bias' if 'bias' in name else 'textual_embedding'
 
     return label, lr, weight_decay
+
+
+def _itself_stage0_group_spec_trace(
+    name: str,
+    base_lr: float,
+    base_weight_decay: float,
+    lr_factor: float,
+    bias_lr_factor: float,
+    weight_decay_bias: float,
+    grab_embedding_lr: float = 1e-3,
+):
+    lr = base_lr
+    weight_decay = base_weight_decay
+    label = 'base'
+    rule_hits = []
+    multiplier_chain = []
+
+    if 'cross' in name:
+        lr = base_lr * lr_factor
+        label = 'cross'
+        rule_hits.append('matched_substring:cross')
+        multiplier_chain.append(f'lr_factor={float(lr_factor):g}')
+    if 'bias' in name:
+        lr = base_lr * bias_lr_factor
+        weight_decay = weight_decay_bias
+        label = 'bias'
+        rule_hits.append('matched_substring:bias')
+        multiplier_chain.append(f'bias_lr_factor={float(bias_lr_factor):g}')
+        multiplier_chain.append(f'weight_decay_bias={float(weight_decay_bias):g}')
+    if 'classifier' in name or 'mlm_head' in name:
+        lr = base_lr * lr_factor
+        label = 'classifier_bias' if 'bias' in name else 'classifier'
+        rule_hits.append('matched_substring:classifier_or_mlm_head')
+        multiplier_chain.append(f'lr_factor={float(lr_factor):g}')
+    if 'visul_emb_layer' in name or 'visual_embedding_layer' in name:
+        lr = float(grab_embedding_lr)
+        label = 'visual_embedding_bias' if 'bias' in name else 'visual_embedding'
+        rule_hits.append('matched_substring:visual_embedding_layer')
+        multiplier_chain.append(f'hardcoded_visual_embedding_lr={float(grab_embedding_lr):g}')
+    if 'texual_emb_layer' in name or 'textual_embedding_layer' in name:
+        lr = float(grab_embedding_lr)
+        label = 'textual_embedding_bias' if 'bias' in name else 'textual_embedding'
+        rule_hits.append('matched_substring:textual_embedding_layer')
+        multiplier_chain.append(f'hardcoded_textual_embedding_lr={float(grab_embedding_lr):g}')
+    if not rule_hits:
+        rule_hits.append('direct_unsplit_base_rule')
+    if not multiplier_chain:
+        multiplier_chain.append('none')
+    # Keep only first occurrence order.
+    dedup_chain = list(dict.fromkeys(multiplier_chain))
+    dedup_rules = list(dict.fromkeys(rule_hits))
+    return {
+        'label': label,
+        'lr': float(lr),
+        'weight_decay': float(weight_decay),
+        'rule_hits': dedup_rules,
+        'multiplier_chain': dedup_chain,
+    }
+
+
+def _should_apply_itself_legacy_paramwise_lr_policy(args, group_name: str) -> bool:
+    return (
+        str(group_name) in ITSELF_LEGACY_PARAMWISE_GROUPS
+        and str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
+    )
+
+
+def _build_itself_legacy_paramwise_groups(args, group_name: str, named_params):
+    if _is_joint_training_with_prototype(args):
+        # Joint PAS training compatibility path: keep pre-regression base sources.
+        base_lr = _group_lr(args, group_name)
+        base_weight_decay = _group_weight_decay(args, group_name)
+    else:
+        # Original ITSELF optimizer policy uses global lr/weight_decay as the base
+        # for all host parameters, then applies name-based overrides.
+        base_lr = float(args.lr)
+        base_weight_decay = float(args.weight_decay)
+    lr_factor = float(getattr(args, 'lr_factor', 5.0))
+    bias_lr_factor = float(getattr(args, 'bias_lr_factor', 2.0))
+    weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))
+    grab_embedding_lr = float(getattr(args, 'itself_grab_embedding_lr', 1e-3))
+
+    grouped_params = {}
+    for name, parameter in named_params:
+        _, lr, weight_decay = _itself_stage0_group_spec(
+            name=name,
+            base_lr=base_lr,
+            base_weight_decay=base_weight_decay,
+            lr_factor=lr_factor,
+            bias_lr_factor=bias_lr_factor,
+            weight_decay_bias=weight_decay_bias,
+            grab_embedding_lr=grab_embedding_lr,
+        )
+        key = (float(lr), float(weight_decay))
+        bucket = grouped_params.setdefault(key, [])
+        bucket.append(parameter)
+
+    param_groups = []
+    for (lr, weight_decay), parameters in grouped_params.items():
+        param_groups.append({
+            'params': parameters,
+            'lr': lr,
+            'weight_decay': weight_decay,
+            'name': group_name,
+        })
+    return param_groups
 
 
 def _validate_param_group_assignment(model, named_group_entries):
@@ -164,6 +325,220 @@ def summarize_optimizer_param_groups(optimizer):
     return summaries
 
 
+def _compress_parameter_prefixes(parameter_names, max_entries: int = 4):
+    if not parameter_names:
+        return []
+    histogram = {}
+    for name in parameter_names:
+        parts = str(name).split('.')
+        if len(parts) >= 3:
+            prefix = '.'.join(parts[:3]) + '.*'
+        elif len(parts) >= 2:
+            prefix = '.'.join(parts[:2]) + '.*'
+        else:
+            prefix = parts[0]
+        histogram[prefix] = int(histogram.get(prefix, 0)) + 1
+    ranked = sorted(histogram.items(), key=lambda item: (-item[1], item[0]))
+    return [f'{prefix}({count})' for prefix, count in ranked[:max_entries]]
+
+
+def _group_ownership_tag(group_name: str, split_applied: bool):
+    base = _OWNERSHIP_BY_GROUP.get(str(group_name), 'mixed_or_ambiguous')
+    if split_applied and base != 'itself_original':
+        return 'mixed_or_ambiguous'
+    return base
+
+
+def _declared_and_effective_base_lr(args, group_name: str):
+    if _should_apply_itself_legacy_paramwise_lr_policy(args, group_name) and not _is_joint_training_with_prototype(args):
+        return 'optimizer.lr (itself_legacy_policy)', float(args.lr)
+    lr_attr = GROUP_TO_LR_ATTR[group_name]
+    declared_raw = _coerce_optional_float(getattr(args, lr_attr, None), lr_attr)
+    uses_global_fallback = declared_raw is None or float(declared_raw) < 0.0
+    base_lr_declared = float(args.lr) if uses_global_fallback else float(declared_raw)
+    source_key = f'optimizer.{lr_attr}'
+    if uses_global_fallback:
+        source_key = f'optimizer.{lr_attr} -> optimizer.lr'
+    return source_key, base_lr_declared
+
+
+def _reconstruct_optimizer_observability_rows(args, model):
+    if not hasattr(model, 'named_optimizer_groups'):
+        return []
+    named_groups = model.named_optimizer_groups()
+    rows = []
+    for group_name, named_params in named_groups.items():
+        if not named_params:
+            continue
+        source_key, base_lr_declared = _declared_and_effective_base_lr(args, group_name)
+        if _should_apply_itself_legacy_paramwise_lr_policy(args, group_name):
+            if _is_joint_training_with_prototype(args):
+                base_lr = _group_lr(args, group_name)
+                base_weight_decay = _group_weight_decay(args, group_name)
+            else:
+                base_lr = float(args.lr)
+                base_weight_decay = float(args.weight_decay)
+            lr_factor = float(getattr(args, 'lr_factor', 5.0))
+            bias_lr_factor = float(getattr(args, 'bias_lr_factor', 2.0))
+            weight_decay_bias = float(getattr(args, 'weight_decay_bias', 0.0))
+            grab_embedding_lr = float(getattr(args, 'itself_grab_embedding_lr', 1e-3))
+            buckets = {}
+            for parameter_name, parameter in named_params:
+                trace = _itself_stage0_group_spec_trace(
+                    name=parameter_name,
+                    base_lr=base_lr,
+                    base_weight_decay=base_weight_decay,
+                    lr_factor=lr_factor,
+                    bias_lr_factor=bias_lr_factor,
+                    weight_decay_bias=weight_decay_bias,
+                    grab_embedding_lr=grab_embedding_lr,
+                )
+                key = (float(trace['lr']), float(trace['weight_decay']))
+                bucket = buckets.setdefault(
+                    key,
+                    {
+                        'parameter_names': [],
+                        'tensor_count': 0,
+                        'parameter_count': 0,
+                        'labels': [],
+                        'rule_hits': [],
+                        'multiplier_chain': [],
+                    },
+                )
+                bucket['parameter_names'].append(str(parameter_name))
+                bucket['tensor_count'] += 1
+                bucket['parameter_count'] += int(parameter.numel())
+                bucket['labels'].append(str(trace['label']))
+                bucket['rule_hits'].extend(list(trace['rule_hits']))
+                bucket['multiplier_chain'].extend(list(trace['multiplier_chain']))
+            for (final_lr, final_wd), bucket in buckets.items():
+                labels = list(dict.fromkeys(bucket['labels']))
+                if len(labels) == 1:
+                    bucket_label = labels[0]
+                else:
+                    bucket_label = 'mixed:' + '|'.join(sorted(labels))
+                rows.append(
+                    {
+                        'name': str(group_name),
+                        'derived_bucket_label': bucket_label,
+                        'ownership_tag': _group_ownership_tag(group_name, split_applied=True),
+                        'lr_source_key': source_key,
+                        'base_lr_declared': float(base_lr_declared),
+                        'multiplier_chain': list(dict.fromkeys(bucket['multiplier_chain'])),
+                        'rule_hits': list(dict.fromkeys(bucket['rule_hits'])),
+                        'lr': float(final_lr),
+                        'weight_decay': float(final_wd),
+                        'tensor_count': int(bucket['tensor_count']),
+                        'parameter_count': int(bucket['parameter_count']),
+                        'parameter_name_samples': bucket['parameter_names'][:6],
+                        'prefix_summary': _compress_parameter_prefixes(bucket['parameter_names']),
+                        'logical_group_name': str(group_name),
+                        'split_applied': True,
+                    }
+                )
+            continue
+
+        parameter_names = [str(name) for name, _ in named_params]
+        rows.append(
+            {
+                'name': str(group_name),
+                'derived_bucket_label': 'direct',
+                'ownership_tag': _group_ownership_tag(group_name, split_applied=False),
+                'lr_source_key': source_key,
+                'base_lr_declared': float(base_lr_declared),
+                'multiplier_chain': ['none'],
+                'rule_hits': ['direct_unsplit_group'],
+                'lr': float(_group_lr(args, group_name)),
+                'weight_decay': float(_group_weight_decay(args, group_name)),
+                'tensor_count': int(len(named_params)),
+                'parameter_count': int(sum(parameter.numel() for _, parameter in named_params)),
+                'parameter_name_samples': parameter_names[:6],
+                'prefix_summary': _compress_parameter_prefixes(parameter_names),
+                'logical_group_name': str(group_name),
+                'split_applied': False,
+            }
+        )
+    return rows
+
+
+def summarize_optimizer_param_groups_observability(args, model, optimizer):
+    summaries = summarize_optimizer_param_groups(optimizer)
+    reconstructed = _reconstruct_optimizer_observability_rows(args=args, model=model)
+    for index, group_summary in enumerate(summaries):
+        if index < len(reconstructed):
+            group_summary.update(reconstructed[index])
+        group_summary['group_id'] = f'group_{index:02d}'
+    return summaries
+
+
+def summarize_scheduler_effective_lrs(optimizer, scheduler):
+    effective_lrs = list(scheduler.get_lr())
+    rows = []
+    for index, group in enumerate(optimizer.param_groups):
+        rows.append(
+            {
+                'group_id': f'group_{index:02d}',
+                'index': index,
+                'name': str(group.get('name', f'group_{index}')),
+                'scheduler_effective_lr': float(effective_lrs[index]) if index < len(effective_lrs) else 0.0,
+                'optimizer_initial_lr': float(group.get('initial_lr', group.get('lr', 0.0))),
+                'optimizer_current_lr': float(group.get('lr', 0.0)),
+            }
+        )
+    return rows
+
+
+def summarize_config_declared_optimizer_settings(args):
+    lr_fields = (
+        'lr',
+        'lr_prototype_bank',
+        'lr_projectors',
+        'lr_prototype_routing',
+        'lr_prototype_pooling',
+        'lr_prototype_contextualization',
+        'lr_host_projectors',
+        'lr_class_proxies',
+        'lr_image_backbone',
+        'lr_text_backbone',
+    )
+    wd_fields = (
+        'weight_decay',
+        'weight_decay_projectors',
+        'weight_decay_prototype_bank',
+        'weight_decay_prototype_routing',
+        'weight_decay_prototype_pooling',
+        'weight_decay_prototype_contextualization',
+        'weight_decay_host_projectors',
+        'weight_decay_class_proxies',
+        'weight_decay_image_backbone',
+        'weight_decay_text_backbone',
+        'weight_decay_bias',
+    )
+    declared_lrs = {name: getattr(args, name, None) for name in lr_fields}
+    declared_wds = {name: getattr(args, name, None) for name in wd_fields}
+    freeze_schedule = getattr(args, 'freeze_schedule', None)
+    schedule_lr_overrides = []
+    if isinstance(freeze_schedule, list):
+        for phase in freeze_schedule:
+            if not isinstance(phase, dict):
+                continue
+            phase_name = str(phase.get('name', '<unnamed_phase>'))
+            lr_overrides = phase.get('lr_overrides')
+            if isinstance(lr_overrides, dict) and lr_overrides:
+                schedule_lr_overrides.append({'phase': phase_name, 'lr_overrides': dict(lr_overrides)})
+    return {
+        'optimizer_type': getattr(args, 'optimizer', None),
+        'declared_lrs': declared_lrs,
+        'declared_weight_decays': declared_wds,
+        'lr_factor': getattr(args, 'lr_factor', None),
+        'bias_lr_factor': getattr(args, 'bias_lr_factor', None),
+        'optimizer_eps_declared': getattr(args, 'optimizer_eps', None),
+        'optimizer_eps_effective': _resolve_effective_optimizer_eps(args),
+        'optimizer_eps': _resolve_effective_optimizer_eps(args),
+        'freeze_schedule_lr_overrides': schedule_lr_overrides,
+    }
+
+
 def _build_original_itself_stage0_optimizer(args, model):
     optimizer = build_original_itself_optimizer(args, model)
     _validate_optimizer_groups_against_model(optimizer, model)
@@ -183,15 +558,27 @@ def build_optimizer(args, model):
     for group_name, named_params in named_groups.items():
         if not named_params:
             continue
-        parameters = [parameter for _, parameter in named_params]
-        param_groups.append({
-            'params': parameters,
-            'lr': _group_lr(args, group_name),
-            'weight_decay': _group_weight_decay(args, group_name),
-            'name': group_name,
-        })
+        if _should_apply_itself_legacy_paramwise_lr_policy(args, group_name):
+            param_groups.extend(
+                _build_itself_legacy_paramwise_groups(
+                    args=args,
+                    group_name=group_name,
+                    named_params=named_params,
+                )
+            )
+            continue
 
-    optimizer_eps = float(getattr(args, 'optimizer_eps', 1e-8))
+        parameters = [parameter for _, parameter in named_params]
+        param_groups.append(
+            {
+                'params': parameters,
+                'lr': _group_lr(args, group_name),
+                'weight_decay': _group_weight_decay(args, group_name),
+                'name': group_name,
+            }
+        )
+
+    optimizer_eps = _resolve_effective_optimizer_eps(args)
     if args.optimizer == 'SGD':
         optimizer = torch.optim.SGD(param_groups, lr=args.lr, momentum=args.momentum)
     elif args.optimizer == 'Adam':
@@ -208,6 +595,8 @@ def build_optimizer(args, model):
 def build_lr_scheduler(args, optimizer):
     if should_use_original_itself_runtime(args):
         return build_original_itself_lr_scheduler(args, optimizer)
+    scheduler_total_epochs = getattr(args, 'scheduler_total_epochs', None)
+    effective_total_epochs = int(scheduler_total_epochs) if scheduler_total_epochs is not None else int(args.num_epoch)
     return LRSchedulerWithWarmup(
         optimizer,
         milestones=args.milestones,
@@ -215,7 +604,7 @@ def build_lr_scheduler(args, optimizer):
         warmup_factor=args.warmup_factor,
         warmup_epochs=args.warmup_epochs,
         warmup_method=args.warmup_method,
-        total_epochs=args.num_epoch,
+        total_epochs=effective_total_epochs,
         mode=args.lrscheduler,
         target_lr=args.target_lr,
         power=args.power,

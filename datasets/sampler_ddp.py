@@ -118,11 +118,13 @@ class RandomIdentitySampler_DDP(Sampler):
     - batch_size (int): number of examples in a batch.
     """
 
-    def __init__(self, data_source, batch_size, num_instances):
+    def __init__(self, data_source, batch_size, num_instances, seed: int = 0):
         self.data_source = data_source
         self.batch_size = batch_size
         self.world_size = dist.get_world_size()
         self.num_instances = num_instances
+        self.seed = None if seed is None else int(seed)
+        self.epoch = 0
         self.mini_batch_size = self.batch_size // self.world_size
         self.num_pids_per_batch = self.mini_batch_size // self.num_instances
         self.index_dic = defaultdict(list)
@@ -144,11 +146,21 @@ class RandomIdentitySampler_DDP(Sampler):
         #self.world_size = dist.get_world_size()
         self.length //= self.world_size
 
+    def set_epoch(self, epoch: int):
+        self.epoch = int(epoch)
+
     def __iter__(self):
-        seed = shared_random_seed()
-        np.random.seed(seed)
-        self._seed = int(seed)
-        final_idxs = self.sample_list()
+        np_rng = None
+        if self.seed is not None:
+            # Deterministic and shared across ranks for the same epoch.
+            effective_seed = int(self.seed) + int(self.epoch)
+            np_rng = np.random.RandomState(effective_seed)
+            # Keep default DDP behavior stochastic across epochs if external set_epoch is not called.
+            self.epoch += 1
+        else:
+            seed = shared_random_seed()
+            np.random.seed(seed)
+        final_idxs = self.sample_list(np_rng=np_rng)
         length = int(math.ceil(len(final_idxs) * 1.0 / self.world_size))
         #final_idxs = final_idxs[self.rank * length:(self.rank + 1) * length]
         final_idxs = self.__fetch_current_node_idxs(final_idxs, length)
@@ -168,20 +180,21 @@ class RandomIdentitySampler_DDP(Sampler):
         return final_idxs
 
 
-    def sample_list(self):
+    def sample_list(self, np_rng=None):
         #np.random.seed(self._seed)
         avai_pids = copy.deepcopy(self.pids)
         batch_idxs_dict = {}
+        rng = np_rng if np_rng is not None else np.random
 
         batch_indices = []
         while len(avai_pids) >= self.num_pids_per_batch:
-            selected_pids = np.random.choice(avai_pids, self.num_pids_per_batch, replace=False).tolist()
+            selected_pids = rng.choice(avai_pids, self.num_pids_per_batch, replace=False).tolist()
             for pid in selected_pids:
                 if pid not in batch_idxs_dict:
                     idxs = copy.deepcopy(self.index_dic[pid])
                     if len(idxs) < self.num_instances:
-                        idxs = np.random.choice(idxs, size=self.num_instances, replace=True).tolist()
-                    np.random.shuffle(idxs)
+                        idxs = rng.choice(idxs, size=self.num_instances, replace=True).tolist()
+                    rng.shuffle(idxs)
                     batch_idxs_dict[pid] = idxs
 
                 avai_idxs = batch_idxs_dict[pid]

@@ -17,11 +17,9 @@ Backbone support:
 - The runtime requires a ViT image token interface and `transformer_width == embed_dim` because the prototype path consumes text pre-projection token states.
 
 Precision controls:
-- `model.backbone_precision` selects whether CLIP backbone parameters are kept in `fp16` or `fp32`.
-- `model.prototype_precision` selects whether prototype-head parameters are kept in `fp16` or `fp32`.
-- `training.amp` and `training.amp_dtype` control CUDA autocast/scaler usage during training and retrieval evaluation.
-- Unfrozen `fp16` backbone training is only supported when `training.amp=true`.
-- `prototype_precision=fp16` training is only supported when `training.amp=true`.
+- Precision is fixed to `fp16` for the active runtime. Host and prototype modules are always materialized in fp16.
+- CUDA execution always uses fp16 autocast; GradScaler is disabled because trainable fp16 parameters are canonical.
+- Precision/AMP knobs were removed from config and CLI surfaces.
 - `model.normalize_projector_outputs` must remain `true` in the active runtime so training and retrieval stay on the same cosine-normalized embedding family.
 - Exact retrieval scoring keeps a fixed temperature; there is no learnable logit-scale surface in the active runtime.
 - `build_model(...)` requires `num_classes > 0` so class proxies are instantiated consistently for both training and evaluation builds.

@@ -18,6 +18,13 @@ from .rstpreid import RSTPReid
 __factory = {'CUHK-PEDES': CUHKPEDES, 'ICFG-PEDES': ICFGPEDES, 'RSTPReid': RSTPReid}
 
 
+def _use_legacy_joint_sampler(args) -> bool:
+    return (
+        str(getattr(args, 'runtime_mode', '') or '').strip().lower() == 'joint_training'
+        and bool(getattr(args, 'use_prototype_branch', False))
+    )
+
+
 def build_transforms(img_size=(384, 128), aug=False, is_train=True):
     height, width = img_size
 
@@ -122,12 +129,13 @@ def build_dataloader(args, tranforms=None):
                         text_length=args.text_length)
 
         if args.sampler == 'identity':
+            sampler_seed = None if _use_legacy_joint_sampler(args) else getattr(args, 'seed', 0)
             if args.distributed:
                 logger.info('using ddp random identity sampler')
                 logger.info('DISTRIBUTED TRAIN START')
                 mini_batch_size = args.batch_size // get_world_size()
                 data_sampler = RandomIdentitySampler_DDP(
-                    dataset.train, args.batch_size, args.num_instance)
+                    dataset.train, args.batch_size, args.num_instance, seed=sampler_seed)
                 batch_sampler = torch.utils.data.sampler.BatchSampler(
                     data_sampler, mini_batch_size, True)
                 train_loader = DataLoader(train_set,
@@ -142,7 +150,8 @@ def build_dataloader(args, tranforms=None):
                                           batch_size=args.batch_size,
                                           sampler=RandomIdentitySampler(
                                               dataset.train, args.batch_size,
-                                              args.num_instance),
+                                              args.num_instance,
+                                              seed=sampler_seed),
                                           num_workers=num_workers,
                                           collate_fn=collate)
         elif args.sampler == 'random':

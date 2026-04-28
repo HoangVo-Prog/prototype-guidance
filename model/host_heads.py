@@ -1,9 +1,11 @@
+import logging
 from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .hosts.itself import get_original_itself_components
 from .vanilla_clip import VanillaCLIPHead
 
 
@@ -18,11 +20,13 @@ def maxk(x: torch.Tensor, dim: int, k: int) -> torch.Tensor:
 
 
 def maxk_pool1d_var(x: torch.Tensor, dim: int, k: int, lengths: torch.Tensor) -> torch.Tensor:
+    # Keep the original ITSELF adapter pooling semantics as-is.
     results = []
-    lengths_list = [int(value) for value in lengths.detach().cpu().tolist()]
+    lengths_list = list(lengths.detach().cpu().numpy())
+    lengths_list = [int(value) for value in lengths_list]
     for idx, length in enumerate(lengths_list):
-        effective_k = min(k, max(length, 1))
-        max_k_i = maxk(x[idx, :max(length, 1), :], dim - 1, effective_k).mean(dim - 1)
+        k = min(k, length)
+        max_k_i = maxk(x[idx, :length, :], dim - 1, k).mean(dim - 1)
         results.append(max_k_i)
     return torch.stack(results, dim=0)
 
@@ -62,39 +66,31 @@ class TextualEmbeddingLayer(nn.Module):
         current_step: Optional[int] = None,
         total_steps: Optional[int] = None,
     ) -> torch.Tensor:
-        mask = (text != 0).to(dtype=features.dtype)
-        lengths = mask.sum(dim=1) - 2
+        del total_steps
+        mask = ((text != 0) + 0)
+        lengths = mask.sum(1).view(-1) - 2
         sequence_length = attention.size(1)
         if current_step is not None:
             ratio_start = 0.65
             ratio_end = 0.5
-            effective_total_steps = total_steps if total_steps is not None else (10 * 145)
+            effective_total_steps = 10 * 145
             current_step = min(max(int(current_step), 1), effective_total_steps)
-            ratio = current_step / float(effective_total_steps)
+            ratio = current_step / effective_total_steps
             k = int((sequence_length - 2) * ratio_start * ((ratio_end / ratio_start) ** ratio))
         else:
             k = int((sequence_length - 2) * self.ratio)
-        k = max(k, 1)
-
         batch_size = features.size(0)
         eos_positions = text.argmax(dim=-1)
-        attention = attention.clone()
         attention[torch.arange(batch_size, device=attention.device), :, eos_positions] = -1
         attention[torch.arange(batch_size, device=attention.device), :, 0] = -1
         attention = attention[torch.arange(batch_size, device=attention.device), eos_positions, :]
         attention = attention * mask
 
-        effective_k = min(k, attention.size(-1))
-        topk_indices = attention.topk(dim=-1, k=effective_k)[1].unsqueeze(-1).expand(batch_size, effective_k, features.size(2))
+        topk_indices = attention.topk(dim=-1, k=k)[1].unsqueeze(-1).expand(batch_size, k, features.size(2))
         selected = torch.gather(input=features, dim=1, index=topk_indices)
         selected = l2norm(selected, dim=-1)
-
-        lengths = torch.tensor(
-            [max(min(int(lengths[i].item()), selected.size(1)), 1) for i in range(batch_size)],
-            device=selected.device,
-            dtype=selected.dtype,
-        )
-        base = self.linear(selected)
+        lengths = torch.Tensor([lengths[i] if lengths[i] < k else k for i in range(batch_size)])
+        base = self.linear(selected.half())
         refined = self.mlp(selected) + base
         return maxk_pool1d_var(refined, 1, 1, lengths).float()
 
@@ -114,27 +110,27 @@ class VisualEmbeddingLayer(nn.Module):
         current_step: Optional[int] = None,
         total_steps: Optional[int] = None,
     ) -> torch.Tensor:
+        del total_steps
         sequence_length = attention.size(1)
         if current_step is not None:
             ratio_start = 0.65
             ratio_end = 0.5
-            effective_total_steps = total_steps if total_steps is not None else (10 * 145)
+            effective_total_steps = 10 * 145
             current_step = min(max(int(current_step), 1), effective_total_steps)
-            ratio = current_step / float(effective_total_steps)
+            ratio = current_step / effective_total_steps
             k = int((sequence_length - 1) * ratio_start * ((ratio_end / ratio_start) ** ratio))
         else:
             k = int((sequence_length - 1) * self.ratio)
-        k = max(k, 1)
 
         batch_size = features.size(0)
-        attention = attention.clone()
         attention[torch.arange(batch_size, device=attention.device), :, 0] = -1
-        effective_k = min(k, attention.size(-1))
-        indices = attention[:, 0].topk(dim=-1, k=effective_k)[1]
-        indices = indices.unsqueeze(-1).expand(batch_size, effective_k, features.size(2))
+        indices = attention[:, 0].topk(dim=-1, k=k)[1]
+        indices = indices.unsqueeze(-1).expand(batch_size, k, features.size(2))
         selected = torch.gather(input=features, dim=1, index=indices)
         selected = l2norm(selected, dim=-1)
-        feat_lengths = torch.full((batch_size,), float(selected.size(1)), device=selected.device, dtype=selected.dtype)
+        selected = selected.half()
+        feat_lengths = torch.zeros(selected.size(0), device=selected.device).half()
+        feat_lengths[:] = selected.size(1)
         refined = self.mlp(selected) + self.fc(selected)
         return maxk_pool1d_var(refined, 1, 1, feat_lengths).float()
 
@@ -183,30 +179,20 @@ def cosine_similarity_matrix(image_features: torch.Tensor, text_features: torch.
 
 
 def sample_hard_negatives(similarity: torch.Tensor, labels: torch.Tensor) -> Dict[str, list]:
-    similarity_cpu = similarity.detach().float().cpu()
-    labels_cpu = labels.detach().view(-1).cpu()
-    num_samples = similarity_cpu.size(0)
+    num_samples = similarity.size(0)
     hard_negatives = {'visual_negatives': [], 'text_negatives': []}
     for i in range(num_samples):
-        sorted_text_idx = torch.argsort(similarity_cpu[i], descending=True)
-        text_negative = None
-        for j in sorted_text_idx.tolist():
-            if int(labels_cpu[i].item()) != int(labels_cpu[j].item()):
-                text_negative = int(j)
+        sorted_text_idx = torch.argsort(similarity[i], descending=True)
+        for j in sorted_text_idx:
+            if labels[i] != labels[j]:
+                hard_negatives['text_negatives'].append(int(j.item()))
                 break
-        if text_negative is None:
-            text_negative = int(i)
-        hard_negatives['text_negatives'].append(text_negative)
 
-        sorted_visual_idx = torch.argsort(similarity_cpu[:, i], descending=True)
-        visual_negative = None
-        for j in sorted_visual_idx.tolist():
-            if int(labels_cpu[i].item()) != int(labels_cpu[j].item()):
-                visual_negative = int(j)
+        sorted_visual_idx = torch.argsort(similarity[:, i], descending=True)
+        for j in sorted_visual_idx:
+            if labels[i] != labels[j]:
+                hard_negatives['visual_negatives'].append(int(j.item()))
                 break
-        if visual_negative is None:
-            visual_negative = int(i)
-        hard_negatives['visual_negatives'].append(visual_negative)
     return hard_negatives
 
 
@@ -236,7 +222,7 @@ def create_sample_pairs(image_features: torch.Tensor, text_features: torch.Tenso
         visual_feats.append(image_features[i])
         textual_feats.append(text_features[neg_idx])
         all_labels.append(new_labels[neg_idx])
-    return torch.stack(visual_feats), torch.stack(textual_feats), torch.stack(all_labels)
+    return torch.stack(visual_feats), torch.stack(textual_feats), torch.tensor(all_labels)
 
 
 def compute_cid(logits_1: torch.Tensor, logits_2: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -310,10 +296,46 @@ class ITSELFHostHead(nn.Module):
         loss_names = str(getattr(args, 'itself_loss_names', 'tal+cid')).lower()
         self.loss_names = {name.strip() for name in loss_names.split('+') if name.strip()}
         self.use_host_loss = bool(getattr(args, 'use_host_loss', True))
+        self.use_original_itself_impl = bool(getattr(args, 'itself_use_original_impl', True))
+        self._original_itself_objectives = None
+        self._original_itself_rollout = None
+        self.logit_scale = torch.ones([]) * (1.0 / max(float(getattr(args, 'temperature', 0.07)), 1e-12))
+        original_grab_visual_cls = None
+        original_grab_text_cls = None
+        if self.use_original_itself_impl:
+            components = get_original_itself_components()
+            original_model_build = components.model_build
+            self._original_itself_objectives = getattr(original_model_build, 'objectives', None)
+            self._original_itself_rollout = getattr(original_model_build.ITSELF, 'rollout', None)
+            original_grab_visual_cls = getattr(original_model_build, 'VisualEmbeddingLayer', None)
+            original_grab_text_cls = getattr(original_model_build, 'TexualEmbeddingLayer', None)
+            logging.getLogger('pas.model').info(
+                'ITSELF host head uses original adapter GRAB/objective implementations.'
+            )
 
         if not self.only_global:
-            self.visual_embedding_layer = VisualEmbeddingLayer(input_dim=self.input_dim, embed_dim=self.grab_embed_dim, ratio=self.select_ratio)
-            self.textual_embedding_layer = TextualEmbeddingLayer(input_dim=self.input_dim, embed_dim=self.grab_embed_dim, ratio=self.select_ratio)
+            if original_grab_visual_cls is not None and original_grab_text_cls is not None:
+                self.visual_embedding_layer = original_grab_visual_cls(
+                    input_dim=self.input_dim,
+                    embed_dim=self.grab_embed_dim,
+                    ratio=self.select_ratio,
+                )
+                self.textual_embedding_layer = original_grab_text_cls(
+                    input_dim=self.input_dim,
+                    embed_dim=self.grab_embed_dim,
+                    ratio=self.select_ratio,
+                )
+            else:
+                self.visual_embedding_layer = VisualEmbeddingLayer(
+                    input_dim=self.input_dim,
+                    embed_dim=self.grab_embed_dim,
+                    ratio=self.select_ratio,
+                )
+                self.textual_embedding_layer = TextualEmbeddingLayer(
+                    input_dim=self.input_dim,
+                    embed_dim=self.grab_embed_dim,
+                    ratio=self.select_ratio,
+                )
         else:
             self.visual_embedding_layer = None
             self.textual_embedding_layer = None
@@ -357,6 +379,14 @@ class ITSELFHostHead(nn.Module):
         for parameter in self.parameters():
             parameter.requires_grad = False
 
+    @staticmethod
+    def _module_compute_dtype(module: nn.Module, fallback: torch.dtype) -> torch.dtype:
+        for parameter in module.parameters():
+            return parameter.dtype
+        for buffer in module.buffers():
+            return buffer.dtype
+        return fallback
+
     def _normalize_attention(self, attention: Optional[torch.Tensor], batch_size: int, num_tokens: int, device, dtype) -> torch.Tensor:
         if attention is None:
             return torch.ones(batch_size, num_tokens, num_tokens, device=device, dtype=dtype)
@@ -365,6 +395,16 @@ class ITSELFHostHead(nn.Module):
         return attention.to(device=device, dtype=dtype)
 
     def _rollout(self, attentions: torch.Tensor) -> torch.Tensor:
+        if callable(self._original_itself_rollout):
+            return self._original_itself_rollout(
+                self,
+                attentions,
+                head_fusion='mean',
+                discard=True,
+                discard_ratios=[0.25, 1.0, 1.0, 1.0, 0.25, 0.25, 1.0, 1.0, 1.0, 1.0, 0.25, 0.25],
+                start_layer=4,
+                skip_layer=[5, 6, 7, 8, 9, 10],
+            )
         if attentions.ndim == 5:
             num_layers, batch_size, _, num_tokens, _ = attentions.shape
         else:
@@ -404,9 +444,9 @@ class ITSELFHostHead(nn.Module):
 
         if self.topk_type == 'std' and stacked.size(0) > 1:
             reduced = stacked.std(dim=0, unbiased=False)
-        elif self.topk_type == 'layer_index' and 0 <= self.layer_index < stacked.size(0):
+        elif self.topk_type == 'layer_index' and stacked.size(0) > 0:
             reduced = stacked[self.layer_index]
-        elif self.topk_type == 'custom' and stacked.size(0) > 1:
+        elif self.topk_type == 'custom':
             return self._rollout(stacked)
         else:
             reduced = stacked.mean(dim=0)
@@ -436,11 +476,24 @@ class ITSELFHostHead(nn.Module):
                 device=image_output.projected_tokens.device,
                 dtype=image_output.projected_tokens.dtype,
             )
-            outputs['grab_image_embedding'] = self.visual_embedding_layer(
-                image_output.projected_tokens.float(),
-                attention.float(),
-                current_step=current_step if self.modify_k else None,
-            )
+            visual_current_step = current_step if self.modify_k else None
+            if self.use_original_itself_impl:
+                grab_dtype = self._module_compute_dtype(
+                    self.visual_embedding_layer,
+                    fallback=image_output.projected_tokens.dtype,
+                )
+                outputs['grab_image_embedding'] = self.visual_embedding_layer(
+                    image_output.projected_tokens.to(dtype=grab_dtype),
+                    attention.to(dtype=grab_dtype),
+                    current_step=visual_current_step,
+                )
+            else:
+                outputs['grab_image_embedding'] = self.visual_embedding_layer(
+                    image_output.projected_tokens.float(),
+                    attention.float(),
+                    current_step=visual_current_step,
+                    total_steps=total_steps if self.modify_k else None,
+                )
         if return_debug:
             outputs['debug'] = {
                 'itself_host_type': global_embedding.new_tensor(1.0),
@@ -465,12 +518,26 @@ class ITSELFHostHead(nn.Module):
                 device=text_output.projected_tokens.device,
                 dtype=text_output.projected_tokens.dtype,
             )
-            outputs['grab_text_embedding'] = self.textual_embedding_layer(
-                text_output.projected_tokens.float(),
-                token_ids.long(),
-                attention.float(),
-                current_step=current_step if self.modify_k else None,
-            )
+            textual_current_step = current_step if self.modify_k else None
+            if self.use_original_itself_impl:
+                grab_dtype = self._module_compute_dtype(
+                    self.textual_embedding_layer,
+                    fallback=text_output.projected_tokens.dtype,
+                )
+                outputs['grab_text_embedding'] = self.textual_embedding_layer(
+                    text_output.projected_tokens.to(dtype=grab_dtype),
+                    token_ids.long(),
+                    attention.to(dtype=grab_dtype),
+                    current_step=textual_current_step,
+                )
+            else:
+                outputs['grab_text_embedding'] = self.textual_embedding_layer(
+                    text_output.projected_tokens.float(),
+                    token_ids.long(),
+                    attention.float(),
+                    current_step=textual_current_step,
+                    total_steps=total_steps if self.modify_k else None,
+                )
         if return_debug:
             outputs['debug'] = {
                 'itself_host_type': global_embedding.new_tensor(1.0),
@@ -529,8 +596,8 @@ class ITSELFHostHead(nn.Module):
             'lambda_div': zero,
             'lambda_bal': zero,
             'proxy_temperature': zero,
-            'retrieval_temperature': reference.new_tensor(self.tau_itself),
-            'logit_scale': reference.new_tensor(1.0 / max(self.tau_itself, 1e-12)),
+            'retrieval_temperature': reference.new_tensor(float(getattr(self.args, 'temperature', 0.07))),
+            'logit_scale': reference.new_tensor(1.0 / max(float(getattr(self.args, 'temperature', 0.07)), 1e-12)),
             'debug_metrics': {},
         }
 
@@ -565,56 +632,50 @@ class ITSELFHostHead(nn.Module):
         classifier: nn.Module,
         classifier_id: nn.Module,
     ):
-        max_supported_label = int(classifier.out_features) - 2
-        batch_min_label = int(pids.min().item())
-        batch_max_label = int(pids.max().item())
-
-        similarity = cid_similarity_matrix(image_features, text_features)
-        hard_negatives = sample_hard_negatives(similarity, pids)
-
-        if not hard_negatives:
-            zero = image_features.sum() * 0.0
-            return {
-                "total": zero,
-                "pair": zero,
-                "id_image": zero,
-                "id_text": zero,
-                "pair_acc": zero,
-                "id_image_acc": zero,
-                "id_text_acc": zero,
-            }
-
-        max_label = int(pids.max().item())
-        new_labels = update_labels_for_negatives(pids, hard_negatives, max_label)
-
-        ni_feats, nt_feats, nlabels = create_sample_pairs(
-            image_features, text_features, hard_negatives, new_labels, pids
-        )
+        objectives = self._original_itself_objectives
+        if objectives is not None:
+            similarity = objectives.cosine_similarity_matrix(image_features, text_features)
+            hard_negatives = objectives.sample_hard_negatives(similarity, pids)
+            max_label = int(pids.max().item())
+            new_labels = objectives.update_labels_for_negatives(pids, hard_negatives, max_label)
+            ni_feats, nt_feats, nlabels = objectives.create_sample_pairs(
+                image_features, text_features, hard_negatives, new_labels, pids
+            )
+        else:
+            similarity = cid_similarity_matrix(image_features, text_features)
+            hard_negatives = sample_hard_negatives(similarity, pids)
+            max_label = int(pids.max().item())
+            new_labels = update_labels_for_negatives(pids, hard_negatives, max_label)
+            ni_feats, nt_feats, nlabels = create_sample_pairs(
+                image_features, text_features, hard_negatives, new_labels, pids
+            )
 
         z_feats1 = mlp(torch.cat([ni_feats.float(), nt_feats.float()], dim=1))
         z_feats2 = mlp(torch.cat([nt_feats.float(), ni_feats.float()], dim=1))
 
         cross_modal_logits1 = classifier(z_feats1.float())
         cross_modal_logits2 = classifier(z_feats2.float())
+        nlabels = nlabels.to(cross_modal_logits1.device)
+        if objectives is not None:
+            cid_pair = objectives.compute_cid(cross_modal_logits1, cross_modal_logits2, nlabels)
+        else:
+            cid_pair = compute_cid(cross_modal_logits1, cross_modal_logits2, nlabels)
 
-        cid_pair = compute_cid(
-            cross_modal_logits1,
-            cross_modal_logits2,
-            nlabels.to(cross_modal_logits1.device),
-        )
-
-        image_logits = classifier_id(image_features.float())
-        text_logits = classifier_id(text_features.float())
-
-        cid_id_image = compute_id(image_logits, pids)
-        cid_id_text = compute_id(text_logits, pids)
+        image_logits = classifier_id(image_features.half()).float()
+        text_logits = classifier_id(text_features.half()).float()
+        if objectives is not None:
+            cid_id_image = objectives.compute_id(image_logits, pids)
+            cid_id_text = objectives.compute_id(text_logits, pids)
+        else:
+            cid_id_image = compute_id(image_logits, pids)
+            cid_id_text = compute_id(text_logits, pids)
         cid_total = cid_pair + cid_id_image + cid_id_text
 
         with torch.no_grad():
             pair_pred1 = cross_modal_logits1.argmax(dim=1)
             pair_pred2 = cross_modal_logits2.argmax(dim=1)
-            pair_acc1 = (pair_pred1 == nlabels.to(pair_pred1.device)).float().mean()
-            pair_acc2 = (pair_pred2 == nlabels.to(pair_pred2.device)).float().mean()
+            pair_acc1 = (pair_pred1 == nlabels).float().mean()
+            pair_acc2 = (pair_pred2 == nlabels).float().mean()
             pair_acc = 0.5 * (pair_acc1 + pair_acc2)
 
             id_image_acc = (image_logits.argmax(dim=1) == pids).float().mean()
@@ -664,6 +725,14 @@ class ITSELFHostHead(nn.Module):
         current_step: Optional[int] = None,
         total_steps: Optional[int] = None,
     ):
+        if "cid" in self.loss_names and self.classifier_global is not None:
+            # Mirror the original ITSELF runtime: CID heads are promoted to fp32 at call-time.
+            self.mlp_global = self.mlp_global.float()
+            self.classifier_global = self.classifier_global.float()
+            if not self.only_global and self.classifier_grab is not None:
+                self.mlp_grab = self.mlp_grab.float()
+                self.classifier_grab = self.classifier_grab.float()
+
         image_features = self.encode_image_branch(
             image_output,
             return_debug=return_debug,
@@ -713,32 +782,52 @@ class ITSELFHostHead(nn.Module):
 
         # TAL
         if compute_tal:
-            tal_total_global, tal_i2t_global, tal_t2i_global = compute_tal_components(
-                image_features["global_image_embedding"],
-                text_features["global_text_embedding"],
-                pids,
-                tau=self.tau_itself,
-                margin=self.margin,
-            )
-            tal_loss = tal_total_global
-            tal_loss_i2t = tal_i2t_global
-            tal_loss_t2i = tal_t2i_global
+            if self._original_itself_objectives is not None:
+                tal_loss = self._original_itself_objectives.compute_TAL(
+                    image_features["global_image_embedding"],
+                    text_features["global_text_embedding"],
+                    pids,
+                    tau=self.tau_itself,
+                    margin=self.margin,
+                )
+                tal_loss_i2t = zero
+                tal_loss_t2i = zero
+            else:
+                tal_total_global, tal_i2t_global, tal_t2i_global = compute_tal_components(
+                    image_features["global_image_embedding"],
+                    text_features["global_text_embedding"],
+                    pids,
+                    tau=self.tau_itself,
+                    margin=self.margin,
+                )
+                tal_loss = tal_total_global
+                tal_loss_i2t = tal_i2t_global
+                tal_loss_t2i = tal_t2i_global
 
             if (
                 not self.only_global
                 and image_features.get("grab_image_embedding") is not None
                 and text_features.get("grab_text_embedding") is not None
             ):
-                tal_total_grab, tal_i2t_grab, tal_t2i_grab = compute_tal_components(
-                    image_features["grab_image_embedding"],
-                    text_features["grab_text_embedding"],
-                    pids,
-                    tau=self.tau_itself,
-                    margin=self.margin,
-                )
-                tal_loss = tal_loss + tal_total_grab
-                tal_loss_i2t = tal_loss_i2t + tal_i2t_grab
-                tal_loss_t2i = tal_loss_t2i + tal_t2i_grab
+                if self._original_itself_objectives is not None:
+                    tal_loss = tal_loss + self._original_itself_objectives.compute_TAL(
+                        image_features["grab_image_embedding"],
+                        text_features["grab_text_embedding"],
+                        pids,
+                        tau=self.tau_itself,
+                        margin=self.margin,
+                    )
+                else:
+                    tal_total_grab, tal_i2t_grab, tal_t2i_grab = compute_tal_components(
+                        image_features["grab_image_embedding"],
+                        text_features["grab_text_embedding"],
+                        pids,
+                        tau=self.tau_itself,
+                        margin=self.margin,
+                    )
+                    tal_loss = tal_loss + tal_total_grab
+                    tal_loss_i2t = tal_loss_i2t + tal_i2t_grab
+                    tal_loss_t2i = tal_loss_t2i + tal_t2i_grab
 
         # CID
         if compute_cid:

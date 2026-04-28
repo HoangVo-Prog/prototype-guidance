@@ -1,6 +1,7 @@
 from .clip import ClipHostModel, build_clip_host
 from .itself import (
     build_itself_host,
+    build_original_itself_dataloader,
     build_original_itself_lr_scheduler,
     build_original_itself_optimizer,
     get_original_itself_inference_fn,
@@ -14,6 +15,7 @@ __all__ = [
     'ClipHostModel',
     'build_clip_host',
     'build_itself_host',
+    'build_original_itself_dataloader',
     'build_original_itself_optimizer',
     'build_original_itself_lr_scheduler',
     'get_original_itself_training_components',

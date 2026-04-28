@@ -13,6 +13,10 @@ experiment:
 model:
   name: ITSELF
   variant: itself_base
+  # Prototype is structure-only; retrieval is host-only.
+  prototype_method_role: semantic_structure
+  prototype_semantic_enabled: false
+  prototype_recompute_enabled: false
   pretrain_choice: ViT-B/16
   image_backbone: clip_visual
   text_backbone: clip_text_transformer
@@ -23,8 +27,6 @@ model:
   projector_type: mlp2
   normalize_projector_outputs: true
   use_custom_projector: true
-  backbone_precision: fp32
-  prototype_precision: fp32
   temperature: 0.02
   img_size: [384, 128]
   stride_size: 16
@@ -34,6 +36,7 @@ model:
   use_prototype_bank: false
   use_image_conditioned_pooling: false
   return_debug_outputs: false
+  runtime_mode: auto
 
 host:
   type: itself
@@ -70,20 +73,49 @@ prototype:
   local_routing_use_adapter: true
   local_routing_adapter_dim:
   local_routing_normalize_inputs: true
-  use_host_deflated_input: false
   contextualization_enabled: false
   contextualization_type: none
   contextualization_residual: false
+  bank_source: learnable_legacy
+  use_base_for_semantic_targets: true
   normalize_for_self_interaction: true
   normalize_for_routing: true
   dead_prototype_threshold: 0.005
 
-fusion:
-  enabled: true
-  coefficient_source: fixed
-  eval_subsets:
-    - { name: "host_only", lambda_host: 1.00, lambda_prototype: 0.00 }
-    - { name: "proto_010", lambda_host: 0.90, lambda_prototype: 0.10 }
-    - { name: "proto_020", lambda_host: 0.80, lambda_prototype: 0.20 }
-    - { name: "proto_030", lambda_host: 0.70, lambda_prototype: 0.30 }
-    - { name: "proto_100", lambda_host: 0.00, lambda_prototype: 1.00 }
+semantic_structure:
+  enabled: false
+  feature_space: prototype_projected
+  pbt_enabled: true
+  soft_target_enabled: true
+  target_temperature: 0.01
+  pred_temperature: 0.07
+  recompute_schedule: epoch
+  recompute_interval: 1
+  min_cluster_count_for_pbt: 1.0
+  empty_cluster_policy: skip
+  text_teacher_source: exact_diagonal
+  text_student_source: surrogate_diagonal
+  image_student_source: image_semantic_feature
+  recompute_start_epoch: 0
+  recompute_start_step: 0
+  loss_ramp_start_epoch: 0
+  loss_ramp_start_step: 0
+  loss_ramp_epochs: 0
+  loss_ramp_steps: 0
+  ramp_loss_diag: false
+  ramp_loss_semantic_pbt: true
+  ramp_loss_semantic_hardneg_margin: true
+  ramp_loss_semantic_hosthard_weighted: true
+  ramp_use_prototype: false
+
+lr_ablation:
+  enabled: false
+  base_lrs: [5.0e-6, 1.0e-5, 2.0e-5]
+  num_epochs: 2
+  selection_metric: val_r1
+  selection_task: best-row-t2i
+  save_each_run: true
+  restore_initial_state_each_run: true
+  write_summary_json: true
+  summary_path: outputs/lr_ablation_summary.json
+

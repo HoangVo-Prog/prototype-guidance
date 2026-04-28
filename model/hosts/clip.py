@@ -8,8 +8,7 @@ from typing import Dict, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from utils.precision import canonicalize_backbone_precision, canonicalize_prototype_precision
+from utils.freeze_schedule import set_group_requires_grad
 
 from .itself import get_original_itself_components
 
@@ -109,6 +108,9 @@ class _VanillaClipLoss(nn.Module):
             loss_ret = zero
         return {
             'loss_total': loss_ret,
+            'host_loss': loss_ret,
+            'host_loss_i2t': loss_i2t,
+            'host_loss_t2i': loss_t2i,
             'loss_ret': loss_ret,
             'loss_ret_i2t': loss_i2t,
             'loss_ret_t2i': loss_t2i,
@@ -163,7 +165,6 @@ class ClipHostModel(nn.Module):
         self.return_debug_outputs = bool(getattr(args, 'return_debug_outputs', False))
         self.lambda_host = float(getattr(args, 'lambda_host', 1.0))
         self.prototype_head = None
-        self.fusion_coefficient = 0.0
 
         self._validate_config()
         self.base_model, base_cfg, self._convert_clip_weights = self._build_clip_backbone()
@@ -201,7 +202,9 @@ class ClipHostModel(nn.Module):
         self.losses = _VanillaClipLoss(
             temperature=float(getattr(args, 'temperature', 0.07)),
             retrieval_mode=str(getattr(args, 'retrieval_mode', 'clip_bidirectional')),
-            use_loss_ret=bool(getattr(args, 'use_host_loss', True)) and bool(getattr(args, 'use_loss_ret', True)),
+            # Host-only CLIP objective is governed by `use_host_loss`.
+            # `use_loss_ret` is reserved for prototype-side retrieval and must not gate host optimization.
+            use_loss_ret=bool(getattr(args, 'use_host_loss', True)),
         )
         self._apply_precision_policy()
         self._apply_freeze_policy()
@@ -218,6 +221,8 @@ class ClipHostModel(nn.Module):
             raise ValueError('clip host requires model.use_image_conditioned_pooling=false.')
         if str(getattr(self.args, 'token_policy', 'eos_only')).lower() != 'eos_only':
             raise ValueError('clip host requires text_pooling.token_policy=eos_only.')
+        if not bool(getattr(self.args, 'use_host_loss', True)):
+            raise ValueError('clip host requires objectives.use_host_loss=true.')
 
     def _build_clip_backbone(self) -> Tuple[nn.Module, Dict[str, object], object]:
         components = get_original_itself_components()
@@ -230,29 +235,43 @@ class ClipHostModel(nn.Module):
         return base_model, base_cfg, model_build.convert_weights
 
     def _apply_precision_policy(self):
-        if canonicalize_backbone_precision(getattr(self.args, 'backbone_precision', 'fp16')) == 'fp16':
-            self._convert_clip_weights(self.base_model)
-        else:
-            self.base_model.float()
-        if canonicalize_prototype_precision(getattr(self.args, 'prototype_precision', 'fp32')) == 'fp16':
-            self.host_head.half()
-            self.losses.half()
-        else:
-            self.host_head.float()
-            self.losses.float()
+        self._convert_clip_weights(self.base_model)
+        self.host_head.half()
+        self.losses.half()
 
     def _apply_freeze_policy(self):
-        if bool(getattr(self.args, 'freeze_image_backbone', True)):
-            _freeze_module(self.base_model.visual)
-        if bool(getattr(self.args, 'freeze_text_backbone', True)):
-            _freeze_module(self.base_model.transformer)
-            _freeze_module(self.base_model.token_embedding)
-            self.base_model.positional_embedding.requires_grad = False
-            self.base_model.ln_final.weight.requires_grad = False
-            self.base_model.ln_final.bias.requires_grad = False
-            self.base_model.text_projection.requires_grad = False
-        if bool(getattr(self.args, 'freeze_host_projectors', False)):
-            _freeze_module(self.host_head)
+        freeze_image_backbone = bool(getattr(self.args, 'freeze_image_backbone', True))
+        freeze_text_backbone = bool(getattr(self.args, 'freeze_text_backbone', True))
+        freeze_host_backbone = bool(
+            getattr(
+                self.args,
+                'freeze_host_backbone',
+                freeze_image_backbone and freeze_text_backbone,
+            )
+        )
+        freeze_host_retrieval = bool(
+            getattr(
+                self.args,
+                'freeze_host_retrieval',
+                getattr(self.args, 'freeze_host_projectors', False),
+            )
+        )
+
+        if freeze_host_backbone:
+            set_group_requires_grad(self, 'host_backbone', False)
+        else:
+            if freeze_image_backbone:
+                _freeze_module(self.base_model.visual)
+            if freeze_text_backbone:
+                _freeze_module(self.base_model.transformer)
+                _freeze_module(self.base_model.token_embedding)
+                self.base_model.positional_embedding.requires_grad = False
+                self.base_model.ln_final.weight.requires_grad = False
+                self.base_model.ln_final.bias.requires_grad = False
+                self.base_model.text_projection.requires_grad = False
+
+        if freeze_host_retrieval:
+            set_group_requires_grad(self, 'host_retrieval', False)
 
     def _eos_indices(self, caption_ids: torch.Tensor) -> torch.Tensor:
         special = getattr(self.args, 'special_token_ids', None)
@@ -376,14 +395,14 @@ class ClipHostModel(nn.Module):
         losses = self.losses(image_projected, text_projected)
 
         zero = losses['loss_total'].new_zeros(())
-        host_loss_total = losses['loss_total']
+        host_loss_total = losses.get('host_loss', losses['loss_total'])
         loss_total = self.lambda_host * host_loss_total
         outputs = {
             'loss_total': loss_total,
             'loss_host': host_loss_total,
-            'loss_host_ret': losses['loss_ret'],
-            'loss_host_ret_i2t': losses['loss_ret_i2t'],
-            'loss_host_ret_t2i': losses['loss_ret_t2i'],
+            'loss_host_ret': losses.get('host_loss', losses['loss_ret']),
+            'loss_host_ret_i2t': losses.get('host_loss_i2t', losses['loss_ret_i2t']),
+            'loss_host_ret_t2i': losses.get('host_loss_t2i', losses['loss_ret_t2i']),
             'loss_host_cid': zero,
             'loss_proto_total': zero,
             'loss_host_weighted': self.lambda_host * host_loss_total,
@@ -392,7 +411,8 @@ class ClipHostModel(nn.Module):
             'loss_proxy_image': losses['loss_proxy_image'],
             'loss_proxy_text': losses['loss_proxy_text'],
             'loss_proxy_text_exact': losses['loss_proxy_text_exact'],
-            'loss_ret': losses['loss_ret'],
+            # `loss_ret` is reserved for prototype-side retrieval; host-only CLIP training optimizes `loss_host`.
+            'loss_ret': zero,
             'loss_align': losses['loss_align'],
             'loss_diag': losses['loss_diag'],
             'loss_support': losses['loss_support'],
@@ -402,15 +422,15 @@ class ClipHostModel(nn.Module):
             'loss_proxy_text_weighted': losses['loss_proxy_text_weighted'],
             'loss_proxy_text_exact_weighted': losses['loss_proxy_text_exact_weighted'],
             'loss_proxy_weighted': losses['loss_proxy_weighted'],
-            'loss_ret_weighted': losses['loss_ret_weighted'],
+            'loss_ret_weighted': zero,
             'loss_align_weighted': losses['loss_align_weighted'],
             'loss_diag_weighted': losses['loss_diag_weighted'],
             'loss_support_weighted': losses['loss_support_weighted'],
             'loss_diversity_weighted': losses['loss_diversity_weighted'],
             'loss_balance_weighted': losses['loss_balance_weighted'],
             'use_loss_proxy_text_exact': losses['use_loss_proxy_text_exact'],
-            'use_loss_ret': losses['use_loss_ret'],
-            'lambda_ret': losses['lambda_ret'],
+            'use_loss_ret': zero,
+            'lambda_ret': zero,
             'lambda_align': losses['lambda_align'],
             'lambda_diag': losses['lambda_diag'],
             'use_loss_support': losses['use_loss_support'],
@@ -422,9 +442,6 @@ class ClipHostModel(nn.Module):
             'logit_scale': losses['logit_scale'].detach(),
             'host_retrieval_temperature': losses['retrieval_temperature'].detach(),
             'host_logit_scale': losses['logit_scale'].detach(),
-            'fusion_coefficient': host_loss_total.new_tensor(0.0),
-            'fusion_lambda_host': host_loss_total.new_tensor(1.0),
-            'fusion_lambda_prototype': host_loss_total.new_tensor(0.0),
             'alpha': image_projected.new_empty((image_projected.size(0), 0)),
             'z_v': image_projected,
             'z_t_hat_diag': text_projected,
@@ -435,9 +452,7 @@ class ClipHostModel(nn.Module):
                 'vanilla_clip_mode': image_projected.new_tensor(1.0),
                 'vanilla_clip_bidirectional': image_projected.new_tensor(float(self.losses.retrieval_mode == 'clip_bidirectional')),
                 'host_loss_total': host_loss_total.detach(),
-                'host_loss_ret': losses['loss_ret'].detach(),
-                'fusion_lambda_host': image_projected.new_tensor(1.0),
-                'fusion_lambda_prototype': image_projected.new_tensor(0.0),
+                'host_loss_ret': losses.get('host_loss', losses['loss_ret']).detach(),
             },
         }
         track_output_grads = bool(getattr(self.args, 'log_debug_metrics', True)) or should_return_debug

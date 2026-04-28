@@ -14,10 +14,12 @@ class RandomIdentitySampler(Sampler):
     - batch_size (int): number of examples in a batch.
     """
 
-    def __init__(self, data_source, batch_size, num_instances):
+    def __init__(self, data_source, batch_size, num_instances, seed: int = 0):
         self.data_source = data_source
         self.batch_size = batch_size
         self.num_instances = num_instances
+        self.seed = None if seed is None else int(seed)
+        self.epoch = 0
         self.num_pids_per_batch = self.batch_size // self.num_instances
         self.index_dic = defaultdict(list) #dict with list value
         #{783: [0, 5, 116, 876, 1554, 2041],...,}
@@ -34,14 +36,29 @@ class RandomIdentitySampler(Sampler):
                 num = self.num_instances
             self.length += num - num % self.num_instances
 
+    def set_epoch(self, epoch: int):
+        self.epoch = int(epoch)
+
     def __iter__(self):
+        py_rng = random
+        np_rng = np.random
+        if self.seed is not None:
+            # Deterministic per-epoch seed for reproducible LR-ablation trials.
+            effective_seed = int(self.seed) + int(self.epoch)
+            py_rng = random.Random(effective_seed)
+            np_rng = np.random.RandomState(effective_seed)
+            # Keep non-DDP behavior stochastic across epochs when external set_epoch is not used.
+            self.epoch += 1
+
         batch_idxs_dict = defaultdict(list)
 
         for pid in self.pids:
             idxs = copy.deepcopy(self.index_dic[pid])
             if len(idxs) < self.num_instances:
-                idxs = np.random.choice(idxs, size=self.num_instances, replace=True)
-            random.shuffle(idxs)
+                idxs = np_rng.choice(idxs, size=self.num_instances, replace=True)
+                if not isinstance(idxs, list):
+                    idxs = idxs.tolist()
+            py_rng.shuffle(idxs)
             batch_idxs = []
             for idx in idxs:
                 batch_idxs.append(idx)
@@ -53,7 +70,7 @@ class RandomIdentitySampler(Sampler):
         final_idxs = []
 
         while len(avai_pids) >= self.num_pids_per_batch:
-            selected_pids = random.sample(avai_pids, self.num_pids_per_batch)
+            selected_pids = py_rng.sample(avai_pids, self.num_pids_per_batch)
             for pid in selected_pids:
                 batch_idxs = batch_idxs_dict[pid].pop(0)
                 final_idxs.extend(batch_idxs)

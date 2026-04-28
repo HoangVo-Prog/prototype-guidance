@@ -53,6 +53,7 @@ class PrototypeBank(nn.Module):
         init_tol: float = 1e-4,
         init_seed: Optional[int] = None,
         init_features: Optional[torch.Tensor] = None,
+        defer_initialization: bool = False,
     ):
         super().__init__()
         if num_prototypes <= 0:
@@ -74,9 +75,19 @@ class PrototypeBank(nn.Module):
         self.init_tol = float(init_tol)
         self.init_seed = None if init_seed is None else int(init_seed)
         self.init_features = None if init_features is None else torch.as_tensor(init_features, dtype=torch.float32, device='cpu')
+        self.defer_initialization = bool(defer_initialization)
         self.last_init_diagnostics: Dict[str, Any] = {}
         self.prototypes = nn.Parameter(torch.empty(self.num_prototypes, self.prototype_dim))
-        self.reset_parameters()
+        self._initialized = False
+        if self.defer_initialization:
+            with torch.no_grad():
+                self.prototypes.zero_()
+            self.last_init_diagnostics = {
+                'deferred_initialization': True,
+                'prototype_shape': tuple(self.prototypes.shape),
+            }
+        else:
+            self.reset_parameters()
 
     def _normalize_rows(self, tensor: torch.Tensor) -> torch.Tensor:
         return F.normalize(tensor, dim=-1, eps=_NORMALIZATION_EPS)
@@ -631,10 +642,44 @@ class PrototypeBank(nn.Module):
             summary = self._summarize_initialized_tensor(value)
             diagnostics.update(summary)
             diagnostics['prototype_shape'] = tuple(value.shape)
+            diagnostics['deferred_initialization'] = False
             self.last_init_diagnostics = diagnostics
             self._log_init_diagnostics(diagnostics)
 
             self.prototypes.copy_(value.to(dtype=self.prototypes.dtype))
+            self._initialized = True
+
+    def is_initialized(self) -> bool:
+        return bool(self._initialized)
+
+    def initialize_if_needed(self) -> bool:
+        if self._initialized:
+            return False
+        self.reset_parameters()
+        return True
+
+    def _load_from_state_dict(
+        self,
+        state_dict: Dict[str, torch.Tensor],
+        prefix: str,
+        local_metadata: Dict[str, Any],
+        strict: bool,
+        missing_keys: List[str],
+        unexpected_keys: List[str],
+        error_msgs: List[str],
+    ) -> None:
+        super()._load_from_state_dict(
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+        prototype_key = f'{prefix}prototypes'
+        if prototype_key in state_dict:
+            self._initialized = True
 
     def get_prototypes(self) -> torch.Tensor:
         return self.prototypes

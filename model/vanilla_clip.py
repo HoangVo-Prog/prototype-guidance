@@ -151,6 +151,9 @@ class VanillaClipLosses(nn.Module):
         zero = image_embeddings.new_zeros(())
         outputs = {
             'loss_total': loss_total,
+            'host_loss': loss_total,
+            'host_loss_i2t': loss_ret_i2t,
+            'host_loss_t2i': loss_ret_t2i,
             'loss_proxy': zero,
             'loss_proxy_image': zero,
             'loss_proxy_text': zero,

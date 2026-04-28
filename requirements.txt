@@ -2,6 +2,7 @@
 torch
 torchvision
 torchaudio
+skcikit-learn
 
 # Image processing
 scikit-image

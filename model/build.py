@@ -6,6 +6,13 @@ import torch.nn as nn
 
 from .hosts import build_clip_host, build_itself_host
 from . import pas_model as _pas_model
+from .plug_and_play import build_structural_split_model
+from .runtime_modes import (
+    RUNTIME_MODE_AUTO,
+    RUNTIME_MODE_HOST_ONLY,
+    normalize_runtime_mode,
+    resolve_runtime_mode_from_args,
+)
 
 build_CLIP_from_openai_pretrained = _pas_model.build_CLIP_from_openai_pretrained
 convert_weights = _pas_model.convert_weights
@@ -31,7 +38,14 @@ def _build_host_only_model(args, num_classes, **kwargs):
 
 
 def _build_model_impl(args, num_classes, **kwargs):
+    runtime_mode = normalize_runtime_mode(getattr(args, 'runtime_mode', RUNTIME_MODE_AUTO))
+    if runtime_mode == RUNTIME_MODE_HOST_ONLY and not _should_use_pas_model(args):
+        return _build_host_only_model(args=args, num_classes=num_classes, **kwargs)
+
     if _should_use_pas_model(args):
+        resolved_runtime_mode = resolve_runtime_mode_from_args(args, for_training=bool(getattr(args, 'training', True)))
+        if resolved_runtime_mode != RUNTIME_MODE_AUTO:
+            return build_structural_split_model(args=args, num_classes=num_classes, **kwargs)
         _pas_model.build_CLIP_from_openai_pretrained = build_CLIP_from_openai_pretrained
         _pas_model.convert_weights = convert_weights
         return _pas_model.build_model(args=args, num_classes=num_classes, **kwargs)

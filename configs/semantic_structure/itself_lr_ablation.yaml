@@ -1,0 +1,280 @@
+experiment:
+  name: itself_semantic_structure
+  output_dir: runs
+  seed: 1
+
+model:
+  runtime_mode: lr_ablation
+  variant: itself_semantic_structure
+  temperature: 0.07
+
+  pretrain_choice: ViT-B/16
+  image_backbone: clip_visual
+  text_backbone: clip_text_transformer
+  embedding_dim: 512
+  projection_dim: 256
+  projector_hidden_dim: 512
+  projector_dropout: 0.0
+  projector_type: mlp2
+  normalize_projector_outputs: true
+  use_custom_projector: true
+  temperature: 0.02
+  img_size: [384, 128]
+  stride_size: 16
+  text_length: 77
+  vocab_size: 49408
+
+  use_prototype_branch: true
+  use_prototype_bank: true
+  use_image_conditioned_pooling: true
+  return_debug_outputs: false
+
+  prototype_method_role: semantic_structure
+  prototype_semantic_enabled: true
+  prototype_recompute_enabled: true
+
+host:
+  type: itself
+  freeze_projectors: false
+  itself_loss_names: tal+cid
+  itself_only_global: false
+  itself_select_ratio: 0.4
+  itself_grab_embed_dim: 4096
+  itself_score_weight_global: 0.32
+  itself_tau: 0.015
+  itself_margin: 0.1
+  itself_return_all: true
+  itself_topk_type: custom
+  itself_layer_index: -1
+  itself_average_attn_weights: true
+  itself_modify_k: true
+  itself_lambda1_weight: 0.5
+  itself_lambda2_weight: 3.5
+
+prototype:
+  num_prototypes: 32
+  prototype_dim: 512
+  prototype_init: kmeans_centroids
+  prototype_init_hybrid_ratio: 0.5
+  prototype_init_max_iters: 50
+  prototype_init_tol: 1.0e-4
+  routing_type: cosine
+  routing_temperature: 0.07
+  local_routing_temperature: 0.07
+  local_routing_pooling: logsumexp
+  local_routing_use_adapter: true
+  local_routing_adapter_dim:
+  local_routing_normalize_inputs: true
+  contextualization_enabled: false
+  contextualization_type: self_attention
+  contextualization_residual: false
+
+  bank_source: recomputed_kmeans
+  use_base_for_semantic_targets: true
+
+  normalize_for_self_interaction: true
+  normalize_for_routing: true
+  dead_prototype_threshold: 0.005
+
+  routing_source: global
+
+semantic_structure:
+  enabled: true
+  feature_space: prototype_projected
+  pbt_enabled: true
+  soft_target_enabled: true
+  target_temperature: 0.01
+  pred_temperature: 0.07
+  
+  recompute_schedule: epoch
+  recompute_interval: 2
+  min_cluster_count_for_pbt: 1.0
+  empty_cluster_policy: skip
+  text_teacher_source: exact_diagonal
+  text_student_source: surrogate_diagonal
+  image_student_source: image_semantic_feature
+
+  recompute_start_epoch: 0
+  recompute_start_step: 0
+  loss_ramp_start_epoch: 0
+  loss_ramp_start_step: 0
+  loss_ramp_epochs: 0
+  loss_ramp_steps: 0
+  ramp_loss_diag: true
+  ramp_loss_semantic_pbt: true
+  ramp_loss_semantic_hardneg_margin: true
+  ramp_loss_semantic_hosthard_weighted: true
+  ramp_use_prototype: true
+
+objectives:
+  objectives:
+    use_host_loss: true
+    use_loss_diag: true
+    use_loss_semantic_pbt: true
+    use_loss_semantic_hardneg_margin: true
+    use_loss_semantic_hosthard_weighted: false
+    retrieval_mode: clip_bidirectional
+    use_balancing_loss: false
+    use_diversity_loss: false
+  lambda:
+    host: 1.0
+    diag: 4.0
+    semantic_pbt: 20.0
+    semantic_hardneg_margin: 100.0
+    semantic_hosthard_weighted: 0.0
+    balance: 0.0
+    diversity: 0.0
+  semantic_hardneg_margin: 0.05
+  semantic_hardneg_eps: 1.0e-8
+  semantic_hosthard_margin_ref: 0.0
+  semantic_hosthard_tau: 0.1
+  semantic_hosthard_eps: 1.0e-8
+  semantic_hosthard_normalize_weights: true
+
+text_pooling:
+  token_policy: content_only
+  scoring_type: cosine
+  normalize_for_token_scoring: true
+  token_temperature: 0.07
+  special_token_ids:
+    bos_token_id: 49406
+    eos_token_id: 49407
+    pad_token_id: 0
+  error_on_empty_kept_tokens: true
+
+
+training:
+  batch_size: 256
+  epochs: 15
+  log_period: 50
+  eval_frequency: 1
+  early_stopping_enabled: true
+  early_stopping_metric: R1
+  early_stopping_mode: max
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.0
+  early_stopping_start_epoch: 1
+  early_stopping_monitored_bucket: host
+  early_stopping_monitored_task_pattern:
+  early_stopping_stop_on_nan: false
+  save_interval: 1
+  img_aug: true
+  txt_aug: true
+  sampler: identity
+  num_instance: 2
+  num_workers: 4  
+  training: true
+  freeze_host_backbone: false
+  freeze_host_retrieval: false
+  freeze_prototype_bank: false
+  freeze_prototype_projector: false
+  freeze_routing: false
+  freeze_image_backbone: false
+  freeze_text_backbone: false
+  grad_clip: 0.0
+
+optimizer:
+  type: Adam         # SGD | Adam | AdamW
+  lr: 1.0e-5           # default LR for "other" params
+  weight_decay: 4.0e-5 # default WD for "other" params
+
+  # Per-group LR overrides
+  lr_prototype_bank: 1.0e-4
+  lr_projectors: 1.0e-4
+  lr_prototype_routing: 5.0e-5
+  lr_prototype_pooling: 5.0e-5
+  lr_prototype_contextualization: null
+  lr_host_projectors: 1.0e-5
+  lr_class_proxies: 1.0e-5
+  lr_image_backbone: 1.0e-5
+  lr_text_backbone: 1.0e-5
+
+  # Per-group WD overrides
+  weight_decay_prototype_bank: 1.0e-4
+  weight_decay_projectors: 1.0e-4
+  weight_decay_prototype_routing: 4.0e-5
+  weight_decay_prototype_pooling: 4.0e-5
+  weight_decay_prototype_contextualization: null
+  weight_decay_host_projectors: 4.0e-5
+  weight_decay_class_proxies: 4.0e-5
+  weight_decay_image_backbone: 4.0e-5
+  weight_decay_text_backbone: 4.0e-5
+
+  momentum: 0.9
+  alpha: 0.9
+  beta: 0.999
+  lr_factor: 5.0
+  bias_lr_factor: 2.0
+  weight_decay_bias: 0.0
+  optimizer_eps: 1.0e-3
+  milestones: [45, 50]
+  gamma: 0.1
+  warmup_factor: 0.1
+  warmup_epochs: 5
+  warmup_method: linear
+  scheduler: cosine
+  target_lr: 0.0
+  power: 0.9
+
+dataset:
+  dataset_name: RSTPReid
+  root_dir: data
+  val_dataset: test
+  num_workers: 4
+
+logging:
+  use_wandb: true
+  project: itself_semantic_structure
+  entity:
+  run_name:
+  group: itself_semantic_structure
+  mode: online
+  tags: [itself, semantic_structure]
+  notes: 
+  log_interval: 50
+  log_code: false
+  log_debug_metrics: true
+
+evaluation:
+  checkpoint_path: ''
+  device: cuda
+  cross_domain_generalization: false
+  target_domain: CUHK-PEDES
+  retrieval_metrics: [R1, R5, R10, mAP, mINP, rSum]
+  itself_lambda_ablation_enabled: true
+  itself_lambda_ablation_alphas: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32]
+  batch_size: 512
+  prototype_image_chunk_size: 32
+  prototype_text_chunk_size: 128
+
+checkpointing:
+  metric:
+    name: R1
+    mode: max
+  groups:
+    host:
+      enabled: true
+    prototype_bank:
+      enabled: false
+    prototype_projector:
+      enabled: false
+  save:
+    save_latest: true
+    save_best: true
+    keep_last_n: 2
+  authority_validation:
+    enabled: true
+    strict: true
+    warn_only: false
+    allow_fallback_row_name_classification: true
+
+lr_ablation:
+  enabled: true
+  base_lrs: [1.0e-6, 2.0e-6, 3.0e-6, 5.0e-6, 7.5e-6, 1.0e-5, 1.5e-5, 2.0e-5]
+  num_epochs: 10
+  selection_metric: val_r1
+  selection_task: best_eval_row
+  save_each_run: true
+  restore_initial_state_each_run: true
+  write_summary_json: true
+  summary_path: outputs/lr_ablation_summary.json

@@ -1,17 +1,18 @@
+import fnmatch
 import logging
-import re
-from typing import Dict, List, Optional, Tuple
+import math
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from prettytable import PrettyTable
 import torch
 import torch.nn.functional as F
 
-from utils.precision import build_autocast_context, is_cuda_device
+from utils.precision import build_autocast_context
 from utils.metric_logging import build_validation_debug_metrics, build_validation_retrieval_metrics
 
 
 SUPPORTED_RETRIEVAL_METRICS = ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum')
-SUPPORTED_RETRIEVAL_SCORERS = ('exact', 'approximate')
+BEST_ROW_TASK_NAME = 'best-row-t2i'
 
 
 def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
@@ -66,6 +67,160 @@ def get_metrics(similarity, qids, gids, name):
     }
 
 
+def _match_task_pattern(task_name: str, pattern: Optional[str]) -> bool:
+    if not pattern:
+        return True
+    normalized_name = str(task_name or '')
+    normalized_pattern = str(pattern).strip()
+    if not normalized_pattern:
+        return True
+    lowered_name = normalized_name.lower()
+    lowered_pattern = normalized_pattern.lower()
+    if any(char in lowered_pattern for char in ('*', '?', '[')):
+        return fnmatch.fnmatchcase(lowered_name, lowered_pattern)
+    return lowered_name == lowered_pattern or lowered_pattern in lowered_name
+
+
+def _extract_rows_and_roles(eval_result: Any) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+    row_roles: Dict[str, str] = {}
+    rows: List[Dict[str, Any]] = []
+    authority_context = {}
+
+    if hasattr(eval_result, 'latest_authority'):
+        authority_context = getattr(eval_result, 'latest_authority') or {}
+    elif isinstance(eval_result, dict):
+        authority_context = eval_result.get('authority') or {}
+    if isinstance(authority_context, dict):
+        raw_roles = authority_context.get('row_roles', {})
+        if isinstance(raw_roles, dict):
+            row_roles = {str(name): str(role) for name, role in raw_roles.items()}
+
+    if hasattr(eval_result, 'latest_eval_rows'):
+        latest_rows = getattr(eval_result, 'latest_eval_rows') or []
+        if isinstance(latest_rows, Sequence):
+            rows = [dict(row) for row in latest_rows if isinstance(row, dict)]
+    elif isinstance(eval_result, dict):
+        if isinstance(eval_result.get('rows'), Sequence):
+            rows = [dict(row) for row in eval_result.get('rows', []) if isinstance(row, dict)]
+        elif isinstance(eval_result.get('row_metrics'), dict):
+            rows = [
+                {
+                    'task': str(task_name),
+                    **{
+                        str(metric_name): metric_value
+                        for metric_name, metric_value in metric_values.items()
+                    },
+                }
+                for task_name, metric_values in eval_result['row_metrics'].items()
+                if isinstance(metric_values, dict)
+            ]
+
+    return rows, row_roles
+
+
+def collect_monitored_eval_rows(
+    eval_result: Any,
+    monitored_bucket: Optional[str] = 'host',
+    monitored_task_pattern: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    rows, row_roles = _extract_rows_and_roles(eval_result)
+    bucket_filter = None if monitored_bucket is None else str(monitored_bucket).strip().lower()
+    if bucket_filter == '':
+        bucket_filter = None
+
+    monitored_rows: List[Dict[str, Any]] = []
+    for row_index, row in enumerate(rows):
+        row_name = str(row.get('task') or row.get('name') or row.get('row_name') or '')
+        if not row_name:
+            continue
+        row_bucket = str(row.get('bucket') or row_roles.get(row_name, 'host')).strip().lower() or 'host'
+        if bucket_filter is not None and row_bucket != bucket_filter:
+            continue
+        if not _match_task_pattern(row_name, monitored_task_pattern):
+            continue
+        monitored_rows.append(
+            {
+                'row_index': int(row_index),
+                'row_name': row_name,
+                'bucket': row_bucket,
+                'row': row,
+            }
+        )
+    return monitored_rows
+
+
+def summarize_epoch_monitor(
+    rows: Sequence[Dict[str, Any]],
+    metric_name: str = 'R1',
+    mode: str = 'max',
+) -> Dict[str, Any]:
+    normalized_metric_name = str(metric_name or 'R1')
+    normalized_mode = str(mode or 'max').lower()
+    if normalized_mode not in {'max', 'min'}:
+        raise ValueError(f'Unsupported early-stopping mode: {mode!r}. Allowed values: max, min.')
+
+    valid_rows: List[Dict[str, Any]] = []
+    invalid_rows: List[Dict[str, Any]] = []
+    for item in rows:
+        row = item.get('row', {}) if isinstance(item, dict) else {}
+        if not isinstance(row, dict):
+            invalid_rows.append(dict(item) if isinstance(item, dict) else {'row': row})
+            continue
+        metric_value = row.get(normalized_metric_name)
+        if metric_value is None and isinstance(row.get('metrics'), dict):
+            metric_value = row['metrics'].get(normalized_metric_name)
+        try:
+            metric_float = float(metric_value)
+        except (TypeError, ValueError):
+            invalid_rows.append(dict(item))
+            continue
+        if not math.isfinite(metric_float):
+            invalid_rows.append(dict(item))
+            continue
+        row_entry = dict(item)
+        row_entry['metric_value'] = metric_float
+        valid_rows.append(row_entry)
+
+    if not valid_rows:
+        return {
+            'metric_name': normalized_metric_name,
+            'mode': normalized_mode,
+            'best_value': None,
+            'best_row_name': None,
+            'best_row_full_metadata': None,
+            'num_rows_total': int(len(rows)),
+            'num_rows_considered': 0,
+            'num_invalid_rows': int(len(invalid_rows)),
+        }
+
+    if normalized_mode == 'max':
+        best_value = max(entry['metric_value'] for entry in valid_rows)
+    else:
+        best_value = min(entry['metric_value'] for entry in valid_rows)
+    tied = [
+        entry
+        for entry in valid_rows
+        if abs(float(entry['metric_value']) - float(best_value)) <= 1e-12
+    ]
+    best_row = sorted(
+        tied,
+        key=lambda entry: (
+            str(entry.get('row_name', '')),
+            int(entry.get('row_index', 0)),
+        ),
+    )[0]
+    return {
+        'metric_name': normalized_metric_name,
+        'mode': normalized_mode,
+        'best_value': float(best_value),
+        'best_row_name': str(best_row.get('row_name', '')),
+        'best_row_full_metadata': dict(best_row),
+        'num_rows_total': int(len(rows)),
+        'num_rows_considered': int(len(valid_rows)),
+        'num_invalid_rows': int(len(invalid_rows)),
+    }
+
+
 class Evaluator:
     def __init__(self, img_loader, txt_loader, args):
         self.img_loader = img_loader
@@ -73,6 +228,9 @@ class Evaluator:
         self.logger = logging.getLogger('pas.eval')
         self.args = args
         self.latest_metrics = {}
+        self.latest_authority = {}
+        self.latest_eval_rows = []
+
         requested_metrics = tuple(getattr(args, 'retrieval_metrics', SUPPORTED_RETRIEVAL_METRICS) or SUPPORTED_RETRIEVAL_METRICS)
         unknown_metrics = sorted(set(requested_metrics) - set(SUPPORTED_RETRIEVAL_METRICS))
         if unknown_metrics:
@@ -81,147 +239,13 @@ class Evaluator:
                 f'Allowed values: {list(SUPPORTED_RETRIEVAL_METRICS)}'
             )
         self.requested_metrics = requested_metrics
-        self.retrieval_scorer = str(getattr(args, 'retrieval_scorer', 'exact')).lower()
-        if self.retrieval_scorer not in SUPPORTED_RETRIEVAL_SCORERS:
-            raise ValueError(
-                f'Unsupported evaluation.retrieval_scorer={self.retrieval_scorer!r}. '
-                f'Allowed values: {list(SUPPORTED_RETRIEVAL_SCORERS)}'
-            )
-        if (not bool(getattr(args, 'use_prototype_branch', False)) or not bool(getattr(args, 'use_prototype_bank', True))) and self.retrieval_scorer == 'approximate':
-            self.logger.warning(
-                'evaluation.retrieval_scorer=approximate requires an active prototype bank; falling back to exact retrieval scoring.'
-            )
-            self.retrieval_scorer = 'exact'
-        (
-            self.default_fusion_lambda_host,
-            self.default_fusion_lambda_prototype,
-        ) = self._resolve_default_fusion_weights()
-        self.eval_fusion_subsets = self._resolve_fusion_eval_subsets()
-        self.selection_from_eval_subsets = self._should_select_from_eval_subsets()
-        self.eval_subset_selection_row_names = self._resolve_eval_subset_selection_row_names()
-
-    @staticmethod
-    def _pair_close(lhs: float, rhs: float, tol: float = 1e-6) -> bool:
-        return abs(float(lhs) - float(rhs)) <= tol
-
-    @classmethod
-    def _pair_key(cls, lambda_host: float, lambda_prototype: float) -> Tuple[int, int]:
-        return (int(round(float(lambda_host) * 1_000_000)), int(round(float(lambda_prototype) * 1_000_000)))
-
-    @classmethod
-    def _validate_unit_subset_pair(cls, lambda_host: float, lambda_prototype: float, field_name: str) -> None:
-        if lambda_host < 0.0 or lambda_host > 1.0:
-            raise ValueError(f'{field_name}.lambda_host must be within [0, 1], got {lambda_host}.')
-        if lambda_prototype < 0.0 or lambda_prototype > 1.0:
-            raise ValueError(f'{field_name}.lambda_prototype must be within [0, 1], got {lambda_prototype}.')
-        pair_sum = lambda_host + lambda_prototype
-        if not cls._pair_close(pair_sum, 1.0):
-            raise ValueError(f'{field_name}.lambda_host + {field_name}.lambda_prototype must equal 1.0, got {pair_sum}.')
-
-    def _resolve_default_fusion_weights(self) -> Tuple[float, float]:
-        lambda_host = getattr(self.args, 'fusion_lambda_host', None)
-        lambda_prototype = getattr(self.args, 'fusion_lambda_prototype', None)
-        if lambda_host is None and lambda_prototype is None:
-            legacy_coefficient = getattr(self.args, 'fusion_coefficient', None)
-            if legacy_coefficient is not None:
-                return 1.0, float(legacy_coefficient)
-            if bool(getattr(self.args, 'use_prototype_branch', False)):
-                return 1.0, 1.0
-            return 1.0, 0.0
-        if lambda_host is None:
-            return 1.0 - float(lambda_prototype), float(lambda_prototype)
-        if lambda_prototype is None:
-            return float(lambda_host), 1.0 - float(lambda_host)
-        return float(lambda_host), float(lambda_prototype)
-
-    def _resolve_fusion_eval_subsets(self) -> List[Dict[str, object]]:
-        raw_subsets = getattr(self.args, 'fusion_eval_subsets', None)
-        if raw_subsets is None:
-            return []
-        if not isinstance(raw_subsets, list):
-            raise ValueError('fusion_eval_subsets must be a list of subset mappings.')
-        normalized = []
-        for subset_index, subset in enumerate(raw_subsets):
-            field_name = f'fusion_eval_subsets[{subset_index}]'
-            if not isinstance(subset, dict):
-                raise ValueError(f'{field_name} must be a mapping.')
-            if 'lambda_host' not in subset or 'lambda_prototype' not in subset:
-                raise ValueError(f'{field_name} must include lambda_host and lambda_prototype.')
-            lambda_host = float(subset['lambda_host'])
-            lambda_prototype = float(subset['lambda_prototype'])
-            self._validate_unit_subset_pair(lambda_host, lambda_prototype, field_name=field_name)
-            subset_name = subset.get('name')
-            if subset_name is not None and not isinstance(subset_name, str):
-                raise ValueError(f'{field_name}.name must be a string when provided.')
-            normalized.append(
-                {
-                    'name': subset_name.strip() if isinstance(subset_name, str) else None,
-                    'lambda_host': lambda_host,
-                    'lambda_prototype': lambda_prototype,
-                }
-            )
-        return normalized
-
-    @staticmethod
-    def _metric_slug(value: str) -> str:
-        normalized = re.sub(r'[^a-zA-Z0-9]+', '_', str(value).strip().lower()).strip('_')
-        return normalized or 'row'
-
-    @classmethod
-    def _is_host_only_selection_row(cls, task_name: object) -> bool:
-        label = str(task_name or '').strip().lower()
-        if not label:
-            return False
-        # Exclude host-only labels (e.g., "host-t2i", "host_only-t2i", "host-t2i out").
-        if re.match(r'^host(?:[-_\s]*only)?(?:[-_\s]*t2i)?(?:\b|[-_\s].*)$', label):
-            return True
-        # Exclude explicit fusion labels that reduce to host-only behavior.
-        compact = re.sub(r'\s+', '', label)
-        if re.match(
-            r'^host\([0-9]*\.?[0-9]+\)\+prototype\((?:0|0\.0+)\)-t2i(?:[-_a-z0-9]*)$',
-            compact,
-        ):
-            return True
-        return False
-
-    @classmethod
-    def _is_pas_selection_row(cls, task_name: object) -> bool:
-        label = str(task_name or '').strip().lower()
-        if not label:
-            return False
-        return bool(re.match(r'^pas[-_\s]*t2i(?:\b|[-_\s].*)?$', label))
-
-    def _should_select_from_eval_subsets(self) -> bool:
-        config_data = getattr(self.args, 'config_data', None)
-        if not isinstance(config_data, dict):
-            return False
-        fusion_cfg = config_data.get('fusion')
-        if not isinstance(fusion_cfg, dict):
-            return False
-        has_explicit_lambda = ('lambda_host' in fusion_cfg) or ('lambda_prototype' in fusion_cfg)
-        return (not has_explicit_lambda) and bool(self.eval_fusion_subsets)
-
-    def _resolve_eval_subset_selection_row_names(self) -> set:
-        names = set()
-        for spec in self.eval_fusion_subsets:
-            lambda_host = float(spec['lambda_host'])
-            lambda_prototype = float(spec['lambda_prototype'])
-            row_name = spec.get('name') or self._format_fusion_row_name(lambda_host, lambda_prototype)
-            row_name = str(row_name).strip() or self._format_fusion_row_name(lambda_host, lambda_prototype)
-            if not row_name.endswith('-t2i'):
-                row_name = f'{row_name}-t2i'
-            names.add(row_name)
-        return names
-
-    @classmethod
-    def _format_fusion_row_name(cls, lambda_host: float, lambda_prototype: float) -> str:
-        if cls._pair_close(lambda_host, 1.0) and cls._pair_close(lambda_prototype, 0.0):
-            return 'host-t2i'
-        if cls._pair_close(lambda_host, 0.0) and cls._pair_close(lambda_prototype, 1.0):
-            return 'prototype-t2i'
-        if cls._pair_close(lambda_host + lambda_prototype, 1.0):
-            return f'host+prototype({lambda_prototype:.2f})-t2i'
-        return f'host({lambda_host:.2f})+prototype({lambda_prototype:.2f})-t2i'
+        self.host_type = str(getattr(args, 'host_type', 'clip')).lower()
+        self.itself_lambda_ablation_enabled = bool(getattr(args, 'itself_lambda_ablation_enabled', False))
+        self.itself_lambda_ablation_include_default = bool(
+            getattr(args, 'itself_lambda_ablation_include_default', True)
+        )
+        configured_alphas = getattr(args, 'itself_lambda_ablation_alphas', None)
+        self.itself_lambda_ablation_alphas = [float(alpha) for alpha in configured_alphas] if configured_alphas else []
 
     def _concat_feature_batches(self, batches):
         first = batches[0]
@@ -232,24 +256,6 @@ class Evaluator:
         if isinstance(first, (list, tuple)):
             return type(first)(self._concat_feature_batches(list(items)) for items in zip(*batches))
         return first
-
-    def _feature_batch_size(self, features):
-        if isinstance(features, torch.Tensor):
-            if features.ndim == 0:
-                raise ValueError('Feature tensors must have a batch dimension.')
-            return int(features.size(0))
-        if isinstance(features, dict):
-            if not features:
-                raise ValueError('Feature dictionaries must not be empty.')
-            for value in features.values():
-                try:
-                    return self._feature_batch_size(value)
-                except (TypeError, ValueError):
-                    continue
-            raise ValueError('Feature dictionaries must contain at least one batched tensor value.')
-        if isinstance(features, (list, tuple)) and features:
-            return self._feature_batch_size(features[0])
-        raise TypeError(f'Unsupported feature container type: {type(features)}')
 
     def _feature_to_cpu(self, value):
         if isinstance(value, torch.Tensor):
@@ -273,88 +279,6 @@ class Evaluator:
             return tuple(self._feature_to_device(item, device) for item in value)
         return value
 
-    def _positive_gallery_structure(self, text_ids: torch.Tensor, image_ids: torch.Tensor):
-        positive_mask = text_ids.view(-1, 1).eq(image_ids.view(1, -1))
-        positive_counts = positive_mask.sum(dim=1)
-        if not positive_mask.any(dim=1).all():
-            missing = (~positive_mask.any(dim=1)).nonzero(as_tuple=False).view(-1).tolist()
-            preview = missing[:10]
-            suffix = '' if len(missing) <= 10 else '...'
-            raise ValueError(
-                'Each text query must have at least one positive gallery image. '
-                f'Missing positives for query indices {preview}{suffix}.'
-            )
-        first_positive = positive_mask.to(dtype=torch.int64).argmax(dim=1)
-        return positive_mask, positive_counts, first_positive
-
-    def _compute_eval_debug_metrics(self, model, similarity, text_ids, image_ids, image_features, text_features):
-        if not bool(getattr(self.args, 'log_debug_metrics', True)):
-            return {}
-        metrics = {}
-        core_model = model.module if hasattr(model, 'module') else model
-        similarity = similarity.detach().float().cpu()
-        positive_mask, positive_counts, first_positive = self._positive_gallery_structure(text_ids, image_ids)
-        metrics['eval_positive_gallery_count_min'] = float(positive_counts.min().item())
-        metrics['eval_positive_gallery_count_mean'] = float(positive_counts.float().mean().item())
-
-        logit_scale_value = None
-        if hasattr(core_model, 'prototype_head') and hasattr(core_model.prototype_head, 'losses'):
-            logit_scale = core_model.prototype_head.losses.get_logit_scale().detach().float().cpu()
-            retrieval_temperature = core_model.prototype_head.losses.get_retrieval_temperature().detach().float().cpu()
-            logit_scale_value = float(logit_scale.item())
-            metrics['eval_logit_scale'] = logit_scale_value
-            metrics['eval_retrieval_temperature'] = float(retrieval_temperature.item())
-
-        cosine_similarity = similarity
-        if logit_scale_value is not None and logit_scale_value > 0.0:
-            cosine_similarity = similarity / logit_scale_value
-
-        positive_scores = cosine_similarity.gather(1, first_positive.view(-1, 1)).squeeze(1)
-        negative_mask = ~positive_mask
-        if negative_mask.any(dim=1).all():
-            hardest_negative = cosine_similarity.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
-        else:
-            hardest_negative = torch.zeros_like(positive_scores)
-        metrics['eval_positive_exact_cosine_mean'] = float(positive_scores.mean().item())
-        metrics['eval_hardest_negative_exact_cosine_mean'] = float(hardest_negative.mean().item())
-        metrics['eval_exact_margin_mean'] = float((positive_scores - hardest_negative).mean().item())
-
-        image_projected = None
-        if isinstance(image_features, dict):
-            image_projected = image_features.get('prototype_image_projected', image_features.get('image_projected'))
-        if isinstance(image_projected, torch.Tensor):
-            image_norms = image_projected.detach().float().norm(dim=-1).cpu()
-            metrics['eval_image_projected_norm_mean'] = float(image_norms.mean().item())
-            metrics['eval_image_projected_norm_std'] = float(image_norms.std(unbiased=False).item())
-
-        if self.retrieval_scorer == 'exact' and isinstance(image_projected, torch.Tensor):
-            required_text_keys = ('text_token_states', 'token_ids')
-            if all(isinstance(text_features.get(key), torch.Tensor) for key in required_text_keys):
-                with torch.no_grad():
-                    positive_indices_device = first_positive.to(device=image_projected.device, dtype=torch.long)
-                    positive_summaries = image_features['summary'].index_select(0, positive_indices_device)
-                    positive_image_projected = image_projected.index_select(0, positive_indices_device)
-                    exact_outputs = core_model.prototype_head.pool_text_with_summary(
-                        positive_summaries,
-                        text_features['text_token_states'],
-                        text_features['token_ids'],
-                        attention_mask=text_features.get('attention_mask'),
-                        special_token_positions=text_features.get('special_token_positions'),
-                        return_debug=False,
-                    )
-                exact_raw_norms = exact_outputs['text_projected_raw'].detach().float().norm(dim=-1).cpu()
-                exact_unit_norms = exact_outputs['text_projected'].detach().float().norm(dim=-1).cpu()
-                paired_cosine = (
-                    F.normalize(positive_image_projected.detach().float(), dim=-1)
-                    * F.normalize(exact_outputs['text_projected'].detach().float(), dim=-1)
-                ).sum(dim=-1).cpu()
-                metrics['eval_positive_exact_text_embed_norm_mean'] = float(exact_raw_norms.mean().item())
-                metrics['eval_positive_exact_text_embed_norm_std'] = float(exact_raw_norms.std(unbiased=False).item())
-                metrics['eval_positive_exact_text_embed_unit_norm_mean'] = float(exact_unit_norms.mean().item())
-                metrics['eval_positive_exact_pair_cosine_mean'] = float(paired_cosine.mean().item())
-
-        return build_validation_debug_metrics(metrics)
-
     def _check_similarity_matrix(self, similarity: torch.Tensor, expected_shape: Tuple[int, int], field_name: str) -> torch.Tensor:
         if not isinstance(similarity, torch.Tensor):
             raise TypeError(f'{field_name} must be a tensor.')
@@ -367,104 +291,45 @@ class Evaluator:
             raise FloatingPointError(f'{field_name} contains NaN or Inf values after evaluation.')
         return similarity.float().cpu()
 
-    def _fuse_from_components(
-        self,
-        model,
-        host_similarity: torch.Tensor,
-        prototype_similarity: Optional[torch.Tensor],
-        lambda_host: float,
-        lambda_prototype: float,
-    ) -> torch.Tensor:
+    def _compute_eval_debug_metrics(self, model, similarity, text_ids, image_ids, image_features):
+        if not bool(getattr(self.args, 'log_debug_metrics', True)):
+            return {}
+        metrics = {}
         core_model = model.module if hasattr(model, 'module') else model
-        if hasattr(core_model, 'fuse_retrieval_similarity'):
-            return core_model.fuse_retrieval_similarity(
-                host_similarity=host_similarity,
-                prototype_similarity=prototype_similarity,
-                lambda_host=lambda_host,
-                lambda_prototype=lambda_prototype,
-            ).float()
+        similarity = similarity.detach().float().cpu()
 
-        if prototype_similarity is None:
-            if abs(lambda_prototype) > 1e-12:
-                raise RuntimeError(
-                    'prototype_similarity is unavailable for this model, but lambda_prototype is non-zero '
-                    f'({lambda_prototype}).'
-                )
-            return (lambda_host * host_similarity).float()
+        positive_mask = text_ids.view(-1, 1).eq(image_ids.view(1, -1))
+        positive_counts = positive_mask.sum(dim=1)
+        metrics['eval_positive_gallery_count_min'] = float(positive_counts.min().item())
+        metrics['eval_positive_gallery_count_mean'] = float(positive_counts.float().mean().item())
 
-        if host_similarity.shape != prototype_similarity.shape:
-            raise ValueError('Host and prototype similarities must have identical shapes for fusion sweep.')
-        return ((lambda_host * host_similarity) + (lambda_prototype * prototype_similarity)).float()
+        first_positive = positive_mask.to(dtype=torch.int64).argmax(dim=1)
+        positive_scores = similarity.gather(1, first_positive.view(-1, 1)).squeeze(1)
+        negative_mask = ~positive_mask
+        hardest_negative = similarity.masked_fill(~negative_mask, float('-inf')).max(dim=1).values
+        metrics['eval_positive_exact_cosine_mean'] = float(positive_scores.mean().item())
+        metrics['eval_hardest_negative_exact_cosine_mean'] = float(hardest_negative.mean().item())
+        metrics['eval_exact_margin_mean'] = float((positive_scores - hardest_negative).mean().item())
 
-    def _build_similarity_rows(
-        self,
-        model,
-        host_similarity: Optional[torch.Tensor],
-        prototype_similarity: Optional[torch.Tensor],
-        default_similarity: torch.Tensor,
-    ) -> List[Tuple[str, torch.Tensor]]:
-        rows: List[Tuple[str, torch.Tensor]] = [('pas-t2i', default_similarity.float().cpu())]
-        if not isinstance(host_similarity, torch.Tensor):
-            return rows
+        image_projected = None
+        if isinstance(image_features, dict):
+            image_projected = image_features.get('host_image_projected', image_features.get('image_projected'))
+        if isinstance(image_projected, torch.Tensor):
+            image_norms = image_projected.detach().float().norm(dim=-1).cpu()
+            metrics['eval_image_projected_norm_mean'] = float(image_norms.mean().item())
+            metrics['eval_image_projected_norm_std'] = float(image_norms.std(unbiased=False).item())
 
-        host_similarity = host_similarity.float().cpu()
-        prototype_similarity = prototype_similarity.float().cpu() if isinstance(prototype_similarity, torch.Tensor) else None
+        if hasattr(core_model, 'host_head') and hasattr(core_model.host_head, 'losses'):
+            logit_scale = core_model.host_head.losses.get_logit_scale().detach().float().cpu()
+            retrieval_temperature = core_model.host_head.losses.get_retrieval_temperature().detach().float().cpu()
+            metrics['eval_logit_scale'] = float(logit_scale.item())
+            metrics['eval_retrieval_temperature'] = float(retrieval_temperature.item())
 
-        candidate_specs: List[Dict[str, object]] = [
-            {'name': 'host-t2i', 'lambda_host': 1.0, 'lambda_prototype': 0.0},
-        ]
-        if prototype_similarity is not None:
-            candidate_specs.append({'name': 'prototype-t2i', 'lambda_host': 0.0, 'lambda_prototype': 1.0})
-        candidate_specs.extend(self.eval_fusion_subsets)
-        candidate_specs.append(
-            {
-                'name': None,
-                'lambda_host': self.default_fusion_lambda_host,
-                'lambda_prototype': self.default_fusion_lambda_prototype,
-            }
-        )
-
-        emitted_names = {'pas-t2i'}
-        emitted_pairs = set()
-        for spec in candidate_specs:
-            lambda_host = float(spec['lambda_host'])
-            lambda_prototype = float(spec['lambda_prototype'])
-            pair_key = self._pair_key(lambda_host, lambda_prototype)
-            if pair_key in emitted_pairs:
-                continue
-            if prototype_similarity is None and abs(lambda_prototype) > 1e-12:
-                self.logger.warning(
-                    'Skipping fusion subset (lambda_host=%.4f, lambda_prototype=%.4f): prototype similarity is unavailable.',
-                    lambda_host,
-                    lambda_prototype,
-                )
-                continue
-
-            similarity = self._fuse_from_components(
-                model=model,
-                host_similarity=host_similarity,
-                prototype_similarity=prototype_similarity,
-                lambda_host=lambda_host,
-                lambda_prototype=lambda_prototype,
-            ).cpu()
-            row_name = spec.get('name') or self._format_fusion_row_name(lambda_host, lambda_prototype)
-            row_name = str(row_name).strip() or self._format_fusion_row_name(lambda_host, lambda_prototype)
-            if not row_name.endswith('-t2i'):
-                row_name = f'{row_name}-t2i'
-            if row_name in emitted_names:
-                row_name = self._format_fusion_row_name(lambda_host, lambda_prototype)
-            if row_name in emitted_names:
-                row_name = f'{row_name}-{len(emitted_names)}'
-            rows.append((row_name, similarity))
-            emitted_pairs.add(pair_key)
-            emitted_names.add(row_name)
-        return rows
+        return build_validation_debug_metrics(metrics)
 
     def _compute_similarity(self, model):
         model = model.eval()
         device = next(model.parameters()).device
-        if bool(getattr(self.args, 'amp', False)) and not is_cuda_device(device):
-            raise ValueError('training.amp=true requires a CUDA device.')
 
         text_ids, image_ids = [], []
         text_batches, image_batches = [], []
@@ -473,10 +338,7 @@ class Evaluator:
             caption = caption.to(device)
             with torch.no_grad():
                 with build_autocast_context(self.args, device):
-                    if self.retrieval_scorer == 'approximate':
-                        text_features = model.encode_text_basis_for_retrieval(caption)
-                    else:
-                        text_features = model.encode_text_for_retrieval(caption)
+                    text_features = model.encode_text_for_retrieval(caption)
             text_ids.append(pid.view(-1))
             text_batches.append(self._feature_to_cpu(text_features))
 
@@ -493,162 +355,124 @@ class Evaluator:
         text_features = self._concat_feature_batches(text_batches)
         image_features = self._concat_feature_batches(image_batches)
 
-        if self._feature_batch_size(text_features) != int(text_ids.numel()):
-            raise ValueError('Text feature concatenation produced a batch size that does not match text_ids ordering.')
-        if self._feature_batch_size(image_features) != int(image_ids.numel()):
-            raise ValueError('Image feature concatenation produced a batch size that does not match image_ids ordering.')
-
         text_features = self._feature_to_device(text_features, device)
         image_features = self._feature_to_device(image_features, device)
 
-        core_model = model.module if hasattr(model, 'module') else model
-        host_similarity = None
-        prototype_similarity = None
         with torch.no_grad():
             with build_autocast_context(self.args, device):
-                if self.retrieval_scorer == 'approximate':
-                    if hasattr(core_model, 'compute_approximate_retrieval_similarity_components'):
-                        host_similarity, prototype_similarity = core_model.compute_approximate_retrieval_similarity_components(
-                            image_features,
-                            text_features,
-                        )
-                        similarity = self._fuse_from_components(
-                            model=model,
-                            host_similarity=host_similarity,
-                            prototype_similarity=prototype_similarity,
-                            lambda_host=self.default_fusion_lambda_host,
-                            lambda_prototype=self.default_fusion_lambda_prototype,
-                        )
-                    else:
-                        similarity = model.compute_approximate_retrieval_similarity(image_features, text_features)
-                else:
-                    if hasattr(core_model, 'compute_retrieval_similarity_components'):
-                        host_similarity, prototype_similarity = core_model.compute_retrieval_similarity_components(
-                            image_features,
-                            text_features,
-                        )
-                        similarity = self._fuse_from_components(
-                            model=model,
-                            host_similarity=host_similarity,
-                            prototype_similarity=prototype_similarity,
-                            lambda_host=self.default_fusion_lambda_host,
-                            lambda_prototype=self.default_fusion_lambda_prototype,
-                        )
-                    else:
-                        similarity = model.compute_retrieval_similarity(image_features, text_features)
+                similarity = model.compute_retrieval_similarity(image_features, text_features)
 
         expected_shape = (int(text_ids.numel()), int(image_ids.numel()))
-        similarity = self._check_similarity_matrix(similarity, expected_shape, field_name='Retrieval similarity')
-        if isinstance(host_similarity, torch.Tensor):
-            host_similarity = self._check_similarity_matrix(host_similarity, expected_shape, field_name='Host retrieval similarity')
-        if isinstance(prototype_similarity, torch.Tensor):
-            prototype_similarity = self._check_similarity_matrix(prototype_similarity, expected_shape, field_name='Prototype retrieval similarity')
+        similarity = self._check_similarity_matrix(similarity, expected_shape, field_name='Host retrieval similarity')
+        debug_metrics = self._compute_eval_debug_metrics(model, similarity, text_ids, image_ids, image_features)
+        return similarity, text_ids, image_ids, debug_metrics, image_features, text_features
 
-        similarity_rows = self._build_similarity_rows(
-            model=model,
-            host_similarity=host_similarity,
-            prototype_similarity=prototype_similarity,
-            default_similarity=similarity,
+    def _itself_ablation_active(self) -> bool:
+        return (
+            self.host_type == 'itself'
+            and self.itself_lambda_ablation_enabled
         )
-        debug_metrics = self._compute_eval_debug_metrics(model, similarity, text_ids, image_ids, image_features, text_features)
-        return similarity_rows, text_ids, image_ids, debug_metrics
+
+    @staticmethod
+    def _normalize_similarity(text_embeddings: torch.Tensor, image_embeddings: torch.Tensor) -> torch.Tensor:
+        text_embeddings = F.normalize(text_embeddings.float(), p=2, dim=1)
+        image_embeddings = F.normalize(image_embeddings.float(), p=2, dim=1)
+        return text_embeddings @ image_embeddings.t()
+
+    def _build_itself_ablation_rows(
+        self,
+        similarity_default: torch.Tensor,
+        image_features: Dict[str, object],
+        text_features: Dict[str, object],
+        text_ids: torch.Tensor,
+        image_ids: torch.Tensor,
+    ):
+        rows = [get_metrics(similarity=similarity_default, qids=text_ids, gids=image_ids, name=BEST_ROW_TASK_NAME)]
+        global_image = image_features.get('global_image_embedding') if isinstance(image_features, dict) else None
+        global_text = text_features.get('global_text_embedding') if isinstance(text_features, dict) else None
+        grab_image = image_features.get('grab_image_embedding') if isinstance(image_features, dict) else None
+        grab_text = text_features.get('grab_text_embedding') if isinstance(text_features, dict) else None
+
+        if not (isinstance(global_image, torch.Tensor) and isinstance(global_text, torch.Tensor)):
+            return rows
+
+        sims_global = self._normalize_similarity(global_text, global_image).float().cpu()
+        rows.append(get_metrics(similarity=sims_global, qids=text_ids, gids=image_ids, name='global-t2i'))
+
+        if not (isinstance(grab_image, torch.Tensor) and isinstance(grab_text, torch.Tensor)):
+            return rows
+
+        sims_grab = self._normalize_similarity(grab_text, grab_image).float().cpu()
+        rows.append(get_metrics(similarity=sims_grab, qids=text_ids, gids=image_ids, name='grab-t2i'))
+
+        # Static alpha-combination sweeps are intentionally removed.
+        # BEST_ROW_TASK_NAME will be rebound to the best-performing row each eval epoch.
+        return rows
 
     def eval(self, model):
-        similarity_rows, text_ids, image_ids, debug_metrics = self._compute_similarity(model)
-        metrics_rows = [
-            get_metrics(similarity=row_similarity, qids=text_ids, gids=image_ids, name=row_name)
-            for row_name, row_similarity in similarity_rows
-        ]
-        if not metrics_rows:
-            raise RuntimeError('Evaluation produced no similarity rows.')
-        selected_source_row = None
-        if self.selection_from_eval_subsets and self.eval_subset_selection_row_names:
-            subset_rows = [
-                row
-                for row in metrics_rows
-                if str(row.get('task', '')).strip() in self.eval_subset_selection_row_names
-                and not self._is_host_only_selection_row(row.get('task', ''))
-            ]
-            if subset_rows:
-                # When default fusion lambdas are omitted from config, select checkpoint/current-R1 from eval_subsets.
-                metrics = max(subset_rows, key=lambda row: float(row['R1']))
-                selected_source_row = str(metrics.get('task', '')).strip()
-                for row_metrics in metrics_rows:
-                    if self._is_pas_selection_row(row_metrics.get('task', '')):
-                        for metric_name in SUPPORTED_RETRIEVAL_METRICS:
-                            row_metrics[metric_name] = float(metrics[metric_name])
-                        break
-            else:
-                eligible_rows = [row for row in metrics_rows if not self._is_host_only_selection_row(row.get('task', ''))]
-                if not eligible_rows:
-                    eligible_rows = metrics_rows
-                preferred_pas_rows = [row for row in eligible_rows if self._is_pas_selection_row(row.get('task', ''))]
-                if preferred_pas_rows:
-                    metrics = max(preferred_pas_rows, key=lambda row: float(row['R1']))
-                else:
-                    metrics = max(eligible_rows, key=lambda row: float(row['R1']))
-                selected_source_row = str(metrics.get('task', '')).strip()
+        similarity, text_ids, image_ids, debug_metrics, image_features, text_features = self._compute_similarity(model)
+        if self._itself_ablation_active():
+            metric_rows = self._build_itself_ablation_rows(
+                similarity_default=similarity,
+                image_features=image_features,
+                text_features=text_features,
+                text_ids=text_ids,
+                image_ids=image_ids,
+            )
         else:
-            # Select checkpoint/current-R1 metric row by:
-            # 1) excluding host-only rows,
-            # 2) preferring pas-t2i when available,
-            # 3) otherwise taking the best remaining row by R1.
-            eligible_rows = [row for row in metrics_rows if not self._is_host_only_selection_row(row.get('task', ''))]
-            if not eligible_rows:
-                eligible_rows = metrics_rows
-            preferred_pas_rows = [row for row in eligible_rows if self._is_pas_selection_row(row.get('task', ''))]
-            if preferred_pas_rows:
-                metrics = max(preferred_pas_rows, key=lambda row: float(row['R1']))
-            else:
-                metrics = max(eligible_rows, key=lambda row: float(row['R1']))
-            selected_source_row = str(metrics.get('task', '')).strip()
+            metric_rows = [get_metrics(similarity=similarity, qids=text_ids, gids=image_ids, name=BEST_ROW_TASK_NAME)]
+        best_row = max(metric_rows, key=lambda row: float(row['R1']))
+        metrics = dict(best_row)
+        metrics['task'] = BEST_ROW_TASK_NAME
+        metrics['source_task'] = best_row['task']
 
-        selected_display_row = metrics['task']
-        if self.selection_from_eval_subsets and self.eval_subset_selection_row_names:
-            if any(self._is_pas_selection_row(row.get('task', '')) for row in metrics_rows):
-                selected_display_row = 'pas-t2i'
+        row_by_task = {str(row.get('task', '')): dict(row) for row in metric_rows}
+        row_by_task[BEST_ROW_TASK_NAME] = dict(metrics)
+        metric_rows_with_host = list(row_by_task.values())
+
+        authority_context: Dict[str, object] = {
+            'display_row': BEST_ROW_TASK_NAME,
+            'source_row': str(best_row['task']),
+            'mismatch': False,
+            'selected_source_role': 'host',
+            'candidates': {'host': BEST_ROW_TASK_NAME},
+            'row_roles': {str(row['task']): 'host' for row in metric_rows_with_host},
+            'row_metrics': {
+                row['task']: {
+                    metric_name: float(row[metric_name])
+                    for metric_name in SUPPORTED_RETRIEVAL_METRICS
+                }
+                for row in metric_rows_with_host
+            },
+        }
+        self.latest_authority = authority_context
+        self.latest_eval_rows = []
+        for row in metric_rows_with_host:
+            row_copy = {
+                str(metric_key): (float(metric_value) if metric_key in SUPPORTED_RETRIEVAL_METRICS else metric_value)
+                for metric_key, metric_value in row.items()
+            }
+            row_copy['bucket'] = str(authority_context['row_roles'].get(row['task'], 'host'))
+            self.latest_eval_rows.append(row_copy)
 
         table = PrettyTable(['task'] + list(self.requested_metrics))
-        for row_metrics in metrics_rows:
-            table.add_row([row_metrics['task']] + [row_metrics[metric_name] for metric_name in self.requested_metrics])
+        for row in metric_rows_with_host:
+            table.add_row([row['task']] + [row[metric_name] for metric_name in self.requested_metrics])
         for metric_name in self.requested_metrics:
             table.custom_format[metric_name] = lambda _, value: f'{value:.2f}'
 
-        retrieval_metrics = {
-            metric_name: metrics[metric_name]
-            for metric_name in self.requested_metrics
-        }
+        retrieval_metrics = {metric_name: best_row[metric_name] for metric_name in self.requested_metrics}
         self.latest_metrics = build_validation_retrieval_metrics(retrieval_metrics)
-        self.latest_metrics['val/top1'] = metrics['R1']
-        self.latest_metrics['val/top1_row'] = selected_display_row
-        self.latest_metrics['val/top1_source_row'] = selected_source_row
-        for row_metrics in metrics_rows:
-            row_slug = self._metric_slug(row_metrics['task'])
-            for metric_name in self.requested_metrics:
-                self.latest_metrics[f'val/retrieval_sweep/{row_slug}/{metric_name}'] = float(row_metrics[metric_name])
+        self.latest_metrics['val/top1'] = best_row['R1']
+        self.latest_metrics['val/top1_row'] = BEST_ROW_TASK_NAME
+        self.latest_metrics['val/top1_source_row'] = best_row['task']
+        self.latest_metrics['val/top1_display_row'] = BEST_ROW_TASK_NAME
+        self.latest_metrics['val/authority/selected_source_role'] = 'host'
+        self.latest_metrics['val/authority/selected_authority_row'] = BEST_ROW_TASK_NAME
+        self.latest_metrics['val/authority/display_source_mismatch'] = 0.0
+        self.latest_metrics['val/authority/host_candidate_row'] = BEST_ROW_TASK_NAME
+        self.latest_metrics['val/authority/prototype_candidate_row'] = None
         self.latest_metrics.update(debug_metrics)
 
         self.logger.info('\n' + str(table))
-        if debug_metrics:
-            positive_cos = debug_metrics.get('val/geometry/exact_positive_cosine_mean')
-            hardest_negative = debug_metrics.get('val/geometry/exact_hardest_negative_cosine_mean')
-            margin = debug_metrics.get('val/geometry/exact_margin_mean')
-            if positive_cos is not None and hardest_negative is not None and margin is not None:
-                self.logger.info(
-                    'Retrieval sanity: positive_exact_cos=%.4f hardest_negative_exact_cos=%.4f margin=%.4f',
-                    positive_cos,
-                    hardest_negative,
-                    margin,
-                )
-        self.logger.info('\ncurrent R1 = %s (%s)', str(metrics['R1']), selected_display_row)
-        if selected_source_row and selected_source_row != selected_display_row:
-            self.logger.info('current R1 source row = %s', selected_source_row)
-        return metrics['R1']
-
-
-
-
-
-
-
-
+        return best_row['R1']

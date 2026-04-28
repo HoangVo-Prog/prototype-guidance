@@ -6,7 +6,6 @@ import yaml
 
 from utils.freeze_schedule import parse_freeze_schedule_config
 from utils.module_group_registry import CHECKPOINT_GROUPS
-from utils.precision import AMP_DTYPE_ALIASES, BACKBONE_PRECISION_ALIASES, PROTOTYPE_PRECISION_ALIASES
 
 
 PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
@@ -18,6 +17,10 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'name'): 'model_name',
     ('model', 'variant'): 'model_variant',
     ('model', 'training_mode'): 'training_mode',
+    ('model', 'runtime_mode'): 'runtime_mode',
+    ('model', 'prototype_method_role'): 'prototype_method_role',
+    ('model', 'prototype_semantic_enabled'): 'prototype_semantic_enabled',
+    ('model', 'prototype_recompute_enabled'): 'prototype_recompute_enabled',
     ('model', 'pretrain_choice'): 'pretrain_choice',
     ('model', 'image_backbone'): 'image_backbone',
     ('model', 'text_backbone'): 'text_backbone',
@@ -28,8 +31,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'projector_type'): 'projector_type',
     ('model', 'normalize_projector_outputs'): 'normalize_projector_outputs',
     ('model', 'use_custom_projector'): 'use_custom_projector',
-    ('model', 'backbone_precision'): 'backbone_precision',
-    ('model', 'prototype_precision'): 'prototype_precision',
     ('model', 'temperature'): 'temperature',
     ('model', 'img_size'): 'img_size',
     ('model', 'stride_size'): 'stride_size',
@@ -41,7 +42,6 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('model', 'return_debug_outputs'): 'return_debug_outputs',
 
     ('host', 'type'): 'host_type',
-    ('host', 'freeze_projectors'): 'freeze_host_projectors',
     ('host', 'itself_loss_names'): 'itself_loss_names',
     ('host', 'itself_only_global'): 'itself_only_global',
     ('host', 'itself_select_ratio'): 'itself_select_ratio',
@@ -73,53 +73,63 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'local_routing_use_adapter'): 'prototype_local_routing_use_adapter',
     ('prototype', 'local_routing_adapter_dim'): 'prototype_local_routing_adapter_dim',
     ('prototype', 'local_routing_normalize_inputs'): 'prototype_local_routing_normalize_inputs',
-    ('prototype', 'use_host_deflated_input'): 'prototype_use_host_deflated_input',
     ('prototype', 'contextualization_enabled'): 'prototype_contextualization_enabled',
     ('prototype', 'contextualization_type'): 'prototype_contextualization_type',
     ('prototype', 'contextualization_residual'): 'prototype_contextualization_residual',
+    ('prototype', 'bank_source'): 'prototype_bank_source',
+    ('prototype', 'use_base_for_semantic_targets'): 'prototype_use_base_for_semantic_targets',
     ('prototype', 'normalize_for_self_interaction'): 'normalize_for_self_interaction',
     ('prototype', 'normalize_for_routing'): 'normalize_for_routing',
     ('prototype', 'dead_prototype_threshold'): 'prototype_dead_threshold',
 
-    ('fusion', 'enabled'): 'fusion_enabled',
-    ('fusion', 'lambda_host'): 'fusion_lambda_host',
-    ('fusion', 'lambda_prototype'): 'fusion_lambda_prototype',
-    ('fusion', 'eval_subsets'): 'fusion_eval_subsets',
-    ('fusion', 'coefficient_source'): 'fusion_coefficient_source',
+    ('semantic_structure', 'enabled'): 'semantic_structure_enabled',
+    ('semantic_structure', 'feature_space'): 'semantic_feature_space',
+    ('semantic_structure', 'pbt_enabled'): 'semantic_pbt_enabled',
+    ('semantic_structure', 'soft_target_enabled'): 'semantic_soft_target_enabled',
+    ('semantic_structure', 'target_temperature'): 'semantic_target_temperature',
+    ('semantic_structure', 'pred_temperature'): 'semantic_pred_temperature',
+    ('semantic_structure', 'recompute_schedule'): 'semantic_recompute_schedule',
+    ('semantic_structure', 'recompute_interval'): 'semantic_recompute_interval',
+    ('semantic_structure', 'min_cluster_count_for_pbt'): 'semantic_min_cluster_count_for_pbt',
+    ('semantic_structure', 'empty_cluster_policy'): 'semantic_empty_cluster_policy',
+    ('semantic_structure', 'text_teacher_source'): 'semantic_text_teacher_source',
+    ('semantic_structure', 'text_student_source'): 'semantic_text_student_source',
+    ('semantic_structure', 'image_student_source'): 'semantic_image_student_source',
+    ('semantic_structure', 'recompute_start_epoch'): 'semantic_recompute_start_epoch',
+    ('semantic_structure', 'recompute_start_step'): 'semantic_recompute_start_step',
+    ('semantic_structure', 'loss_ramp_start_epoch'): 'semantic_loss_ramp_start_epoch',
+    ('semantic_structure', 'loss_ramp_start_step'): 'semantic_loss_ramp_start_step',
+    ('semantic_structure', 'loss_ramp_epochs'): 'semantic_loss_ramp_epochs',
+    ('semantic_structure', 'loss_ramp_steps'): 'semantic_loss_ramp_steps',
+    ('semantic_structure', 'ramp_loss_diag'): 'semantic_ramp_loss_diag',
+    ('semantic_structure', 'ramp_loss_semantic_pbt'): 'semantic_ramp_loss_semantic_pbt',
+    ('semantic_structure', 'ramp_loss_semantic_hardneg_margin'): 'semantic_ramp_loss_semantic_hardneg_margin',
+    ('semantic_structure', 'ramp_loss_semantic_hosthard_weighted'): 'semantic_ramp_loss_semantic_hosthard_weighted',
+    ('semantic_structure', 'ramp_use_prototype'): 'semantic_ramp_use_prototype',
+
 
     ('objectives', 'objectives', 'use_host_loss'): 'use_host_loss',
-    ('objectives', 'objectives', 'use_loss_proxy_image'): 'use_loss_proxy_image',
-    ('objectives', 'objectives', 'use_loss_proxy_text'): 'use_loss_proxy_text',
-    ('objectives', 'objectives', 'use_loss_proxy_text_exact'): 'use_loss_proxy_text_exact',
-    ('objectives', 'objectives', 'use_loss_align'): 'use_loss_align',
-    ('objectives', 'objectives', 'use_loss_diag'): 'use_loss_dir',
-    ('objectives', 'objectives', 'use_loss_gap'): 'use_loss_gap',
-    ('objectives', 'objectives', 'use_loss_support'): 'use_loss_sup',
-    ('objectives', 'objectives', 'prototype_gap_margin'): 'prototype_gap_margin',
-    ('objectives', 'objectives', 'prototype_support_target'): 'prototype_support_target',
-    ('objectives', 'objectives', 'use_loss_ret'): 'use_loss_ret',
-    ('objectives', 'objectives', 'use_loss_weight_ret'): 'use_loss_weight_ret',
+    ('objectives', 'objectives', 'use_loss_diag'): 'use_loss_diag',
+    ('objectives', 'objectives', 'use_loss_semantic_pbt'): 'use_loss_semantic_pbt',
+    ('objectives', 'objectives', 'use_loss_semantic_hardneg_margin'): 'use_loss_semantic_hardneg_margin',
+    ('objectives', 'objectives', 'use_loss_semantic_hosthard_weighted'): 'use_loss_semantic_hosthard_weighted',
     ('objectives', 'objectives', 'retrieval_mode'): 'retrieval_mode',
-    ('objectives', 'objectives', 'weight_ret_margin_delta'): 'weight_ret_margin_delta',
-    ('objectives', 'objectives', 'weight_ret_tau'): 'weight_ret_tau',
-    ('objectives', 'objectives', 'weight_ret_detach_host'): 'weight_ret_detach_host',
-    ('objectives', 'objectives', 'weight_ret_normalize_mean_one'): 'weight_ret_normalize_mean_one',
     ('objectives', 'objectives', 'use_balancing_loss'): 'use_balancing_loss',
     ('objectives', 'objectives', 'use_diversity_loss'): 'use_diversity_loss',
 
     ('objectives', 'lambda', 'host'): 'lambda_host',
-    ('objectives', 'lambda', 'proxy'): 'lambda_proxy',
-    ('objectives', 'lambda', 'proxy_image'): 'lambda_proxy_image',
-    ('objectives', 'lambda', 'proxy_text'): 'lambda_proxy_text',
-    ('objectives', 'lambda', 'proxy_text_exact'): 'lambda_proxy_text_exact',
-    ('objectives', 'lambda', 'align'): 'lambda_align',
-    ('objectives', 'lambda', 'diag'): 'lambda_dir',
-    ('objectives', 'lambda', 'gap'): 'lambda_gap',
-    ('objectives', 'lambda', 'support'): 'lambda_sup',
-    ('objectives', 'lambda', 'ret'): 'lambda_ret',
-    ('objectives', 'lambda', 'weight_ret'): 'lambda_weight_ret',
+    ('objectives', 'lambda', 'diag'): 'lambda_diag',
+    ('objectives', 'lambda', 'semantic_pbt'): 'lambda_semantic_pbt',
+    ('objectives', 'lambda', 'semantic_hardneg_margin'): 'lambda_semantic_hardneg_margin',
+    ('objectives', 'lambda', 'semantic_hosthard_weighted'): 'lambda_semantic_hosthard_weighted',
     ('objectives', 'lambda', 'balance'): 'prototype_balance_loss_weight',
     ('objectives', 'lambda', 'diversity'): 'diversity_loss_weight',
+    ('objectives', 'semantic_hardneg_margin'): 'semantic_hardneg_margin',
+    ('objectives', 'semantic_hardneg_eps'): 'semantic_hardneg_eps',
+    ('objectives', 'semantic_hosthard_margin_ref'): 'semantic_hosthard_margin_ref',
+    ('objectives', 'semantic_hosthard_tau'): 'semantic_hosthard_tau',
+    ('objectives', 'semantic_hosthard_eps'): 'semantic_hosthard_eps',
+    ('objectives', 'semantic_hosthard_normalize_weights'): 'semantic_hosthard_normalize_weights',
 
     ('text_pooling', 'token_policy'): 'token_policy',
     ('text_pooling', 'scoring_type'): 'token_scoring_type',
@@ -134,9 +144,20 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'log_period'): 'log_period',
     ('training', 'eval_frequency'): 'eval_period',
     ('training', 'save_interval'): 'save_interval',
+    ('training', 'early_stopping_enabled'): 'early_stopping_enabled',
+    ('training', 'early_stopping_metric'): 'early_stopping_metric',
+    ('training', 'early_stopping_mode'): 'early_stopping_mode',
+    ('training', 'early_stopping_patience'): 'early_stopping_patience',
+    ('training', 'early_stopping_min_delta'): 'early_stopping_min_delta',
+    ('training', 'early_stopping_start_epoch'): 'early_stopping_start_epoch',
+    ('training', 'early_stopping_monitored_bucket'): 'early_stopping_monitored_bucket',
+    ('training', 'early_stopping_monitored_task_pattern'): 'early_stopping_monitored_task_pattern',
+    ('training', 'early_stopping_stop_on_nan'): 'early_stopping_stop_on_nan',
     ('training', 'prototype_selection_metric'): 'prototype_selection_metric',
     ('training', 'resume'): 'resume',
     ('training', 'resume_ckpt_file'): 'resume_ckpt_file',
+    ('training', 'resume_strict'): 'resume_strict',
+    ('training', 'resume_restore_rng'): 'resume_restore_rng',
     ('training', 'finetune'): 'finetune',
     ('training', 'pretrain'): 'pretrain',
     ('training', 'img_aug'): 'img_aug',
@@ -145,13 +166,15 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'num_instance'): 'num_instance',
     ('training', 'num_workers'): 'num_workers',
     ('training', 'training'): 'training',
+    ('training', 'freeze_host_backbone'): 'freeze_host_backbone',
+    ('training', 'freeze_host_retrieval'): 'freeze_host_retrieval',
+    ('training', 'freeze_fusion'): 'freeze_fusion',
+    ('training', 'freeze_prototype_bank'): 'freeze_prototype_bank',
+    ('training', 'freeze_prototype_projector'): 'freeze_prototype_projector',
+    ('training', 'freeze_routing'): 'freeze_routing',
     ('training', 'freeze_image_backbone'): 'freeze_image_backbone',
     ('training', 'freeze_text_backbone'): 'freeze_text_backbone',
-    ('training', 'freeze_prototype_side'): 'freeze_prototype_side',
-    ('training', 'freeze_host_projectors'): 'freeze_host_projectors',
     ('training', 'grad_clip'): 'grad_clip',
-    ('training', 'amp'): 'amp',
-    ('training', 'amp_dtype'): 'amp_dtype',
     ('training', 'proxy_temperature'): 'proxy_temperature',
     ('training', 'diag_temperature'): 'diag_temperature',
 
@@ -189,6 +212,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('optimizer', 'warmup_epochs'): 'warmup_epochs',
     ('optimizer', 'warmup_method'): 'warmup_method',
     ('optimizer', 'scheduler'): 'lrscheduler',
+    ('optimizer', 'scheduler_total_epochs'): 'scheduler_total_epochs',
     ('optimizer', 'target_lr'): 'target_lr',
     ('optimizer', 'power'): 'power',
 
@@ -214,20 +238,35 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('evaluation', 'cross_domain_generalization'): 'cross_domain_generalization',
     ('evaluation', 'target_domain'): 'target_domain',
     ('evaluation', 'retrieval_metrics'): 'retrieval_metrics',
+    ('evaluation', 'itself_lambda_ablation_enabled'): 'itself_lambda_ablation_enabled',
+    ('evaluation', 'itself_lambda_ablation_alphas'): 'itself_lambda_ablation_alphas',
+    ('evaluation', 'itself_lambda_ablation_include_default'): 'itself_lambda_ablation_include_default',
     ('evaluation', 'batch_size'): 'test_batch_size',
     ('evaluation', 'prototype_image_chunk_size'): 'prototype_eval_image_chunk_size',
     ('evaluation', 'prototype_text_chunk_size'): 'prototype_eval_text_chunk_size',
-    ('evaluation', 'retrieval_scorer'): 'retrieval_scorer',
+
+    ('lr_ablation', 'enabled'): 'lr_ablation_enabled',
+    ('lr_ablation', 'base_lrs'): 'lr_ablation_base_lrs',
+    ('lr_ablation', 'num_epochs'): 'lr_ablation_num_epochs',
+    ('lr_ablation', 'selection_metric'): 'lr_ablation_selection_metric',
+    ('lr_ablation', 'selection_task'): 'lr_ablation_selection_task',
+    ('lr_ablation', 'save_each_run'): 'lr_ablation_save_each_run',
+    ('lr_ablation', 'restore_initial_state_each_run'): 'lr_ablation_restore_initial_state_each_run',
+    ('lr_ablation', 'write_summary_json'): 'lr_ablation_write_summary_json',
+    ('lr_ablation', 'summary_path'): 'lr_ablation_summary_path',
 }
 
 # Backward-compatible alias paths (accepted by parser/loader) that are intentionally
 # not part of canonical configs/base.yaml.
 READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('training', 'training_stage'): 'training_stage',
+    ('training', 'runtime_mode'): 'runtime_mode',
+    ('training', 'prototype_method_role'): 'prototype_method_role',
     ('training', 'num_epoch'): 'num_epoch',
     ('training', 'eval_period'): 'eval_period',
     ('optimizer', 'optimizer'): 'optimizer',
     ('optimizer', 'lrscheduler'): 'lrscheduler',
+    ('optimizer', 'scheduler_total_epochs'): 'scheduler_total_epochs',
     ('evaluation', 'checkpoint'): 'checkpoint',
     ('evaluation', 'test_batch_size'): 'test_batch_size',
     ('model', 'projector_output_dim'): 'projection_dim',
@@ -240,6 +279,8 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('prototype', 'local_routing_use_adapter'): 'prototype_local_routing_use_adapter',
     ('prototype', 'local_routing_adapter_dim'): 'prototype_local_routing_adapter_dim',
     ('prototype', 'local_routing_normalize_inputs'): 'prototype_local_routing_normalize_inputs',
+    ('prototype', 'bank_source'): 'prototype_bank_source',
+    ('prototype', 'use_base_for_semantic_targets'): 'prototype_use_base_for_semantic_targets',
     ('prototype', 'use_balancing_loss'): 'use_balancing_loss',
     ('prototype', 'balance_loss_weight'): 'prototype_balance_loss_weight',
     ('prototype', 'use_diversity_loss'): 'use_diversity_loss',
@@ -249,92 +290,54 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 
     ('objectives', 'use_host_loss'): 'use_host_loss',
     ('objectives', 'lambda_host'): 'lambda_host',
-    ('objectives', 'objectives', 'use_loss_dir'): 'use_loss_dir',
-    ('objectives', 'objectives', 'use_loss_sup'): 'use_loss_sup',
-    ('objectives', 'objectives', 'use_loss_diag'): 'use_loss_dir',
-    ('objectives', 'objectives', 'use_loss_support'): 'use_loss_sup',
-    ('objectives', 'objectives', 'support_min'): 'prototype_support_target',
-    ('objectives', 'lambda', 'dir'): 'lambda_dir',
-    ('objectives', 'lambda', 'sup'): 'lambda_sup',
-    ('objectives', 'lambda', 'diag'): 'lambda_dir',
-    ('objectives', 'lambda', 'support'): 'lambda_sup',
-    ('objectives', 'use_proto_loss_ret'): 'use_loss_ret',
-    ('objectives', 'lambda_proto_ret'): 'lambda_ret',
-    ('objectives', 'use_diag_fidelity'): 'use_loss_dir',
-    ('objectives', 'lambda_diag'): 'lambda_dir',
+    ('objectives', 'objectives', 'use_loss_diag'): 'use_loss_diag',
+    ('objectives', 'objectives', 'use_loss_semantic_hardneg_margin'): 'use_loss_semantic_hardneg_margin',
+    ('objectives', 'objectives', 'use_loss_semantic_hosthard_weighted'): 'use_loss_semantic_hosthard_weighted',
+    ('objectives', 'lambda', 'diag'): 'lambda_diag',
+    ('objectives', 'lambda', 'semantic_hardneg_margin'): 'lambda_semantic_hardneg_margin',
+    ('objectives', 'lambda', 'semantic_hosthard_weighted'): 'lambda_semantic_hosthard_weighted',
+    ('objectives', 'semantic_hardneg_margin'): 'semantic_hardneg_margin',
+    ('objectives', 'semantic_hardneg_eps'): 'semantic_hardneg_eps',
+    ('objectives', 'semantic_hosthard_margin_ref'): 'semantic_hosthard_margin_ref',
+    ('objectives', 'semantic_hosthard_tau'): 'semantic_hosthard_tau',
+    ('objectives', 'semantic_hosthard_eps'): 'semantic_hosthard_eps',
+    ('objectives', 'semantic_hosthard_normalize_weights'): 'semantic_hosthard_normalize_weights',
+    ('objectives', 'use_diag_fidelity'): 'use_loss_diag',
+    ('objectives', 'lambda_diag'): 'lambda_diag',
     ('objectives', 'diag_temperature'): 'diag_temperature',
     ('objectives', 'use_diversity'): 'use_diversity_loss',
     ('objectives', 'lambda_diversity'): 'diversity_loss_weight',
     ('objectives', 'use_balance'): 'use_balancing_loss',
     ('objectives', 'lambda_balance'): 'prototype_balance_loss_weight',
-    ('objectives', 'prototype_gap_margin'): 'prototype_gap_margin',
-    ('objectives', 'prototype_support_target'): 'prototype_support_target',
-
-    ('loss', 'lambda_proxy'): 'lambda_proxy',
-    ('loss', 'lambda_proxy_image'): 'lambda_proxy_image',
-    ('loss', 'lambda_proxy_text'): 'lambda_proxy_text',
-    ('loss', 'lambda_proxy_text_exact'): 'lambda_proxy_text_exact',
-    ('loss', 'use_loss_proxy_image'): 'use_loss_proxy_image',
-    ('loss', 'use_loss_proxy_text'): 'use_loss_proxy_text',
-    ('loss', 'use_loss_proxy_text_exact'): 'use_loss_proxy_text_exact',
-    ('loss', 'use_loss_align'): 'use_loss_align',
-    ('loss', 'lambda_align'): 'lambda_align',
-    ('loss', 'use_loss_dir'): 'use_loss_dir',
-    ('loss', 'lambda_dir'): 'lambda_dir',
-    ('loss', 'use_loss_gap'): 'use_loss_gap',
-    ('loss', 'lambda_gap'): 'lambda_gap',
-    ('loss', 'prototype_gap_margin'): 'prototype_gap_margin',
-    ('loss', 'use_loss_sup'): 'use_loss_sup',
-    ('loss', 'lambda_sup'): 'lambda_sup',
-    ('loss', 'prototype_support_target'): 'prototype_support_target',
-    ('loss', 'use_loss_diag'): 'use_loss_dir',
-    ('loss', 'lambda_diag'): 'lambda_dir',
+    ('loss', 'use_loss_diag'): 'use_loss_diag',
+    ('loss', 'lambda_diag'): 'lambda_diag',
     ('loss', 'diag_temperature'): 'diag_temperature',
-    ('loss', 'use_loss_ret'): 'use_loss_ret',
-    ('loss', 'use_loss_weight_ret'): 'use_loss_weight_ret',
+    ('loss', 'use_loss_semantic_pbt'): 'use_loss_semantic_pbt',
+    ('loss', 'use_loss_semantic_hardneg_margin'): 'use_loss_semantic_hardneg_margin',
+    ('loss', 'use_loss_semantic_hosthard_weighted'): 'use_loss_semantic_hosthard_weighted',
     ('loss', 'retrieval_mode'): 'retrieval_mode',
-    ('loss', 'lambda_ret'): 'lambda_ret',
-    ('loss', 'lambda_weight_ret'): 'lambda_weight_ret',
-    ('loss', 'weight_ret_margin_delta'): 'weight_ret_margin_delta',
-    ('loss', 'weight_ret_tau'): 'weight_ret_tau',
-    ('loss', 'weight_ret_detach_host'): 'weight_ret_detach_host',
-    ('loss', 'weight_ret_normalize_mean_one'): 'weight_ret_normalize_mean_one',
-    ('loss', 'use_loss_support'): 'use_loss_sup',
-    ('loss', 'lambda_support'): 'lambda_sup',
-    ('loss', 'support_min'): 'prototype_support_target',
+    ('loss', 'lambda_semantic_pbt'): 'lambda_semantic_pbt',
+    ('loss', 'lambda_semantic_hardneg_margin'): 'lambda_semantic_hardneg_margin',
+    ('loss', 'lambda_semantic_hosthard_weighted'): 'lambda_semantic_hosthard_weighted',
+    ('loss', 'semantic_hardneg_margin'): 'semantic_hardneg_margin',
+    ('loss', 'semantic_hardneg_eps'): 'semantic_hardneg_eps',
+    ('loss', 'semantic_hosthard_margin_ref'): 'semantic_hosthard_margin_ref',
+    ('loss', 'semantic_hosthard_tau'): 'semantic_hosthard_tau',
+    ('loss', 'semantic_hosthard_eps'): 'semantic_hosthard_eps',
+    ('loss', 'semantic_hosthard_normalize_weights'): 'semantic_hosthard_normalize_weights',
     ('loss', 'use_balancing_loss'): 'use_balancing_loss',
     ('loss', 'balance_loss_weight'): 'prototype_balance_loss_weight',
     ('loss', 'use_diversity_loss'): 'use_diversity_loss',
     ('loss', 'diversity_loss_weight'): 'diversity_loss_weight',
-
-    ('training', 'lambda_proxy'): 'lambda_proxy',
-    ('training', 'lambda_proxy_image'): 'lambda_proxy_image',
-    ('training', 'lambda_proxy_text'): 'lambda_proxy_text',
-    ('training', 'lambda_proxy_text_exact'): 'lambda_proxy_text_exact',
-    ('training', 'use_loss_proxy_image'): 'use_loss_proxy_image',
-    ('training', 'use_loss_proxy_text'): 'use_loss_proxy_text',
-    ('training', 'use_loss_proxy_text_exact'): 'use_loss_proxy_text_exact',
-    ('training', 'use_loss_align'): 'use_loss_align',
-    ('training', 'lambda_align'): 'lambda_align',
-    ('training', 'use_loss_dir'): 'use_loss_dir',
-    ('training', 'lambda_dir'): 'lambda_dir',
-    ('training', 'use_loss_gap'): 'use_loss_gap',
-    ('training', 'lambda_gap'): 'lambda_gap',
-    ('training', 'prototype_gap_margin'): 'prototype_gap_margin',
-    ('training', 'use_loss_sup'): 'use_loss_sup',
-    ('training', 'lambda_sup'): 'lambda_sup',
-    ('training', 'prototype_support_target'): 'prototype_support_target',
-    ('training', 'use_loss_diag'): 'use_loss_dir',
-    ('training', 'lambda_diag'): 'lambda_dir',
+    ('training', 'use_loss_diag'): 'use_loss_diag',
+    ('training', 'lambda_diag'): 'lambda_diag',
     ('training', 'diag_temperature'): 'diag_temperature',
-    ('training', 'use_loss_ret'): 'use_loss_ret',
-    ('training', 'lambda_ret'): 'lambda_ret',
-    ('training', 'use_loss_weight_ret'): 'use_loss_weight_ret',
-    ('training', 'lambda_weight_ret'): 'lambda_weight_ret',
-    ('training', 'weight_ret_margin_delta'): 'weight_ret_margin_delta',
-    ('training', 'weight_ret_tau'): 'weight_ret_tau',
-    ('training', 'weight_ret_detach_host'): 'weight_ret_detach_host',
-    ('training', 'weight_ret_normalize_mean_one'): 'weight_ret_normalize_mean_one',
+    ('training', 'use_loss_semantic_pbt'): 'use_loss_semantic_pbt',
+    ('training', 'lambda_semantic_pbt'): 'lambda_semantic_pbt',
+    ('training', 'use_loss_semantic_hardneg_margin'): 'use_loss_semantic_hardneg_margin',
+    ('training', 'lambda_semantic_hardneg_margin'): 'lambda_semantic_hardneg_margin',
+    ('training', 'use_loss_semantic_hosthard_weighted'): 'use_loss_semantic_hosthard_weighted',
+    ('training', 'lambda_semantic_hosthard_weighted'): 'lambda_semantic_hosthard_weighted',
     ('training', 'log_debug_metrics'): 'log_debug_metrics',
 
     ('text_pooling', 'token_similarity'): 'token_scoring_type',
@@ -354,10 +357,12 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('host', 'lambda1_weight'): 'lambda1_weight',
     ('host', 'lambda2_weight'): 'lambda2_weight',
     ('host', 'use_custom_projector'): 'use_custom_projector',
+    ('host', 'freeze_projectors'): 'freeze_host_projectors',
     ('host', 'enabled'): 'use_host_loss',
     ('host', 'loss_weight'): 'lambda_host',
+    ('training', 'freeze_host_projectors'): 'freeze_host_projectors',
+    ('training', 'freeze_prototype_side'): 'freeze_prototype_side',
     ('training', 'val_dataset'): 'val_dataset',
-    ('fusion', 'coefficient'): 'fusion_coefficient',
 }
 
 SECTION_TEMPLATE = {
@@ -365,7 +370,7 @@ SECTION_TEMPLATE = {
     'model': {},
     'host': {},
     'prototype': {},
-    'fusion': {},
+    'semantic_structure': {},
     'objectives': {
         'objectives': {},
         'lambda': {},
@@ -376,6 +381,7 @@ SECTION_TEMPLATE = {
     'dataset': {},
     'logging': {},
     'evaluation': {},
+    'lr_ablation': {},
     'checkpointing': {},
 }
 
@@ -389,6 +395,7 @@ CHECKPOINTING_GROUP_KEYS = set(CHECKPOINT_GROUPS)
 CHECKPOINTING_METRIC_KEYS = {'name', 'mode'}
 CHECKPOINTING_SAVE_KEYS = {'dir', 'save_latest', 'save_best', 'keep_last_n', 'artifacts'}
 CHECKPOINTING_LOAD_KEYS = {'enabled', 'strict', 'sources'}
+CHECKPOINTING_AUTHORITY_VALIDATION_KEYS = {'enabled', 'strict', 'warn_only', 'allow_fallback_row_name_classification'}
 SUPPORTED_SPECIAL_TOKEN_ID_KEYS = {
     'bos_token_id',
     'cls_token_id',
@@ -421,12 +428,99 @@ UNSUPPORTED_CONFIG_PATHS = {
     ('loss', 'lambda_ret_exact_image'): 'loss.lambda_ret_exact_image was removed. Use loss.lambda_ret for row-wise surrogate image-to-text retrieval only.',
     ('loss', 'lambda_ret_exact_text'): 'loss.lambda_ret_exact_text was removed because text-to-image retrieval is invalid for image-conditioned surrogate text embeddings.',
     ('loss', 'ret_exact_temperature'): 'loss.ret_exact_temperature was removed. model.temperature defines surrogate retrieval scoring.',
-    ('training', 'freeze_prototype'): 'training.freeze_prototype was replaced by training.freeze_prototype_side.',
-    ('training', 'freeze_proxy'): 'training.freeze_proxy was replaced by training.freeze_prototype_side.',
+    ('objectives', 'objectives', 'use_loss_proxy_image'): 'objectives.objectives.use_loss_proxy_image was removed.',
+    ('objectives', 'objectives', 'use_loss_proxy_text'): 'objectives.objectives.use_loss_proxy_text was removed.',
+    ('objectives', 'objectives', 'use_loss_proxy_text_exact'): 'objectives.objectives.use_loss_proxy_text_exact was removed.',
+    ('objectives', 'objectives', 'use_loss_dir'): 'objectives.objectives.use_loss_dir was removed.',
+    ('objectives', 'objectives', 'use_loss_gap'): 'objectives.objectives.use_loss_gap was removed.',
+    ('objectives', 'objectives', 'use_loss_sup'): 'objectives.objectives.use_loss_sup was removed.',
+    ('objectives', 'objectives', 'use_loss_support'): 'objectives.objectives.use_loss_support was removed.',
+    ('objectives', 'objectives', 'use_loss_ret'): 'objectives.objectives.use_loss_ret was removed.',
+    ('objectives', 'objectives', 'prototype_gap_margin'): 'objectives.objectives.prototype_gap_margin was removed.',
+    ('objectives', 'objectives', 'prototype_support_target'): 'objectives.objectives.prototype_support_target was removed.',
+    ('objectives', 'objectives', 'support_min'): 'objectives.objectives.support_min was removed.',
+    ('objectives', 'lambda', 'proxy'): 'objectives.lambda.proxy was removed.',
+    ('objectives', 'lambda', 'proxy_image'): 'objectives.lambda.proxy_image was removed.',
+    ('objectives', 'lambda', 'proxy_text'): 'objectives.lambda.proxy_text was removed.',
+    ('objectives', 'lambda', 'proxy_text_exact'): 'objectives.lambda.proxy_text_exact was removed.',
+    ('objectives', 'lambda', 'dir'): 'objectives.lambda.dir was removed.',
+    ('objectives', 'lambda', 'gap'): 'objectives.lambda.gap was removed.',
+    ('objectives', 'lambda', 'sup'): 'objectives.lambda.sup was removed.',
+    ('objectives', 'lambda', 'support'): 'objectives.lambda.support was removed.',
+    ('objectives', 'lambda', 'ret'): 'objectives.lambda.ret was removed.',
+    ('loss', 'lambda_proxy'): 'loss.lambda_proxy was removed.',
+    ('loss', 'lambda_proxy_image'): 'loss.lambda_proxy_image was removed.',
+    ('loss', 'lambda_proxy_text'): 'loss.lambda_proxy_text was removed.',
+    ('loss', 'lambda_proxy_text_exact'): 'loss.lambda_proxy_text_exact was removed.',
+    ('loss', 'use_loss_proxy_image'): 'loss.use_loss_proxy_image was removed.',
+    ('loss', 'use_loss_proxy_text'): 'loss.use_loss_proxy_text was removed.',
+    ('loss', 'use_loss_proxy_text_exact'): 'loss.use_loss_proxy_text_exact was removed.',
+    ('loss', 'use_loss_dir'): 'loss.use_loss_dir was removed.',
+    ('loss', 'lambda_dir'): 'loss.lambda_dir was removed.',
+    ('loss', 'use_loss_gap'): 'loss.use_loss_gap was removed.',
+    ('loss', 'lambda_gap'): 'loss.lambda_gap was removed.',
+    ('loss', 'prototype_gap_margin'): 'loss.prototype_gap_margin was removed.',
+    ('loss', 'use_loss_sup'): 'loss.use_loss_sup was removed.',
+    ('loss', 'lambda_sup'): 'loss.lambda_sup was removed.',
+    ('loss', 'use_loss_support'): 'loss.use_loss_support was removed.',
+    ('loss', 'lambda_support'): 'loss.lambda_support was removed.',
+    ('loss', 'prototype_support_target'): 'loss.prototype_support_target was removed.',
+    ('loss', 'support_min'): 'loss.support_min was removed.',
+    ('loss', 'use_loss_ret'): 'loss.use_loss_ret was removed.',
+    ('loss', 'lambda_ret'): 'loss.lambda_ret was removed.',
+    ('training', 'lambda_proxy'): 'training.lambda_proxy was removed.',
+    ('training', 'lambda_proxy_image'): 'training.lambda_proxy_image was removed.',
+    ('training', 'lambda_proxy_text'): 'training.lambda_proxy_text was removed.',
+    ('training', 'lambda_proxy_text_exact'): 'training.lambda_proxy_text_exact was removed.',
+    ('training', 'use_loss_proxy_image'): 'training.use_loss_proxy_image was removed.',
+    ('training', 'use_loss_proxy_text'): 'training.use_loss_proxy_text was removed.',
+    ('training', 'use_loss_proxy_text_exact'): 'training.use_loss_proxy_text_exact was removed.',
+    ('training', 'use_loss_dir'): 'training.use_loss_dir was removed.',
+    ('training', 'lambda_dir'): 'training.lambda_dir was removed.',
+    ('training', 'use_loss_gap'): 'training.use_loss_gap was removed.',
+    ('training', 'lambda_gap'): 'training.lambda_gap was removed.',
+    ('training', 'prototype_gap_margin'): 'training.prototype_gap_margin was removed.',
+    ('training', 'use_loss_sup'): 'training.use_loss_sup was removed.',
+    ('training', 'lambda_sup'): 'training.lambda_sup was removed.',
+    ('training', 'use_loss_support'): 'training.use_loss_support was removed.',
+    ('training', 'lambda_support'): 'training.lambda_support was removed.',
+    ('training', 'prototype_support_target'): 'training.prototype_support_target was removed.',
+    ('training', 'support_min'): 'training.support_min was removed.',
+    ('training', 'use_loss_ret'): 'training.use_loss_ret was removed.',
+    ('training', 'lambda_ret'): 'training.lambda_ret was removed.',
+    ('objectives', 'objectives', 'use_loss_align'): 'objectives.objectives.use_loss_align was removed.',
+    ('objectives', 'objectives', 'use_loss_weight_ret'): 'objectives.objectives.use_loss_weight_ret was removed.',
+    ('objectives', 'objectives', 'weight_ret_margin_delta'): 'objectives.objectives.weight_ret_margin_delta was removed.',
+    ('objectives', 'objectives', 'weight_ret_tau'): 'objectives.objectives.weight_ret_tau was removed.',
+    ('objectives', 'objectives', 'weight_ret_detach_host'): 'objectives.objectives.weight_ret_detach_host was removed.',
+    ('objectives', 'objectives', 'weight_ret_normalize_mean_one'): 'objectives.objectives.weight_ret_normalize_mean_one was removed.',
+    ('objectives', 'lambda', 'align'): 'objectives.lambda.align was removed.',
+    ('objectives', 'lambda', 'weight_ret'): 'objectives.lambda.weight_ret was removed.',
+    ('loss', 'use_loss_align'): 'loss.use_loss_align was removed.',
+    ('loss', 'lambda_align'): 'loss.lambda_align was removed.',
+    ('loss', 'use_loss_weight_ret'): 'loss.use_loss_weight_ret was removed.',
+    ('loss', 'lambda_weight_ret'): 'loss.lambda_weight_ret was removed.',
+    ('loss', 'weight_ret_margin_delta'): 'loss.weight_ret_margin_delta was removed.',
+    ('loss', 'weight_ret_tau'): 'loss.weight_ret_tau was removed.',
+    ('loss', 'weight_ret_detach_host'): 'loss.weight_ret_detach_host was removed.',
+    ('loss', 'weight_ret_normalize_mean_one'): 'loss.weight_ret_normalize_mean_one was removed.',
+    ('training', 'use_loss_align'): 'training.use_loss_align was removed.',
+    ('training', 'lambda_align'): 'training.lambda_align was removed.',
+    ('training', 'use_loss_weight_ret'): 'training.use_loss_weight_ret was removed.',
+    ('training', 'lambda_weight_ret'): 'training.lambda_weight_ret was removed.',
+    ('training', 'weight_ret_margin_delta'): 'training.weight_ret_margin_delta was removed.',
+    ('training', 'weight_ret_tau'): 'training.weight_ret_tau was removed.',
+    ('training', 'weight_ret_detach_host'): 'training.weight_ret_detach_host was removed.',
+    ('training', 'weight_ret_normalize_mean_one'): 'training.weight_ret_normalize_mean_one was removed.',
+    ('training', 'freeze_prototype'): 'training.freeze_prototype was replaced by explicit module freeze flags (training.freeze_prototype_bank/training.freeze_prototype_projector/training.freeze_routing/training.freeze_fusion).',
+    ('training', 'freeze_proxy'): 'training.freeze_proxy was replaced by explicit module freeze flags (training.freeze_prototype_bank/training.freeze_prototype_projector/training.freeze_routing/training.freeze_fusion).',
     ('training', 'bidirectional_ret'): 'Bidirectional retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
     ('training', 'clip_style_ret'): 'CLIP-style symmetric retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
     ('training', 'symmetric_ret'): 'Symmetric retrieval over the surrogate score matrix is invalid. Only row-wise image-to-text retrieval is supported.',
     ('training', 't2i_ret'): 'Text-to-image retrieval over the surrogate score matrix is invalid because surrogate text embeddings depend on the image query.',
+    ('fusion',): 'fusion config section was removed. HostCore is the only retrieval scorer.',
+    ('evaluation', 'retrieval_scorer'): 'evaluation.retrieval_scorer was removed. Retrieval scoring is always exact host-only.',
+    ('model', 'prototype_inference_mode'): 'model.prototype_inference_mode was removed. Retrieval inference is always host_only.',
     ('model', 'learn_logit_scale'): 'model.learn_logit_scale was removed because the amortized PAS runtime always uses a fixed retrieval temperature.',
     ('model', 'logit_scale_init'): 'model.logit_scale_init is not exposed in minimal PAS v1.',
     ('model', 'logit_scale_max'): 'model.logit_scale_max is not exposed in minimal PAS v1.',
@@ -437,11 +531,11 @@ UNSUPPORTED_CONFIG_PATHS = {
 
 CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ('model', 'training_mode'): ('pas', 'vanilla_clip'),
+    ('model', 'runtime_mode'): ('auto', 'host_only', 'joint_training', 'lr_ablation'),
+    ('model', 'prototype_method_role'): ('semantic_structure',),
     ('host', 'type'): ('clip', 'itself'),
     ('host', 'itself_topk_type'): ('mean', 'std', 'layer_index', 'custom'),
     ('model', 'projector_type'): ('mlp2', 'linear'),
-    ('model', 'backbone_precision'): tuple(BACKBONE_PRECISION_ALIASES.keys()),
-    ('model', 'prototype_precision'): tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
     ('prototype', 'prototype_init'): (
         'normalized_random',
         'sampled_image_embeddings',
@@ -452,27 +546,32 @@ CONFIG_ENUM_CHOICES: Dict[Tuple[str, ...], Tuple[str, ...]] = {
     ),
     ('prototype', 'routing_type'): ('cosine', 'dot'),
     ('prototype', 'contextualization_type'): ('self_attention', 'dense_self_attention', 'none'),
+    ('prototype', 'bank_source'): ('learnable_legacy', 'recomputed_kmeans', 'auto'),
     ('text_pooling', 'token_policy'): ('content_only', 'content_plus_special', 'eos_only'),
     ('text_pooling', 'scoring_type'): ('cosine', 'dot'),
     ('objectives', 'objectives', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
     ('loss', 'retrieval_mode'): ('surrogate_i2t', 'clip_bidirectional'),
-    ('training', 'amp_dtype'): tuple(AMP_DTYPE_ALIASES.keys()),
+    ('semantic_structure', 'recompute_schedule'): ('epoch', 'steps', 'stage'),
+    ('semantic_structure', 'empty_cluster_policy'): ('skip', 'reseed'),
+    ('semantic_structure', 'text_teacher_source'): ('exact_diagonal',),
+    ('semantic_structure', 'text_student_source'): ('surrogate_diagonal',),
+    ('semantic_structure', 'image_student_source'): ('image_semantic_feature',),
+    ('training', 'early_stopping_mode'): ('max', 'min'),
     ('training', 'stage'): ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     ('optimizer', 'type'): ('SGD', 'Adam', 'AdamW'),
     ('optimizer', 'scheduler'): ('step', 'exp', 'poly', 'cosine', 'linear'),
     ('dataset', 'dataset_name'): ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
     ('dataset', 'val_dataset'): ('val', 'test'),
     ('evaluation', 'target_domain'): ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
-    ('evaluation', 'retrieval_scorer'): ('exact', 'approximate'),
 }
 
 RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     'training_mode': ('pas', 'vanilla_clip'),
+    'runtime_mode': ('auto', 'host_only', 'joint_training', 'lr_ablation'),
+    'prototype_method_role': ('semantic_structure',),
     'host_type': ('clip', 'itself'),
     'itself_topk_type': ('mean', 'std', 'layer_index', 'custom'),
     'projector_type': ('mlp2', 'linear'),
-    'backbone_precision': tuple(BACKBONE_PRECISION_ALIASES.keys()),
-    'prototype_precision': tuple(PROTOTYPE_PRECISION_ALIASES.keys()),
     'prototype_init': (
         'normalized_random',
         'sampled_image_embeddings',
@@ -483,17 +582,22 @@ RUNTIME_ENUM_CHOICES: Dict[str, Tuple[str, ...]] = {
     ),
     'prototype_routing_type': ('cosine', 'dot'),
     'prototype_contextualization_type': ('self_attention', 'dense_self_attention', 'none'),
+    'prototype_bank_source': ('learnable_legacy', 'recomputed_kmeans', 'auto'),
     'token_policy': ('content_only', 'content_plus_special', 'eos_only'),
     'token_scoring_type': ('cosine', 'dot'),
     'retrieval_mode': ('surrogate_i2t', 'clip_bidirectional'),
-    'amp_dtype': tuple(AMP_DTYPE_ALIASES.keys()),
+    'semantic_recompute_schedule': ('epoch', 'steps', 'stage'),
+    'semantic_empty_cluster_policy': ('skip', 'reseed'),
+    'semantic_text_teacher_source': ('exact_diagonal',),
+    'semantic_text_student_source': ('surrogate_diagonal',),
+    'semantic_image_student_source': ('image_semantic_feature',),
+    'early_stopping_mode': ('max', 'min'),
     'training_stage': ('stage0', 'stage1', 'stage2', 'stage3', 'joint'),
     'optimizer': ('SGD', 'Adam', 'AdamW'),
     'lrscheduler': ('step', 'exp', 'poly', 'cosine', 'linear'),
     'dataset_name': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
     'val_dataset': ('val', 'test'),
     'target_domain': ('CUHK-PEDES', 'ICFG-PEDES', 'RSTPReid'),
-    'retrieval_scorer': ('exact', 'approximate'),
 }
 
 def _format_allowed_values(allowed_values: Tuple[str, ...]) -> str:
@@ -518,116 +622,135 @@ def _validate_retrieval_metrics_value(field_name: str, value: Any) -> None:
         )
 
 
-FUSION_WEIGHT_SUM_TOLERANCE = 1e-6
-
-
-def _coerce_float(field_name: str, value: Any) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        raise ValueError(f'{field_name} must be a float, got {value!r}.')
-
-
-def _validate_fusion_weight_value(field_name: str, value: Any) -> float:
-    scalar = _coerce_float(field_name, value)
-    if scalar < 0.0 or scalar > 1.0:
-        raise ValueError(f'{field_name} must be within [0, 1], got {scalar}.')
-    return scalar
-
-
-def _validate_fusion_weight_pair(
-    field_prefix: str,
-    lambda_host: Any,
-    lambda_prototype: Any,
-    require_unit_sum: bool = True,
-) -> Tuple[float, float]:
-    host_weight = _validate_fusion_weight_value(f'{field_prefix}.lambda_host', lambda_host)
-    prototype_weight = _validate_fusion_weight_value(f'{field_prefix}.lambda_prototype', lambda_prototype)
-    if require_unit_sum:
-        pair_sum = host_weight + prototype_weight
-        if abs(pair_sum - 1.0) > FUSION_WEIGHT_SUM_TOLERANCE:
-            raise ValueError(
-                f'{field_prefix}.lambda_host + {field_prefix}.lambda_prototype must equal 1.0 '
-                f'(tolerance={FUSION_WEIGHT_SUM_TOLERANCE}), got {pair_sum}.'
-            )
-    return host_weight, prototype_weight
-
-
-def _validate_fusion_eval_subsets(field_name: str, value: Any) -> None:
-    if value is None:
+def _validate_itself_lambda_ablation_alphas(field_name: str, value: Any) -> None:
+    if value in (None, []):
         return
     if not isinstance(value, list):
-        raise ValueError(f'{field_name} must be a list of subset mappings.')
-    for subset_index, subset in enumerate(value):
-        subset_prefix = f'{field_name}[{subset_index}]'
-        if not isinstance(subset, dict):
-            raise ValueError(f'{subset_prefix} must be a mapping.')
-        unknown_keys = sorted(set(subset.keys()) - {'name', 'lambda_host', 'lambda_prototype'})
-        if unknown_keys:
-            raise ValueError(
-                f'Unknown keys in {subset_prefix}: {unknown_keys}. '
-                'Allowed keys: ["name", "lambda_host", "lambda_prototype"]'
-            )
-        if 'name' in subset and subset['name'] is not None and not isinstance(subset['name'], str):
-            raise ValueError(f'{subset_prefix}.name must be a string when provided.')
-        if 'lambda_host' not in subset or 'lambda_prototype' not in subset:
-            raise ValueError(f'{subset_prefix} must include both lambda_host and lambda_prototype.')
-        _validate_fusion_weight_pair(
-            field_prefix=subset_prefix,
-            lambda_host=subset['lambda_host'],
-            lambda_prototype=subset['lambda_prototype'],
-            require_unit_sum=True,
-        )
+        raise ValueError(f'{field_name} must be a list of floats in [0, 1].')
+    for alpha in value:
+        try:
+            alpha_float = float(alpha)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f'{field_name} contains a non-numeric value: {alpha!r}.') from exc
+        if alpha_float < 0.0 or alpha_float > 1.0:
+            raise ValueError(f'{field_name} values must be in [0, 1]. Got {alpha_float}.')
+
+
+def _normalize_lr_ablation_base_lrs(value: Any, field_name: str) -> List[float]:
+    if value in (None, ''):
+        return []
+    if isinstance(value, str):
+        tokens = [token.strip() for token in value.split(',') if token.strip()]
+        raw_values = tokens
+    elif isinstance(value, (list, tuple)):
+        raw_values = list(value)
+    else:
+        raw_values = [value]
+    normalized = []
+    for raw_item in raw_values:
+        try:
+            lr_value = float(raw_item)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f'{field_name} contains a non-numeric value: {raw_item!r}.') from exc
+        if lr_value <= 0.0:
+            raise ValueError(f'{field_name} values must be positive. Got {lr_value}.')
+        normalized.append(lr_value)
+    return normalized
+
+
+def _validate_lr_ablation_fields(
+    *,
+    enabled_field_name: str,
+    enabled_value: Any,
+    base_lrs_field_name: str,
+    base_lrs_value: Any,
+    num_epochs_field_name: str,
+    num_epochs_value: Any,
+    selection_metric_field_name: str,
+    selection_metric_value: Any,
+    selection_task_field_name: str,
+    selection_task_value: Any,
+) -> None:
+    enabled = bool(enabled_value)
+    base_lrs = _normalize_lr_ablation_base_lrs(base_lrs_value, base_lrs_field_name)
+    try:
+        num_epochs = int(num_epochs_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{num_epochs_field_name} must be a positive integer.') from exc
+    if num_epochs <= 0:
+        raise ValueError(f'{num_epochs_field_name} must be a positive integer.')
+    selection_metric = str(selection_metric_value or '').strip().lower()
+    if selection_metric not in {'val_r1'}:
+        raise ValueError(f'{selection_metric_field_name} must be \"val_r1\".')
+    selection_task = str(selection_task_value or '').strip()
+    if not selection_task:
+        raise ValueError(f'{selection_task_field_name} must be a non-empty task name.')
+    if enabled and not base_lrs:
+        raise ValueError(f'{base_lrs_field_name} must contain at least one value when {enabled_field_name}=true.')
+
+
+def _validate_early_stopping_fields(
+    *,
+    metric_field_name: str,
+    metric_value: Any,
+    mode_field_name: str,
+    mode_value: Any,
+    patience_field_name: str,
+    patience_value: Any,
+    start_epoch_field_name: str,
+    start_epoch_value: Any,
+) -> None:
+    metric = str(metric_value or '').strip()
+    if not metric:
+        raise ValueError(f'{metric_field_name} must be a non-empty metric name.')
+    mode = str(mode_value or '').strip().lower()
+    if mode not in {'max', 'min'}:
+        raise ValueError(f'{mode_field_name} must be one of: max, min.')
+    try:
+        patience = int(patience_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{patience_field_name} must be a positive integer.') from exc
+    if patience <= 0:
+        raise ValueError(f'{patience_field_name} must be a positive integer.')
+    try:
+        start_epoch = int(start_epoch_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f'{start_epoch_field_name} must be an integer >= 1.') from exc
+    if start_epoch < 1:
+        raise ValueError(f'{start_epoch_field_name} must be >= 1.')
 
 
 def _validate_fusion_config_data(config_data: Dict[str, Any]) -> None:
     fusion_cfg = config_data.get('fusion')
-    if not isinstance(fusion_cfg, dict):
-        return
-
-    has_lambda_host = 'lambda_host' in fusion_cfg
-    has_lambda_prototype = 'lambda_prototype' in fusion_cfg
-    has_legacy_coefficient = 'coefficient' in fusion_cfg
-
-    if has_lambda_host or has_lambda_prototype:
-        if not (has_lambda_host and has_lambda_prototype):
-            raise ValueError('fusion.lambda_host and fusion.lambda_prototype must be provided together.')
-        _validate_fusion_weight_pair(
-            field_prefix='fusion',
-            lambda_host=fusion_cfg.get('lambda_host'),
-            lambda_prototype=fusion_cfg.get('lambda_prototype'),
-            require_unit_sum=True,
+    if isinstance(fusion_cfg, dict) and fusion_cfg:
+        raise ValueError(
+            'fusion config section is removed. HostCore is the only retrieval scorer and prototype fusion is not supported.'
         )
-    elif has_legacy_coefficient:
-        _validate_fusion_weight_value('fusion.coefficient', fusion_cfg.get('coefficient'))
-
-    _validate_fusion_eval_subsets('fusion.eval_subsets', fusion_cfg.get('eval_subsets'))
 
 
 def _validate_runtime_fusion_args(args: Any) -> None:
-    if bool(getattr(args, 'fusion_legacy_coefficient_mode', False)):
-        if hasattr(args, 'fusion_coefficient') and getattr(args, 'fusion_coefficient') is not None:
-            _validate_fusion_weight_value('fusion_coefficient', getattr(args, 'fusion_coefficient'))
-        _validate_fusion_eval_subsets('fusion_eval_subsets', getattr(args, 'fusion_eval_subsets', None))
-        return
-
-    has_lambda_host = hasattr(args, 'fusion_lambda_host') and getattr(args, 'fusion_lambda_host') is not None
-    has_lambda_prototype = hasattr(args, 'fusion_lambda_prototype') and getattr(args, 'fusion_lambda_prototype') is not None
-    has_legacy_coefficient = hasattr(args, 'fusion_coefficient') and getattr(args, 'fusion_coefficient') is not None
-
-    if has_lambda_host or has_lambda_prototype:
-        if not (has_lambda_host and has_lambda_prototype):
-            raise ValueError('fusion_lambda_host and fusion_lambda_prototype must be provided together.')
-        _validate_fusion_weight_pair(
-            field_prefix='fusion',
-            lambda_host=getattr(args, 'fusion_lambda_host'),
-            lambda_prototype=getattr(args, 'fusion_lambda_prototype'),
-            require_unit_sum=True,
+    removed_fields = (
+        'fusion_enabled',
+        'fusion_lambda_host',
+        'fusion_lambda_prototype',
+        'fusion_coefficient',
+        'fusion_eval_subsets',
+        'fusion_coefficient_source',
+        'composer_calibration_enabled',
+        'prototype_inference_mode',
+        'retrieval_scorer',
+    )
+    for field_name in removed_fields:
+        if not hasattr(args, field_name):
+            continue
+        value = getattr(args, field_name)
+        if field_name == 'prototype_inference_mode' and str(value).lower() == 'host_only':
+            continue
+        if value in (None, False, '', 0, 0.0):
+            continue
+        raise ValueError(
+            f'{field_name} was removed. HostCore is the only retrieval scorer and prototype fusion/composer retrieval paths are disabled.'
         )
-    elif has_legacy_coefficient:
-        _validate_fusion_weight_value('fusion_coefficient', getattr(args, 'fusion_coefficient'))
-
-    _validate_fusion_eval_subsets('fusion_eval_subsets', getattr(args, 'fusion_eval_subsets', None))
 
 
 def _read_yaml(path: str) -> Dict[str, Any]:
@@ -667,7 +790,7 @@ def _validate_checkpointing_section(checkpointing_value: Any) -> None:
     if not isinstance(checkpointing_value, dict):
         raise ValueError('checkpointing must contain a mapping.')
 
-    allowed_root_keys = {'metric', 'groups', 'save', 'load'}
+    allowed_root_keys = {'metric', 'groups', 'save', 'load', 'authority_validation'}
     unknown_root_keys = sorted(set(checkpointing_value.keys()) - allowed_root_keys)
     if unknown_root_keys:
         raise ValueError(
@@ -766,6 +889,20 @@ def _validate_checkpointing_section(checkpointing_value: Any) -> None:
                         'Allowed keys: ["enabled", "path"]'
                     )
 
+    authority_cfg = checkpointing_value.get('authority_validation')
+    if authority_cfg is not None:
+        if not isinstance(authority_cfg, dict):
+            raise ValueError('checkpointing.authority_validation must be a mapping.')
+        unknown_authority_keys = sorted(set(authority_cfg.keys()) - CHECKPOINTING_AUTHORITY_VALIDATION_KEYS)
+        if unknown_authority_keys:
+            raise ValueError(
+                f'Unknown checkpointing.authority_validation keys: {unknown_authority_keys}. '
+                f'Allowed keys: {sorted(CHECKPOINTING_AUTHORITY_VALIDATION_KEYS)}'
+            )
+        for key in CHECKPOINTING_AUTHORITY_VALIDATION_KEYS:
+            if key in authority_cfg and not isinstance(authority_cfg[key], bool):
+                raise ValueError(f'checkpointing.authority_validation.{key} must be a boolean.')
+
 
 def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
     supported_paths = set(PRIMARY_CONFIG_KEY_MAP.keys()) | set(READ_ALIAS_CONFIG_KEY_MAP.keys())
@@ -818,10 +955,6 @@ def _validate_supported_keys(config_data: Dict[str, Any]) -> None:
                             )
                 continue
 
-            if section_name == 'fusion' and key == 'eval_subsets':
-                _validate_fusion_eval_subsets('fusion.eval_subsets', value)
-                continue
-
             if isinstance(value, dict):
                 raise ValueError(f'Unsupported nested config mapping at `{section_name}.{key}`.')
             if path not in supported_leafs and path not in UNSUPPORTED_CONFIG_PATHS:
@@ -846,6 +979,42 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         _validate_enum_value('.'.join(path), current, allowed_values)
     if _path_exists(config_data, ('evaluation', 'retrieval_metrics')):
         _validate_retrieval_metrics_value('evaluation.retrieval_metrics', config_data['evaluation']['retrieval_metrics'])
+    if _path_exists(config_data, ('evaluation', 'itself_lambda_ablation_alphas')):
+        _validate_itself_lambda_ablation_alphas(
+            'evaluation.itself_lambda_ablation_alphas',
+            config_data['evaluation']['itself_lambda_ablation_alphas'],
+        )
+    if (
+        _path_exists(config_data, ('training', 'early_stopping_metric'))
+        or _path_exists(config_data, ('training', 'early_stopping_mode'))
+        or _path_exists(config_data, ('training', 'early_stopping_patience'))
+        or _path_exists(config_data, ('training', 'early_stopping_start_epoch'))
+    ):
+        training_cfg = config_data.get('training', {}) if isinstance(config_data.get('training', {}), dict) else {}
+        _validate_early_stopping_fields(
+            metric_field_name='training.early_stopping_metric',
+            metric_value=training_cfg.get('early_stopping_metric', 'R1'),
+            mode_field_name='training.early_stopping_mode',
+            mode_value=training_cfg.get('early_stopping_mode', 'max'),
+            patience_field_name='training.early_stopping_patience',
+            patience_value=training_cfg.get('early_stopping_patience', 5),
+            start_epoch_field_name='training.early_stopping_start_epoch',
+            start_epoch_value=training_cfg.get('early_stopping_start_epoch', 1),
+        )
+    if _path_exists(config_data, ('lr_ablation',)):
+        lr_ablation_cfg = config_data.get('lr_ablation', {}) if isinstance(config_data.get('lr_ablation', {}), dict) else {}
+        _validate_lr_ablation_fields(
+            enabled_field_name='lr_ablation.enabled',
+            enabled_value=lr_ablation_cfg.get('enabled', False),
+            base_lrs_field_name='lr_ablation.base_lrs',
+            base_lrs_value=lr_ablation_cfg.get('base_lrs', []),
+            num_epochs_field_name='lr_ablation.num_epochs',
+            num_epochs_value=lr_ablation_cfg.get('num_epochs', 2),
+            selection_metric_field_name='lr_ablation.selection_metric',
+            selection_metric_value=lr_ablation_cfg.get('selection_metric', 'val_r1'),
+            selection_task_field_name='lr_ablation.selection_task',
+            selection_task_value=lr_ablation_cfg.get('selection_task', 'host-t2i'),
+        )
     _validate_fusion_config_data(config_data)
 
     flat = flatten_config_dict(config_data)
@@ -858,7 +1027,21 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
         use_prototype_branch = True
     use_prototype_bank = bool(flat.get('use_prototype_bank', use_prototype_branch))
     use_image_conditioned_pooling = bool(flat.get('use_image_conditioned_pooling', use_prototype_branch))
+    runtime_mode = str(flat.get('runtime_mode', 'auto')).lower()
     retrieval_mode = str(flat.get('retrieval_mode', 'surrogate_i2t')).lower()
+    prototype_method_role = str(flat.get('prototype_method_role', 'semantic_structure')).lower()
+    semantic_target_temperature = float(flat.get('semantic_target_temperature', 0.01))
+    semantic_pred_temperature = float(flat.get('semantic_pred_temperature', 0.07))
+    semantic_recompute_interval = int(flat.get('semantic_recompute_interval', 1))
+    semantic_min_cluster_count_for_pbt = float(flat.get('semantic_min_cluster_count_for_pbt', 1.0))
+    scheduler_total_epochs_raw = flat.get('scheduler_total_epochs', None)
+    use_loss_semantic_pbt = bool(flat.get('use_loss_semantic_pbt', False))
+    use_loss_semantic_hardneg_margin = bool(flat.get('use_loss_semantic_hardneg_margin', False))
+    use_loss_semantic_hosthard_weighted = bool(flat.get('use_loss_semantic_hosthard_weighted', False))
+    semantic_hardneg_margin = float(flat.get('semantic_hardneg_margin', 0.05))
+    semantic_hardneg_eps = float(flat.get('semantic_hardneg_eps', 1e-8))
+    semantic_hosthard_tau = float(flat.get('semantic_hosthard_tau', 0.1))
+    semantic_hosthard_eps = float(flat.get('semantic_hosthard_eps', 1e-8))
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -871,20 +1054,9 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
             raise ValueError('host.type=clip with model.use_prototype_branch=false requires text_pooling.token_policy=eos_only.')
         if retrieval_mode != 'clip_bidirectional':
             raise ValueError('host.type=clip with model.use_prototype_branch=false requires objectives.objectives.retrieval_mode=clip_bidirectional.')
-        if not bool(flat.get('use_loss_ret', True)):
-            raise ValueError('host.type=clip with model.use_prototype_branch=false requires objectives.objectives.use_loss_ret=true.')
-        if str(flat.get('retrieval_scorer', 'exact')).lower() != 'exact':
-            raise ValueError('host.type=clip with model.use_prototype_branch=false requires evaluation.retrieval_scorer=exact.')
+
         incompatible_flags = {
-            'objectives.objectives.use_loss_proxy_image': bool(flat.get('use_loss_proxy_image', False)),
-            'objectives.objectives.use_loss_proxy_text': bool(flat.get('use_loss_proxy_text', False)),
-            'objectives.objectives.use_loss_proxy_text_exact': bool(flat.get('use_loss_proxy_text_exact', False)),
-            'objectives.objectives.use_loss_align': bool(flat.get('use_loss_align', False)),
-            'objectives.objectives.use_loss_dir': bool(flat.get('use_loss_dir', False)),
-            'objectives.objectives.use_loss_gap': bool(flat.get('use_loss_gap', False)),
-            'objectives.objectives.use_loss_sup': bool(flat.get('use_loss_sup', False)),
             'objectives.objectives.use_loss_diag': bool(flat.get('use_loss_diag', False)),
-            'objectives.objectives.use_loss_support': bool(flat.get('use_loss_support', False)),
             'objectives.objectives.use_balancing_loss': bool(flat.get('use_balancing_loss', False)),
             'objectives.objectives.use_diversity_loss': bool(flat.get('use_diversity_loss', False)),
         }
@@ -894,16 +1066,58 @@ def validate_config_data(config_data: Dict[str, Any]) -> None:
                 'host.type=clip with model.use_prototype_branch=false does not support prototype/auxiliary losses. '
                 f'Disable: {enabled_incompatible}.'
             )
-    elif retrieval_mode == 'clip_bidirectional':
-        raise ValueError(
-            'objectives.objectives.retrieval_mode=clip_bidirectional is only supported when '
-            'host.type=clip and model.use_prototype_branch=false.'
-        )
-
     if use_prototype_branch and use_prototype_bank and not use_image_conditioned_pooling:
         raise ValueError(
             'model.use_prototype_bank=true requires model.use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'
+        )
+    
+    if semantic_target_temperature <= 0.0:
+        raise ValueError('semantic_structure.target_temperature must be positive.')
+    if semantic_pred_temperature <= 0.0:
+        raise ValueError('semantic_structure.pred_temperature must be positive.')
+    if semantic_recompute_interval <= 0:
+        raise ValueError('semantic_structure.recompute_interval must be a positive integer.')
+    if semantic_min_cluster_count_for_pbt <= 0.0:
+        raise ValueError('semantic_structure.min_cluster_count_for_pbt must be positive.')
+    if scheduler_total_epochs_raw is not None:
+        try:
+            scheduler_total_epochs = int(scheduler_total_epochs_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('optimizer.scheduler_total_epochs must be a positive integer when provided.') from exc
+        if scheduler_total_epochs <= 0:
+            raise ValueError('optimizer.scheduler_total_epochs must be a positive integer when provided.')
+    if semantic_hardneg_margin < 0.0:
+        raise ValueError('objectives.semantic_hardneg_margin must be non-negative.')
+    if semantic_hardneg_eps <= 0.0:
+        raise ValueError('objectives.semantic_hardneg_eps must be positive.')
+    if semantic_hosthard_tau <= 0.0:
+        raise ValueError('objectives.semantic_hosthard_tau must be positive.')
+    if semantic_hosthard_eps <= 0.0:
+        raise ValueError('objectives.semantic_hosthard_eps must be positive.')
+    if use_loss_semantic_pbt and not use_prototype_branch:
+        raise ValueError('loss.use_loss_semantic_pbt requires model.use_prototype_branch=true.')
+    if use_loss_semantic_hardneg_margin and not use_prototype_branch:
+        raise ValueError('loss.use_loss_semantic_hardneg_margin requires model.use_prototype_branch=true.')
+    if use_loss_semantic_hosthard_weighted and not use_prototype_branch:
+        raise ValueError('loss.use_loss_semantic_hosthard_weighted requires model.use_prototype_branch=true.')
+    if use_loss_semantic_pbt and runtime_mode == 'host_only':
+        raise ValueError(
+            'loss.use_loss_semantic_pbt is incompatible with model.runtime_mode=host_only because '
+            'host-only runtime disables prototype loss computation. '
+            'Use model.runtime_mode=joint_training.'
+        )
+    if use_loss_semantic_hardneg_margin and runtime_mode == 'host_only':
+        raise ValueError(
+            'loss.use_loss_semantic_hardneg_margin is incompatible with model.runtime_mode=host_only because '
+            'host-only runtime disables prototype loss computation. '
+            'Use model.runtime_mode=joint_training.'
+        )
+    if use_loss_semantic_hosthard_weighted and runtime_mode == 'host_only':
+        raise ValueError(
+            'loss.use_loss_semantic_hosthard_weighted is incompatible with model.runtime_mode=host_only because '
+            'host-only runtime disables prototype loss computation. '
+            'Use model.runtime_mode=joint_training.'
         )
 
     training_config = config_data.get('training', {})
@@ -933,6 +1147,32 @@ def validate_runtime_args_namespace(args) -> None:
     retrieval_metrics = getattr(args, 'retrieval_metrics', None)
     if retrieval_metrics is not None:
         _validate_retrieval_metrics_value('retrieval_metrics', list(retrieval_metrics))
+    _validate_itself_lambda_ablation_alphas(
+        'itself_lambda_ablation_alphas',
+        getattr(args, 'itself_lambda_ablation_alphas', None),
+    )
+    _validate_early_stopping_fields(
+        metric_field_name='early_stopping_metric',
+        metric_value=getattr(args, 'early_stopping_metric', 'R1'),
+        mode_field_name='early_stopping_mode',
+        mode_value=getattr(args, 'early_stopping_mode', 'max'),
+        patience_field_name='early_stopping_patience',
+        patience_value=getattr(args, 'early_stopping_patience', 5),
+        start_epoch_field_name='early_stopping_start_epoch',
+        start_epoch_value=getattr(args, 'early_stopping_start_epoch', 1),
+    )
+    _validate_lr_ablation_fields(
+        enabled_field_name='lr_ablation_enabled',
+        enabled_value=getattr(args, 'lr_ablation_enabled', False),
+        base_lrs_field_name='lr_ablation_base_lrs',
+        base_lrs_value=getattr(args, 'lr_ablation_base_lrs', []),
+        num_epochs_field_name='lr_ablation_num_epochs',
+        num_epochs_value=getattr(args, 'lr_ablation_num_epochs', 2),
+        selection_metric_field_name='lr_ablation_selection_metric',
+        selection_metric_value=getattr(args, 'lr_ablation_selection_metric', 'val_r1'),
+        selection_task_field_name='lr_ablation_selection_task',
+        selection_task_value=getattr(args, 'lr_ablation_selection_task', 'host-t2i'),
+    )
     _validate_runtime_fusion_args(args)
     parse_freeze_schedule_config(
         getattr(args, 'freeze_schedule', None),
@@ -948,7 +1188,21 @@ def validate_runtime_args_namespace(args) -> None:
         use_prototype_branch = True
     use_prototype_bank = bool(getattr(args, 'use_prototype_bank', use_prototype_branch))
     use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', use_prototype_branch))
+    runtime_mode = str(getattr(args, 'runtime_mode', 'auto')).lower()
     retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
+    prototype_method_role = str(getattr(args, 'prototype_method_role', 'semantic_structure')).lower()
+    semantic_target_temperature = float(getattr(args, 'semantic_target_temperature', 0.01))
+    semantic_pred_temperature = float(getattr(args, 'semantic_pred_temperature', 0.07))
+    semantic_recompute_interval = int(getattr(args, 'semantic_recompute_interval', 1))
+    semantic_min_cluster_count_for_pbt = float(getattr(args, 'semantic_min_cluster_count_for_pbt', 1.0))
+    scheduler_total_epochs_raw = getattr(args, 'scheduler_total_epochs', None)
+    use_loss_semantic_pbt = bool(getattr(args, 'use_loss_semantic_pbt', False))
+    use_loss_semantic_hardneg_margin = bool(getattr(args, 'use_loss_semantic_hardneg_margin', False))
+    use_loss_semantic_hosthard_weighted = bool(getattr(args, 'use_loss_semantic_hosthard_weighted', False))
+    semantic_hardneg_margin = float(getattr(args, 'semantic_hardneg_margin', 0.05))
+    semantic_hardneg_eps = float(getattr(args, 'semantic_hardneg_eps', 1e-8))
+    semantic_hosthard_tau = float(getattr(args, 'semantic_hosthard_tau', 0.1))
+    semantic_hosthard_eps = float(getattr(args, 'semantic_hosthard_eps', 1e-8))
 
     if not use_prototype_branch:
         if use_prototype_bank:
@@ -961,20 +1215,8 @@ def validate_runtime_args_namespace(args) -> None:
             raise ValueError('host_type=clip with use_prototype_branch=false requires token_policy=eos_only.')
         if retrieval_mode != 'clip_bidirectional':
             raise ValueError('host_type=clip with use_prototype_branch=false requires retrieval_mode=clip_bidirectional.')
-        if not bool(getattr(args, 'use_loss_ret', True)):
-            raise ValueError('host_type=clip with use_prototype_branch=false requires use_loss_ret=true.')
-        if str(getattr(args, 'retrieval_scorer', 'exact')).lower() != 'exact':
-            raise ValueError('host_type=clip with use_prototype_branch=false requires retrieval_scorer=exact.')
         incompatible_flags = {
-            'use_loss_proxy_image': bool(getattr(args, 'use_loss_proxy_image', False)),
-            'use_loss_proxy_text': bool(getattr(args, 'use_loss_proxy_text', False)),
-            'use_loss_proxy_text_exact': bool(getattr(args, 'use_loss_proxy_text_exact', False)),
-            'use_loss_align': bool(getattr(args, 'use_loss_align', False)),
-            'use_loss_dir': bool(getattr(args, 'use_loss_dir', False)),
-            'use_loss_gap': bool(getattr(args, 'use_loss_gap', False)),
-            'use_loss_sup': bool(getattr(args, 'use_loss_sup', False)),
             'use_loss_diag': bool(getattr(args, 'use_loss_diag', False)),
-            'use_loss_support': bool(getattr(args, 'use_loss_support', False)),
             'use_balancing_loss': bool(getattr(args, 'use_balancing_loss', False)),
             'use_diversity_loss': bool(getattr(args, 'use_diversity_loss', False)),
         }
@@ -984,16 +1226,55 @@ def validate_runtime_args_namespace(args) -> None:
                 'host_type=clip with use_prototype_branch=false does not support prototype/auxiliary losses. '
                 f'Disable: {enabled_incompatible}.'
             )
-    elif retrieval_mode == 'clip_bidirectional':
-        raise ValueError(
-            'retrieval_mode=clip_bidirectional is only supported when '
-            'host_type=clip and use_prototype_branch=false.'
-        )
 
     if use_prototype_branch and use_prototype_bank and not use_image_conditioned_pooling:
         raise ValueError(
             'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
             'Prototype-routed training with text-only pooling is no longer supported.'
+        )
+    if semantic_target_temperature <= 0.0:
+        raise ValueError('semantic_target_temperature must be positive.')
+    if semantic_pred_temperature <= 0.0:
+        raise ValueError('semantic_pred_temperature must be positive.')
+    if semantic_recompute_interval <= 0:
+        raise ValueError('semantic_recompute_interval must be a positive integer.')
+    if semantic_min_cluster_count_for_pbt <= 0.0:
+        raise ValueError('semantic_min_cluster_count_for_pbt must be positive.')
+    if scheduler_total_epochs_raw is not None:
+        try:
+            scheduler_total_epochs = int(scheduler_total_epochs_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('scheduler_total_epochs must be a positive integer when provided.') from exc
+        if scheduler_total_epochs <= 0:
+            raise ValueError('scheduler_total_epochs must be a positive integer when provided.')
+    if semantic_hardneg_margin < 0.0:
+        raise ValueError('semantic_hardneg_margin must be non-negative.')
+    if semantic_hardneg_eps <= 0.0:
+        raise ValueError('semantic_hardneg_eps must be positive.')
+    if semantic_hosthard_tau <= 0.0:
+        raise ValueError('semantic_hosthard_tau must be positive.')
+    if semantic_hosthard_eps <= 0.0:
+        raise ValueError('semantic_hosthard_eps must be positive.')
+    if use_loss_semantic_pbt and not use_prototype_branch:
+        raise ValueError('use_loss_semantic_pbt requires use_prototype_branch=true.')
+    if use_loss_semantic_hardneg_margin and not use_prototype_branch:
+        raise ValueError('use_loss_semantic_hardneg_margin requires use_prototype_branch=true.')
+    if use_loss_semantic_hosthard_weighted and not use_prototype_branch:
+        raise ValueError('use_loss_semantic_hosthard_weighted requires use_prototype_branch=true.')
+    if use_loss_semantic_pbt and runtime_mode == 'host_only':
+        raise ValueError(
+            'use_loss_semantic_pbt is incompatible with runtime_mode=host_only because host-only runtime disables '
+            'prototype loss computation. Use runtime_mode=joint_training.'
+        )
+    if use_loss_semantic_hardneg_margin and runtime_mode == 'host_only':
+        raise ValueError(
+            'use_loss_semantic_hardneg_margin is incompatible with runtime_mode=host_only because host-only runtime '
+            'disables prototype loss computation. Use runtime_mode=joint_training.'
+        )
+    if use_loss_semantic_hosthard_weighted and runtime_mode == 'host_only':
+        raise ValueError(
+            'use_loss_semantic_hosthard_weighted is incompatible with runtime_mode=host_only because host-only runtime '
+            'disables prototype loss computation. Use runtime_mode=joint_training.'
         )
 
 

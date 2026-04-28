@@ -42,6 +42,35 @@ class PrototypeConditionedTextHead(nn.Module):
         local_routing_use_adapter: bool = True,
         local_routing_adapter_dim: Optional[int] = None,
         local_routing_normalize_inputs: bool = True,
+        prototype_method_role: str = 'retrieval_branch',
+        prototype_semantic_enabled: bool = False,
+        prototype_recompute_enabled: bool = False,
+        prototype_bank_source: str = 'learnable_legacy',
+        prototype_use_base_for_semantic_targets: bool = True,
+        semantic_structure_enabled: bool = False,
+        semantic_feature_space: str = 'prototype_projected',
+        semantic_pbt_enabled: bool = True,
+        semantic_soft_target_enabled: bool = True,
+        semantic_target_temperature: float = 0.01,
+        semantic_pred_temperature: float = 0.07,
+        semantic_recompute_schedule: str = 'epoch',
+        semantic_recompute_interval: int = 1,
+        semantic_min_cluster_count_for_pbt: float = 1.0,
+        semantic_empty_cluster_policy: str = 'skip',
+        semantic_text_teacher_source: str = 'exact_diagonal',
+        semantic_text_student_source: str = 'surrogate_diagonal',
+        semantic_image_student_source: str = 'image_semantic_feature',
+        semantic_recompute_start_epoch: int = 0,
+        semantic_recompute_start_step: int = 0,
+        semantic_loss_ramp_start_epoch: int = 0,
+        semantic_loss_ramp_start_step: int = 0,
+        semantic_loss_ramp_epochs: int = 0,
+        semantic_loss_ramp_steps: int = 0,
+        semantic_ramp_loss_diag: bool = False,
+        semantic_ramp_loss_semantic_pbt: bool = True,
+        semantic_ramp_loss_semantic_hardneg_margin: bool = True,
+        semantic_ramp_loss_semantic_hosthard_weighted: bool = True,
+        semantic_ramp_use_prototype: bool = False,
         token_scoring_type: str = 'cosine',
         token_temperature: float = 0.07,
         token_policy: str = 'content_only',
@@ -57,37 +86,21 @@ class PrototypeConditionedTextHead(nn.Module):
         use_image_conditioned_pooling: bool = True,
         num_classes: int = 0,
         proxy_temperature: float = 0.07,
-        lambda_proxy: float = 1.0,
-        lambda_proxy_image: Optional[float] = None,
-        lambda_proxy_text: Optional[float] = None,
-        lambda_proxy_text_exact: Optional[float] = None,
-        use_loss_proxy_image: bool = True,
-        use_loss_proxy_text: bool = True,
-        use_loss_proxy_text_exact: bool = True,
-        use_loss_align: bool = True,
-        lambda_align: float = 1.0,
-        use_loss_dir: Optional[bool] = None,
-        lambda_dir: Optional[float] = None,
-        use_loss_gap: bool = True,
-        lambda_gap: float = 0.5,
-        fidelity_gap_margin: float = 0.05,
-        use_loss_sup: Optional[bool] = None,
-        lambda_sup: Optional[float] = None,
-        prototype_support_target: Optional[float] = None,
         use_loss_diag: bool = True,
         lambda_diag: float = 1.0,
         diag_temperature: float = 0.07,
-        use_loss_ret: bool = True,
-        lambda_ret: float = 1.0,
-        use_loss_weight_ret: bool = False,
-        lambda_weight_ret: float = 0.0,
-        weight_ret_margin_delta: float = 0.0,
-        weight_ret_tau: float = 0.5,
-        weight_ret_detach_host: bool = True,
-        weight_ret_normalize_mean_one: bool = True,
-        use_loss_support: bool = False,
-        support_loss_weight: float = 0.0,
-        support_min: float = 2.0,
+        use_loss_semantic_pbt: bool = False,
+        lambda_semantic_pbt: float = 0.0,
+        use_loss_semantic_hardneg_margin: bool = False,
+        lambda_semantic_hardneg_margin: float = 0.0,
+        semantic_hardneg_margin: float = 0.05,
+        semantic_hardneg_eps: float = 1e-8,
+        use_loss_semantic_hosthard_weighted: bool = False,
+        lambda_semantic_hosthard_weighted: float = 0.0,
+        semantic_hosthard_margin_ref: float = 0.0,
+        semantic_hosthard_tau: float = 0.1,
+        semantic_hosthard_eps: float = 1e-8,
+        semantic_hosthard_normalize_weights: bool = True,
         use_diversity_loss: bool = False,
         diversity_loss_weight: float = 0.0,
         use_balance_loss: bool = False,
@@ -95,8 +108,6 @@ class PrototypeConditionedTextHead(nn.Module):
         contrastive_temperature_init: float = 0.07,
         learnable_contrastive_temperature: bool = False,
         dead_prototype_threshold: float = 0.005,
-        use_host_deflated_input: bool = False,
-        host_deflated_input_eps: float = 1e-8,
         collect_debug_metrics: bool = True,
     ):
         super().__init__()
@@ -107,15 +118,76 @@ class PrototypeConditionedTextHead(nn.Module):
         self.dead_prototype_threshold = float(dead_prototype_threshold)
         self.use_image_conditioned_pooling = bool(use_image_conditioned_pooling)
         self.collect_debug_metrics = bool(collect_debug_metrics)
-        self.use_host_deflated_input = bool(use_host_deflated_input)
-        self.host_deflated_input_eps = float(host_deflated_input_eps)
-        if self.host_deflated_input_eps <= 0:
-            raise ValueError('host_deflated_input_eps must be positive.')
         self.routing_source = str(routing_source).lower()
         if self.routing_source not in {'global', 'local_evidence'}:
             raise ValueError(
                 f'Unsupported routing_source={routing_source!r}. Allowed values: [\"global\", \"local_evidence\"].'
             )
+        self.prototype_method_role = str(prototype_method_role).lower()
+        if self.prototype_method_role not in {'retrieval_branch', 'semantic_structure'}:
+            raise ValueError(
+                f'Unsupported prototype_method_role={prototype_method_role!r}. '
+                'Allowed values: [\"retrieval_branch\", \"semantic_structure\"].'
+            )
+        self.prototype_semantic_enabled = bool(prototype_semantic_enabled)
+        self.semantic_structure_enabled = bool(semantic_structure_enabled)
+        self.prototype_recompute_enabled = bool(prototype_recompute_enabled)
+        self.prototype_bank_source = str(prototype_bank_source).lower()
+        if self.prototype_bank_source in {'', 'auto'}:
+            self.prototype_bank_source = 'recomputed_kmeans' if self.prototype_method_role == 'semantic_structure' else 'learnable_legacy'
+        if self.prototype_bank_source not in {'learnable_legacy', 'recomputed_kmeans'}:
+            raise ValueError(
+                f'Unsupported prototype_bank_source={prototype_bank_source!r}. '
+                'Allowed values: [\"learnable_legacy\", \"recomputed_kmeans\"].'
+            )
+        self.prototype_use_base_for_semantic_targets = bool(prototype_use_base_for_semantic_targets)
+        self.semantic_feature_space = str(semantic_feature_space).lower()
+        self.semantic_pbt_enabled = bool(semantic_pbt_enabled)
+        self.semantic_soft_target_enabled = bool(semantic_soft_target_enabled)
+        self.semantic_target_temperature = float(semantic_target_temperature)
+        self.semantic_pred_temperature = float(semantic_pred_temperature)
+        self.semantic_recompute_schedule = str(semantic_recompute_schedule).lower()
+        if self.semantic_recompute_schedule not in {'epoch', 'steps', 'stage'}:
+            raise ValueError(
+                f'Unsupported semantic_recompute_schedule={semantic_recompute_schedule!r}. '
+                'Allowed values: [\"epoch\", \"steps\", \"stage\"].'
+            )
+        self.semantic_recompute_interval = max(int(semantic_recompute_interval), 1)
+        self.semantic_min_cluster_count_for_pbt = float(semantic_min_cluster_count_for_pbt)
+        self.semantic_empty_cluster_policy = str(semantic_empty_cluster_policy).lower()
+        if self.semantic_empty_cluster_policy not in {'skip', 'reseed'}:
+            raise ValueError(
+                f'Unsupported semantic_empty_cluster_policy={semantic_empty_cluster_policy!r}. '
+                'Allowed values: [\"skip\", \"reseed\"].'
+            )
+        self.semantic_text_teacher_source = str(semantic_text_teacher_source).lower()
+        self.semantic_text_student_source = str(semantic_text_student_source).lower()
+        self.semantic_image_student_source = str(semantic_image_student_source).lower()
+        self.semantic_recompute_start_epoch = max(int(semantic_recompute_start_epoch), 0)
+        self.semantic_recompute_start_step = max(int(semantic_recompute_start_step), 0)
+        self.semantic_loss_ramp_start_epoch = max(int(semantic_loss_ramp_start_epoch), 0)
+        self.semantic_loss_ramp_start_step = max(int(semantic_loss_ramp_start_step), 0)
+        self.semantic_loss_ramp_epochs = max(int(semantic_loss_ramp_epochs), 0)
+        self.semantic_loss_ramp_steps = max(int(semantic_loss_ramp_steps), 0)
+        self.semantic_ramp_loss_diag = bool(semantic_ramp_loss_diag)
+        self.semantic_ramp_loss_semantic_pbt = bool(semantic_ramp_loss_semantic_pbt)
+        self.semantic_ramp_loss_semantic_hardneg_margin = bool(semantic_ramp_loss_semantic_hardneg_margin)
+        self.semantic_ramp_loss_semantic_hosthard_weighted = bool(semantic_ramp_loss_semantic_hosthard_weighted)
+        self.semantic_ramp_use_prototype = bool(semantic_ramp_use_prototype)
+        self.defer_prototype_init_until_semantic_start = bool(
+            self.semantic_ramp_use_prototype
+            and self.prototype_method_role == 'semantic_structure'
+            and self.prototype_semantic_enabled
+            and self.semantic_structure_enabled
+            and (
+                self.semantic_recompute_start_epoch > 0
+                or self.semantic_recompute_start_step > 0
+            )
+        )
+        self._semantic_recompute_count = 0
+        self._semantic_last_recompute_epoch: Optional[int] = None
+        self._semantic_last_recompute_step: Optional[int] = None
+        self._semantic_cache_initialized = False
         resolved_local_temperature = routing_temperature if local_routing_temperature is None else local_routing_temperature
         self.local_routing_temperature = float(resolved_local_temperature)
         if self.local_routing_temperature <= 0:
@@ -146,6 +218,19 @@ class PrototypeConditionedTextHead(nn.Module):
             init_tol=prototype_init_tol,
             init_seed=prototype_init_seed,
             init_features=prototype_init_features,
+            defer_initialization=self.defer_prototype_init_until_semantic_start,
+        )
+        # Recomputed semantic anchors are ephemeral runtime caches and should not break
+        # checkpoint compatibility when older checkpoints are loaded.
+        self.register_buffer(
+            'semantic_base_prototypes_cache',
+            torch.empty(self.prototype_bank.num_prototypes, self.prototype_dim),
+            persistent=False,
+        )
+        self.register_buffer(
+            'semantic_cluster_counts_cache',
+            torch.zeros(self.prototype_bank.num_prototypes),
+            persistent=False,
         )
         self.contextualizer = PrototypeContextualizer(
             enabled=contextualization_enabled,
@@ -202,11 +287,6 @@ class PrototypeConditionedTextHead(nn.Module):
             normalize_output=normalize_projector_outputs,
             projector_type=projector_type,
         )
-        resolved_use_loss_dir = bool(use_loss_diag) if use_loss_dir is None else bool(use_loss_dir)
-        resolved_lambda_dir = float(lambda_diag) if lambda_dir is None else float(lambda_dir)
-        resolved_use_loss_sup = bool(use_loss_support) if use_loss_sup is None else bool(use_loss_sup)
-        resolved_lambda_sup = float(support_loss_weight) if lambda_sup is None else float(lambda_sup)
-        resolved_support_target = support_min if prototype_support_target is None else prototype_support_target
         self.losses = PrototypeLosses(
             temperature_init=contrastive_temperature_init,
             learnable_temperature=learnable_contrastive_temperature,
@@ -214,37 +294,31 @@ class PrototypeConditionedTextHead(nn.Module):
             num_classes=num_classes,
             embedding_dim=self.projector_output_dim,
             proxy_temperature=proxy_temperature,
-            lambda_proxy=lambda_proxy,
-            lambda_proxy_image=lambda_proxy_image,
-            lambda_proxy_text=lambda_proxy_text,
-            lambda_proxy_text_exact=lambda_proxy_text_exact,
-            use_loss_proxy_image=use_loss_proxy_image,
-            use_loss_proxy_text=use_loss_proxy_text,
-            use_loss_proxy_text_exact=use_loss_proxy_text_exact,
-            use_loss_align=use_loss_align,
-            lambda_align=lambda_align,
-            use_loss_dir=resolved_use_loss_dir,
-            lambda_dir=resolved_lambda_dir,
-            use_loss_gap=use_loss_gap,
-            lambda_gap=lambda_gap,
-            fidelity_gap_margin=fidelity_gap_margin,
-            use_loss_sup=resolved_use_loss_sup,
-            lambda_sup=resolved_lambda_sup,
-            prototype_support_target=resolved_support_target,
             use_loss_diag=use_loss_diag,
             lambda_diag=lambda_diag,
             diag_temperature=diag_temperature,
-            use_loss_ret=use_loss_ret,
-            lambda_ret=lambda_ret,
-            use_loss_weight_ret=use_loss_weight_ret,
-            lambda_weight_ret=lambda_weight_ret,
-            weight_ret_margin_delta=weight_ret_margin_delta,
-            weight_ret_tau=weight_ret_tau,
-            weight_ret_detach_host=weight_ret_detach_host,
-            weight_ret_normalize_mean_one=weight_ret_normalize_mean_one,
-            use_loss_support=use_loss_support,
-            support_loss_weight=support_loss_weight,
-            support_min=support_min,
+            use_loss_semantic_pbt=use_loss_semantic_pbt,
+            lambda_semantic_pbt=lambda_semantic_pbt,
+            use_loss_semantic_hardneg_margin=use_loss_semantic_hardneg_margin,
+            lambda_semantic_hardneg_margin=lambda_semantic_hardneg_margin,
+            semantic_hardneg_margin=semantic_hardneg_margin,
+            semantic_hardneg_eps=semantic_hardneg_eps,
+            use_loss_semantic_hosthard_weighted=use_loss_semantic_hosthard_weighted,
+            lambda_semantic_hosthard_weighted=lambda_semantic_hosthard_weighted,
+            semantic_hosthard_margin_ref=semantic_hosthard_margin_ref,
+            semantic_hosthard_tau=semantic_hosthard_tau,
+            semantic_hosthard_eps=semantic_hosthard_eps,
+            semantic_hosthard_normalize_weights=semantic_hosthard_normalize_weights,
+            prototype_method_role=prototype_method_role,
+            prototype_semantic_enabled=prototype_semantic_enabled,
+            semantic_structure_enabled=semantic_structure_enabled,
+            semantic_feature_space=semantic_feature_space,
+            semantic_pbt_enabled=semantic_pbt_enabled,
+            semantic_soft_target_enabled=semantic_soft_target_enabled,
+            semantic_target_temperature=semantic_target_temperature,
+            semantic_pred_temperature=semantic_pred_temperature,
+            semantic_min_cluster_count_for_pbt=semantic_min_cluster_count_for_pbt,
+            semantic_empty_cluster_policy=semantic_empty_cluster_policy,
             use_diversity_loss=use_diversity_loss,
             diversity_loss_weight=diversity_loss_weight,
             use_balance_loss=use_balance_loss,
@@ -290,7 +364,7 @@ class PrototypeConditionedTextHead(nn.Module):
             'routing_effective_support_ipr_p90': support_quantiles[2].detach(),
             'routing_support_below_2_frac': (support_ipr < 2.0).float().mean().detach(),
             'routing_support_below_3_frac': (support_ipr < 3.0).float().mean().detach(),
-            'routing_support_below_min_frac': (support_ipr < self.losses.support_min).float().mean().detach(),
+            'routing_support_below_min_frac': (support_ipr < 2.0).float().mean().detach(),
             # These summarize whether routing is truly mixed or mostly top-1 plus residual mass.
             'routing_top1_minus_top2': (top1_values - top2_values).mean().detach(),
             'routing_top2_mass': top_values[:, :min(2, top_values.size(1))].sum(dim=-1).mean().detach(),
@@ -348,77 +422,6 @@ class PrototypeConditionedTextHead(nn.Module):
             f'{prefix}_pairwise_cosine_std': off_diagonal.std(unbiased=False).detach(),
             f'{prefix}_pairwise_cosine_max': off_diagonal.max().detach(),
         }
-
-    def _compute_proto_image_path_diagnostics(
-        self,
-        image_base_features: torch.Tensor,
-        image_proxy_features: torch.Tensor,
-        image_projected: torch.Tensor,
-        eps: float = 1e-8,
-    ) -> Tuple[Dict[str, torch.Tensor], Dict[str, object]]:
-        metrics: Dict[str, torch.Tensor] = {}
-        debug_extras: Dict[str, object] = {}
-
-        def _stats(prefix: str, values: torch.Tensor) -> Dict[str, torch.Tensor]:
-            return {
-                f'{prefix}_mean': values.mean().detach(),
-                f'{prefix}_std': values.std(unbiased=False).detach(),
-                f'{prefix}_min': values.min().detach(),
-                f'{prefix}_max': values.max().detach(),
-            }
-
-        with torch.no_grad():
-            base = image_base_features.detach()
-            proxy = image_proxy_features.detach()
-            projected = image_projected.detach()
-
-            if base.ndim < 2 or proxy.ndim < 2 or projected.ndim < 2:
-                debug_extras['proto_image_projected_vs_base_cos_reason'] = 'invalid_rank'
-                metrics['proto_image_projected_vs_base_cos_available'] = projected.new_zeros(()).detach()
-                return metrics, debug_extras
-
-            q_proj = proxy - base
-            base_vec = base.float().reshape(base.size(0), -1)
-            q_proj_vec = q_proj.float().reshape(q_proj.size(0), -1)
-            projected_vec = projected.float().reshape(projected.size(0), -1)
-
-            metrics['proto_image_base_feature_dim'] = base.new_tensor(float(base.size(-1))).detach()
-            metrics['proto_q_proj_feature_dim'] = q_proj.new_tensor(float(q_proj.size(-1))).detach()
-            metrics['proto_image_projected_feature_dim'] = projected.new_tensor(float(projected.size(-1))).detach()
-
-            norm_a = base_vec.norm(dim=-1)
-            norm_q = q_proj_vec.norm(dim=-1)
-            ratio = norm_q / (norm_a + float(eps))
-            metrics.update(_stats('proto_q_injection_ratio', ratio))
-            metrics['proto_q_injection_ratio_finite'] = torch.isfinite(ratio).float().mean().detach()
-
-            exact_r2_available = (base_vec.shape == projected_vec.shape)
-            metrics['proto_image_projected_vs_base_cos_available'] = base.new_tensor(1.0 if exact_r2_available else 0.0).detach()
-
-            if exact_r2_available:
-                exact_cos = (F.normalize(projected_vec, dim=-1, eps=eps) * F.normalize(base_vec, dim=-1, eps=eps)).sum(dim=-1)
-                metrics.update(_stats('proto_image_projected_vs_base_cos', exact_cos))
-                metrics['proto_image_projected_vs_base_cos_finite'] = torch.isfinite(exact_cos).float().mean().detach()
-                return metrics, debug_extras
-
-            debug_extras['proto_image_projected_vs_base_cos_reason'] = 'dim_mismatch'
-            fork_devices = []
-            if base.is_cuda:
-                device_index = base.device.index if base.device.index is not None else torch.cuda.current_device()
-                fork_devices = [int(device_index)]
-            with torch.random.fork_rng(devices=fork_devices, enabled=True):
-                projected_base = self.image_projector(base)
-            projected_base_vec = projected_base.detach().float().reshape(projected_base.size(0), -1)
-            if projected_base_vec.shape == projected_vec.shape:
-                aligned_cos = (
-                    F.normalize(projected_base_vec, dim=-1, eps=eps)
-                    * F.normalize(projected_vec, dim=-1, eps=eps)
-                ).sum(dim=-1)
-                metrics.update(_stats('proto_image_projected_vs_base_aligned_cos', aligned_cos))
-                metrics['proto_image_projected_vs_base_aligned_cos_finite'] = torch.isfinite(aligned_cos).float().mean().detach()
-            else:
-                debug_extras['proto_image_projected_vs_base_aligned_cos_reason'] = 'dim_mismatch_after_projection'
-        return metrics, debug_extras
 
     def _collect_scalar_metrics(
         self,
@@ -502,12 +505,7 @@ class PrototypeConditionedTextHead(nn.Module):
             if 'local_routing_effective_support' in router_debug:
                 metrics['local_routing_effective_support'] = router_debug['local_routing_effective_support']
             for metric_name in (
-                'host_deflated_input_enabled',
-                'host_deflated_input_applied',
-                'local_token_raw_norm_mean',
-                'local_token_residual_norm_mean',
-                'local_token_raw_host_cos_mean',
-                'local_token_residual_host_cos_mean',
+                'local_token_norm_mean',
             ):
                 if metric_name in router_debug:
                     metrics[metric_name] = router_debug[metric_name]
@@ -516,48 +514,361 @@ class PrototypeConditionedTextHead(nn.Module):
             metrics['beta_max_prob'] = pooler_debug['beta_max_prob']
         return metrics
 
-    def compute_host_deflated_patch_tokens(
-        self,
-        patch_tokens: torch.Tensor,
-        img_global: torch.Tensor,
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        if patch_tokens.ndim != 3:
-            raise ValueError('patch_tokens must have shape [B, M, D].')
-        if img_global.ndim != 2:
-            raise ValueError('img_global must have shape [B, D].')
-        if patch_tokens.size(0) != img_global.size(0):
-            raise ValueError('patch_tokens and img_global must share the same batch size.')
-        if patch_tokens.size(-1) != img_global.size(-1):
-            raise ValueError('patch_tokens and img_global must share the same feature dimension.')
+    def _semantic_mode_enabled(self) -> bool:
+        return bool(
+            self.prototype_method_role == 'semantic_structure'
+            and self.prototype_semantic_enabled
+            and self.semantic_structure_enabled
+        )
 
-        eps = self.host_deflated_input_eps
-        host_unit = F.normalize(img_global.detach(), dim=-1, eps=eps)
-        projection = (patch_tokens * host_unit.unsqueeze(1)).sum(dim=-1, keepdim=True) * host_unit.unsqueeze(1)
-        residual = patch_tokens - projection
-        residual_normalized = F.normalize(residual, dim=-1, eps=eps)
+    def _semantic_schedule_started(self, *, epoch: Optional[int], current_step: Optional[int]) -> bool:
+        if epoch is not None and int(epoch) < int(self.semantic_recompute_start_epoch):
+            return False
+        if current_step is not None and int(current_step) < int(self.semantic_recompute_start_step):
+            return False
+        return True
 
-        raw_unit = F.normalize(patch_tokens, dim=-1, eps=eps)
-        metrics = {
-            'local_token_raw_norm_mean': patch_tokens.norm(dim=-1).mean().detach(),
-            'local_token_residual_norm_mean': residual.norm(dim=-1).mean().detach(),
-            'local_token_raw_host_cos_mean': (raw_unit * host_unit.unsqueeze(1)).sum(dim=-1).mean().detach(),
-            'local_token_residual_host_cos_mean': (residual_normalized * host_unit.unsqueeze(1)).sum(dim=-1).mean().detach(),
+    def _prototype_loss_scale(self, *, epoch: Optional[int], current_step: Optional[int]) -> float:
+        if not self._semantic_mode_enabled():
+            # Ramp controls are semantic-mode scheduling knobs; keep legacy retrieval
+            # behavior unaffected when semantic mode is not active.
+            return 1.0
+        if not self._semantic_schedule_started(epoch=epoch, current_step=current_step):
+            return 0.0
+        scale = 1.0
+        if self.semantic_loss_ramp_epochs > 0 and epoch is not None:
+            epoch_progress = (float(epoch) - float(self.semantic_loss_ramp_start_epoch) + 1.0) / float(self.semantic_loss_ramp_epochs)
+            scale = min(scale, max(0.0, min(epoch_progress, 1.0)))
+        if self.semantic_loss_ramp_steps > 0 and current_step is not None:
+            step_progress = (float(current_step) - float(self.semantic_loss_ramp_start_step) + 1.0) / float(self.semantic_loss_ramp_steps)
+            scale = min(scale, max(0.0, min(step_progress, 1.0)))
+        return float(max(scale, 0.0))
+
+    def _resolve_loss_scales(self, *, ramp_scale: float, prototype_usage_enabled: bool) -> Dict[str, float]:
+        if not prototype_usage_enabled:
+            return {
+                'prototype': 0.0,
+                'diag': 0.0,
+                'semantic_pbt': 0.0,
+                'semantic_hardneg_margin': 0.0,
+                'semantic_hosthard_weighted': 0.0,
+            }
+        return {
+            'prototype': float(ramp_scale),
+            'diag': float(ramp_scale) if self.semantic_ramp_loss_diag else 1.0,
+            'semantic_pbt': float(ramp_scale) if self.semantic_ramp_loss_semantic_pbt else 1.0,
+            'semantic_hardneg_margin': float(ramp_scale) if self.semantic_ramp_loss_semantic_hardneg_margin else 1.0,
+            'semantic_hosthard_weighted': (
+                float(ramp_scale) if self.semantic_ramp_loss_semantic_hosthard_weighted else 1.0
+            ),
         }
-        return residual_normalized, metrics
 
-    def get_prototype_context(self, return_debug: bool = False) -> Dict[str, object]:
-        prototypes, bank_debug = self.prototype_bank(return_debug=True)
-        contextualized, contextual_debug = self.contextualizer(prototypes, return_debug=True)
+    def _zero_loss_outputs(self, reference: torch.Tensor) -> Dict[str, torch.Tensor]:
+        zero = reference.new_zeros(())
+        return {
+            'loss_total': zero,
+            'loss_semantic_pbt': zero,
+            'loss_semantic_hardneg_margin': zero,
+            'loss_semantic_hardneg_margin_image': zero,
+            'loss_semantic_hardneg_margin_text': zero,
+            'loss_semantic_hosthard_weighted': zero,
+            'loss_semantic_hosthard_weighted_image': zero,
+            'loss_semantic_hosthard_weighted_text': zero,
+            'loss_diag': zero,
+            'loss_diversity': zero,
+            'loss_balance': zero,
+            'loss_semantic_pbt_weighted': zero,
+            'loss_semantic_hardneg_margin_weighted': zero,
+            'loss_semantic_hosthard_weighted_weighted': zero,
+            'loss_diag_weighted': zero,
+            'loss_diversity_weighted': zero,
+            'loss_balance_weighted': zero,
+            'use_loss_semantic_pbt': zero,
+            'lambda_semantic_pbt': zero,
+            'use_loss_semantic_hardneg_margin': zero,
+            'lambda_semantic_hardneg_margin': zero,
+            'use_loss_semantic_hosthard_weighted': zero,
+            'lambda_semantic_hosthard_weighted': zero,
+            'semantic_hardneg_margin': zero,
+            'semantic_hardneg_eps': zero,
+            'semantic_hosthard_margin_ref': zero,
+            'semantic_hosthard_tau': zero,
+            'semantic_hosthard_eps': zero,
+            'semantic_hosthard_normalize_weights': zero,
+            'prototype_loss_scale': zero,
+            'prototype_loss_ramp_scale': zero,
+            'loss_diag_scale': zero,
+            'loss_semantic_pbt_scale': zero,
+            'loss_semantic_hardneg_margin_scale': zero,
+            'loss_semantic_hosthard_weighted_scale': zero,
+            'semantic_loss_scale': zero,
+            'use_loss_diag': zero,
+            'lambda_diag': zero,
+            'lambda_div': zero,
+            'lambda_bal': zero,
+            'proxy_temperature': zero,
+            'diag_temperature': zero,
+            'retrieval_temperature': zero,
+            'logit_scale': zero,
+            'debug_metrics': {},
+        }
+
+    # Backward-compatible alias kept while downstream references migrate.
+    def _semantic_loss_scale(self, *, epoch: Optional[int], current_step: Optional[int]) -> float:
+        return self._prototype_loss_scale(epoch=epoch, current_step=current_step)
+
+    def _should_recompute_semantic_anchors(self, *, epoch: Optional[int], current_step: Optional[int]) -> bool:
+        if not self._semantic_mode_enabled():
+            return False
+        if self.prototype_bank_source != 'recomputed_kmeans':
+            return False
+        if not self.prototype_recompute_enabled:
+            return False
+        if not self.training:
+            return False
+        if not self._semantic_schedule_started(epoch=epoch, current_step=current_step):
+            return False
+
+        schedule = self.semantic_recompute_schedule
+        interval = max(int(self.semantic_recompute_interval), 1)
+        if not self._semantic_cache_initialized:
+            return True
+        if schedule in {'epoch', 'stage'}:
+            if epoch is None:
+                return False
+            if self._semantic_last_recompute_epoch is None:
+                return True
+            return (int(epoch) - int(self._semantic_last_recompute_epoch)) >= interval
+        if schedule == 'steps':
+            if current_step is None:
+                return False
+            if self._semantic_last_recompute_step is None:
+                return True
+            return (int(current_step) - int(self._semantic_last_recompute_step)) >= interval
+        return False
+
+    def _recompute_kmeans_anchors(
+        self,
+        features: torch.Tensor,
+        *,
+        num_clusters: int,
+        max_iters: int = 15,
+    ) -> Dict[str, torch.Tensor]:
+        detached = features.detach().float()
+        if detached.ndim != 2 or detached.size(0) <= 0:
+            raise ValueError('Semantic recompute features must have shape [B, D] with B > 0.')
+        detached = F.normalize(detached, dim=-1)
+        num_samples, feature_dim = detached.shape
+        cluster_count = int(max(1, num_clusters))
+        initial_indices = torch.arange(cluster_count, device=detached.device) % max(num_samples, 1)
+        centers = detached.index_select(0, initial_indices).clone()
+        if centers.size(-1) != feature_dim:
+            raise ValueError('Semantic anchor recompute produced a feature-dimension mismatch.')
+
+        empty_cluster_count = 0
+        for _ in range(max(int(max_iters), 1)):
+            similarity = detached @ centers.t()
+            assignments = similarity.argmax(dim=-1)
+            counts = torch.bincount(assignments, minlength=cluster_count).to(dtype=detached.dtype)
+            updated_centers = centers.clone()
+            for cluster_index in range(cluster_count):
+                member_mask = assignments.eq(cluster_index)
+                if member_mask.any():
+                    updated_centers[cluster_index] = F.normalize(
+                        detached[member_mask].mean(dim=0, keepdim=True),
+                        dim=-1,
+                    ).squeeze(0)
+                    continue
+                empty_cluster_count += 1
+                if self.semantic_empty_cluster_policy == 'reseed':
+                    least_fit_index = similarity.max(dim=1).values.argmin()
+                    updated_centers[cluster_index] = detached[least_fit_index]
+            center_shift = (updated_centers - centers).norm(dim=-1).max()
+            centers = updated_centers
+            if float(center_shift.item()) <= 1e-5:
+                break
+
+        final_similarity = detached @ centers.t()
+        final_assignments = final_similarity.argmax(dim=-1)
+        final_counts = torch.bincount(final_assignments, minlength=cluster_count).to(dtype=detached.dtype)
+        return {
+            'centers': F.normalize(centers, dim=-1),
+            'counts': final_counts,
+            'empty_cluster_count': final_counts.eq(0).sum().to(dtype=detached.dtype),
+            'empty_cluster_reseed_events': detached.new_tensor(float(empty_cluster_count)),
+        }
+
+    def _maybe_refresh_semantic_anchor_cache(
+        self,
+        *,
+        features: Optional[torch.Tensor],
+        epoch: Optional[int],
+        current_step: Optional[int],
+    ) -> Dict[str, torch.Tensor]:
+        diagnostics: Dict[str, torch.Tensor] = {}
+        if not self._should_recompute_semantic_anchors(epoch=epoch, current_step=current_step):
+            diagnostics['semantic_recompute_triggered'] = self.semantic_cluster_counts_cache.new_zeros(())
+            return diagnostics
+        if features is None or not isinstance(features, torch.Tensor) or features.ndim != 2 or features.size(0) <= 0:
+            diagnostics['semantic_recompute_triggered'] = self.semantic_cluster_counts_cache.new_zeros(())
+            diagnostics['semantic_recompute_skipped_no_features'] = self.semantic_cluster_counts_cache.new_ones(())
+            return diagnostics
+
+        with torch.no_grad():
+            recomputed = self._recompute_kmeans_anchors(
+                features=features,
+                num_clusters=self.prototype_bank.num_prototypes,
+                max_iters=max(int(getattr(self.prototype_bank, 'init_max_iters', 15)), 1),
+            )
+            centers = recomputed['centers'].to(
+                device=self.semantic_base_prototypes_cache.device,
+                dtype=self.semantic_base_prototypes_cache.dtype,
+            )
+            counts = recomputed['counts'].to(
+                device=self.semantic_cluster_counts_cache.device,
+                dtype=self.semantic_cluster_counts_cache.dtype,
+            )
+            if centers.shape != self.semantic_base_prototypes_cache.shape:
+                raise ValueError(
+                    'Recomputed semantic anchors shape mismatch: '
+                    f'expected {tuple(self.semantic_base_prototypes_cache.shape)} got {tuple(centers.shape)}.'
+                )
+            if counts.shape != self.semantic_cluster_counts_cache.shape:
+                raise ValueError(
+                    'Recomputed semantic cluster-count shape mismatch: '
+                    f'expected {tuple(self.semantic_cluster_counts_cache.shape)} got {tuple(counts.shape)}.'
+                )
+            self.semantic_base_prototypes_cache.copy_(centers)
+            self.semantic_cluster_counts_cache.copy_(counts)
+
+        self._semantic_cache_initialized = True
+        self._semantic_recompute_count += 1
+        self._semantic_last_recompute_epoch = None if epoch is None else int(epoch)
+        self._semantic_last_recompute_step = None if current_step is None else int(current_step)
+        diagnostics.update(
+            {
+                'semantic_recompute_triggered': centers.new_ones(()),
+                'semantic_recompute_count': centers.new_tensor(float(self._semantic_recompute_count)),
+                'semantic_empty_cluster_count': recomputed['empty_cluster_count'].detach(),
+                'semantic_empty_cluster_reseed_events': recomputed['empty_cluster_reseed_events'].detach(),
+            }
+        )
+        return diagnostics
+
+    def _compute_contextualized_from_base(
+        self,
+        base_prototypes: torch.Tensor,
+        *,
+        return_debug: bool,
+    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        del return_debug
+        contextualized, context_debug = self.contextualizer(base_prototypes, return_debug=True)
+        return contextualized, context_debug
+
+    def _prepare_semantic_anchor_features(
+        self,
+        anchor_prototypes: torch.Tensor,
+        *,
+        target_feature_dim: int,
+    ) -> Tuple[torch.Tensor, str]:
+        if anchor_prototypes.ndim != 2:
+            return anchor_prototypes, 'invalid_rank'
+        if anchor_prototypes.size(-1) == target_feature_dim and self.semantic_feature_space != 'prototype_projected':
+            return anchor_prototypes, 'prototype_native'
+
+        if self.semantic_feature_space == 'prototype_projected' or anchor_prototypes.size(-1) != target_feature_dim:
+            image_projected = self.image_projector(anchor_prototypes, return_debug=False)
+            text_projected = self.text_projector(anchor_prototypes, return_debug=False)
+            projected = F.normalize(0.5 * (image_projected + text_projected), dim=-1)
+            source = 'prototype_projected' if self.semantic_feature_space == 'prototype_projected' else 'auto_projected_dim_fix'
+            return projected, source
+
+        return anchor_prototypes, 'prototype_native'
+
+    def get_prototype_context(
+        self,
+        return_debug: bool = False,
+        *,
+        epoch: Optional[int] = None,
+        current_step: Optional[int] = None,
+        semantic_recompute_features: Optional[torch.Tensor] = None,
+    ) -> Dict[str, object]:
+        if hasattr(self.prototype_bank, 'is_initialized') and hasattr(self.prototype_bank, 'initialize_if_needed'):
+            needs_init = not bool(self.prototype_bank.is_initialized())
+            if needs_init:
+                if not self.defer_prototype_init_until_semantic_start:
+                    self.prototype_bank.initialize_if_needed()
+                elif (epoch is not None or current_step is not None) and self._semantic_schedule_started(
+                    epoch=epoch,
+                    current_step=current_step,
+                ):
+                    self.prototype_bank.initialize_if_needed()
+        legacy_prototypes, bank_debug = self.prototype_bank(return_debug=True)
+        recompute_debug = self._maybe_refresh_semantic_anchor_cache(
+            features=semantic_recompute_features,
+            epoch=epoch,
+            current_step=current_step,
+        )
+        semantic_mode = self._semantic_mode_enabled()
+        use_recomputed_base = (
+            semantic_mode
+            and self.prototype_bank_source == 'recomputed_kmeans'
+            and self._semantic_cache_initialized
+        )
+        base_prototypes = legacy_prototypes
+        if use_recomputed_base:
+            base_prototypes = self.semantic_base_prototypes_cache.to(
+                device=legacy_prototypes.device,
+                dtype=legacy_prototypes.dtype,
+            )
+
+        contextualized, contextual_debug = self._compute_contextualized_from_base(
+            base_prototypes,
+            return_debug=True,
+        )
+        routing_prototypes = contextualized
+
         outputs = {
-            'prototypes': prototypes,
+            'legacy_prototypes': legacy_prototypes,
+            'base_prototypes': base_prototypes,
+            'prototypes': base_prototypes,
             'contextualized_prototypes': contextualized,
+            'routing_prototypes': routing_prototypes,
             'bank_debug': bank_debug,
             'contextualizer_debug': contextual_debug,
+            'prototype_source_type': 'recomputed_kmeans' if use_recomputed_base else 'learnable_legacy',
+            'semantic_cluster_counts': self.semantic_cluster_counts_cache.to(
+                device=legacy_prototypes.device,
+                dtype=legacy_prototypes.dtype,
+            ),
+            'semantic_recompute_count': legacy_prototypes.new_tensor(float(self._semantic_recompute_count)),
+            'semantic_recompute_last_epoch': legacy_prototypes.new_tensor(
+                -1.0 if self._semantic_last_recompute_epoch is None else float(self._semantic_last_recompute_epoch)
+            ),
+            'semantic_recompute_last_step': legacy_prototypes.new_tensor(
+                -1.0 if self._semantic_last_recompute_step is None else float(self._semantic_last_recompute_step)
+            ),
+            'semantic_mode_active': legacy_prototypes.new_tensor(float(semantic_mode)),
+            'semantic_recompute_triggered': recompute_debug.get(
+                'semantic_recompute_triggered',
+                legacy_prototypes.new_zeros(()),
+            ),
+            'semantic_recompute_skipped_no_features': recompute_debug.get(
+                'semantic_recompute_skipped_no_features',
+                legacy_prototypes.new_zeros(()),
+            ),
+            'semantic_empty_cluster_reseed_events': recompute_debug.get(
+                'semantic_empty_cluster_reseed_events',
+                legacy_prototypes.new_zeros(()),
+            ),
         }
         if return_debug:
             outputs['debug'] = {
                 **bank_debug,
                 **contextual_debug,
+                **recompute_debug,
+                'prototype_source_type_recomputed': legacy_prototypes.new_tensor(float(use_recomputed_base)),
+                'prototype_source_type_legacy': legacy_prototypes.new_tensor(float(not use_recomputed_base)),
             }
         return outputs
 
@@ -566,10 +877,7 @@ class PrototypeConditionedTextHead(nn.Module):
         image_embeddings: torch.Tensor,
         image_local_tokens: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        debug_metrics: Dict[str, torch.Tensor] = {
-            'host_deflated_input_enabled': image_embeddings.new_tensor(float(self.use_host_deflated_input)).detach(),
-            'host_deflated_input_applied': image_embeddings.new_zeros(()).detach(),
-        }
+        debug_metrics: Dict[str, torch.Tensor] = {}
         if image_local_tokens is None:
             fallback_tokens = image_embeddings.unsqueeze(1)
             return self.local_routing_adapter(self.image_adapter(fallback_tokens)), debug_metrics
@@ -583,13 +891,7 @@ class PrototypeConditionedTextHead(nn.Module):
         local_tokens = image_local_tokens[:, 1:, :] if image_local_tokens.size(1) > 1 else image_local_tokens
         if local_tokens.size(1) <= 0:
             local_tokens = image_local_tokens
-        if self.use_host_deflated_input:
-            local_tokens, host_deflated_debug = self.compute_host_deflated_patch_tokens(
-                patch_tokens=local_tokens,
-                img_global=image_embeddings,
-            )
-            debug_metrics.update(host_deflated_debug)
-            debug_metrics['host_deflated_input_applied'] = image_embeddings.new_tensor(1.0).detach()
+        debug_metrics['local_token_norm_mean'] = local_tokens.norm(dim=-1).mean().detach()
         local_tokens = self.image_adapter(local_tokens)
         local_tokens = self.local_routing_adapter(local_tokens)
         if local_tokens.size(-1) != self.prototype_dim:
@@ -642,15 +944,17 @@ class PrototypeConditionedTextHead(nn.Module):
         image_local_tokens: Optional[torch.Tensor] = None,
         prototypes: Optional[torch.Tensor] = None,
         contextualized_prototypes: Optional[torch.Tensor] = None,
+        routing_prototypes: Optional[torch.Tensor] = None,
         return_debug: bool = False,
     ) -> Dict[str, object]:
         image_features = self.image_adapter(image_embeddings)
         context_debug = {}
 
-        if prototypes is None or contextualized_prototypes is None:
+        if prototypes is None or contextualized_prototypes is None or routing_prototypes is None:
             context = self.get_prototype_context(return_debug=return_debug)
-            prototypes = context['prototypes']
+            prototypes = context['base_prototypes']
             contextualized_prototypes = context['contextualized_prototypes']
+            routing_prototypes = context['routing_prototypes']
             context_debug = {
                 **context['bank_debug'],
                 **context['contextualizer_debug'],
@@ -659,21 +963,23 @@ class PrototypeConditionedTextHead(nn.Module):
         routing_outputs = self._compute_routing_weights(
             image_embeddings=image_embeddings,
             image_features=image_features,
-            contextualized_prototypes=contextualized_prototypes,
+            contextualized_prototypes=routing_prototypes,
             image_local_tokens=image_local_tokens,
         )
         routing_weights = routing_outputs['routing_weights']
         routing_debug = routing_outputs['routing_debug']
-        summary, aggregator_debug = self.aggregator(routing_weights, contextualized_prototypes, return_debug=True)
-        # Prototype score anchor uses visual global features plus a compact projection of query summary q_i.
-        image_proxy_features = image_features + self.proto_query_proj(summary)
+        summary, aggregator_debug = self.aggregator(routing_weights, routing_prototypes, return_debug=True)
+        # Residual summary injection is disabled; keep image path anchored to adapted host image features.
+        image_proxy_features = image_features
         image_projected, image_projector_debug = self.image_projector(image_proxy_features, return_debug=True)
 
         outputs = {
             'image_embedding': image_features,
             'image_proxy_features': image_proxy_features,
             'prototypes': prototypes,
+            'base_prototypes': prototypes,
             'contextualized_prototypes': contextualized_prototypes,
+            'routing_prototypes': routing_prototypes,
             'routing_weights': routing_weights,
             'summary': summary,
             'image_projected': image_projected,
@@ -1014,15 +1320,24 @@ class PrototypeConditionedTextHead(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         special_token_positions: Optional[Dict[str, torch.Tensor]] = None,
         host_pairwise_logits: Optional[torch.Tensor] = None,
+        epoch: Optional[int] = None,
+        current_step: Optional[int] = None,
         return_debug: bool = False,
         disable_proxy_losses: bool = False,
     ) -> Dict[str, object]:
-        context = self.get_prototype_context(return_debug=return_debug)
+        semantic_recompute_features = self.image_adapter(image_embeddings.detach())
+        context = self.get_prototype_context(
+            return_debug=return_debug,
+            epoch=epoch,
+            current_step=current_step,
+            semantic_recompute_features=semantic_recompute_features.detach(),
+        )
         image_outputs = self.encode_image_branch(
             image_embeddings,
             image_local_tokens=image_local_tokens,
-            prototypes=context['prototypes'],
+            prototypes=context['base_prototypes'],
             contextualized_prototypes=context['contextualized_prototypes'],
+            routing_prototypes=context['routing_prototypes'],
             return_debug=return_debug,
         )
         prepared_text = self._prepare_text_inputs(
@@ -1034,7 +1349,7 @@ class PrototypeConditionedTextHead(nn.Module):
         basis_outputs = self.build_text_basis_bank(
             text_token_states,
             token_ids,
-            context['contextualized_prototypes'],
+            context['routing_prototypes'],
             attention_mask=attention_mask,
             special_token_positions=special_token_positions,
             return_debug=return_debug,
@@ -1053,10 +1368,9 @@ class PrototypeConditionedTextHead(nn.Module):
         )
         collect_debug_diagnostics = self.collect_debug_metrics or bool(return_debug)
         scalar_metrics = {}
-        image_path_debug_extras: Dict[str, object] = {}
         if collect_debug_diagnostics:
             scalar_metrics = self._collect_scalar_metrics(
-                prototypes=context['prototypes'],
+                prototypes=context['base_prototypes'],
                 contextualized_prototypes=context['contextualized_prototypes'],
                 routing_weights=image_outputs['routing_weights'],
                 summary=image_outputs['summary'],
@@ -1074,12 +1388,6 @@ class PrototypeConditionedTextHead(nn.Module):
                 router_debug=image_outputs['router_debug'],
                 pooler_debug=exact_outputs['pooler_debug'],
             )
-            image_path_metrics, image_path_debug_extras = self._compute_proto_image_path_diagnostics(
-                image_base_features=image_outputs['image_embedding'],
-                image_proxy_features=image_outputs['image_proxy_features'],
-                image_projected=image_outputs['image_projected'],
-            )
-            scalar_metrics.update(image_path_metrics)
             scalar_metrics.update(
                 self._compute_routing_certification_metrics(
                     routing_weights=image_outputs['routing_weights'],
@@ -1088,35 +1396,103 @@ class PrototypeConditionedTextHead(nn.Module):
                     exact_text_projected=exact_outputs['text_projected'],
                 )
             )
-        surrogate_pairwise_logits = None
-        if self.losses.use_loss_ret:
-            surrogate_pairwise_logits = self.compute_surrogate_pairwise_logits(
-                image_projected=image_outputs['image_projected'],
-                routing_weights=image_outputs['routing_weights'],
-                basis_bank=basis_outputs['basis_bank'],
-                image_chunk_size=image_outputs['image_projected'].size(0),
-                text_chunk_size=token_ids.size(0),
-            )
-        loss_outputs = self.losses(
-            image_outputs['image_projected'],
-            surrogate_text_projected,
-            exact_outputs['text_projected'],
-            pids=pids,
-            prototypes=context['prototypes'],
-            routing_weights=image_outputs['routing_weights'],
-            surrogate_pairwise_logits=surrogate_pairwise_logits,
-            host_pairwise_logits=host_pairwise_logits,
-            return_debug=return_debug,
-            disable_proxy_losses=disable_proxy_losses,
+        semantic_cluster_counts = context.get('semantic_cluster_counts')
+        if isinstance(semantic_cluster_counts, torch.Tensor) and semantic_cluster_counts.numel() > 0:
+            semantic_active_clusters = semantic_cluster_counts.gt(0).sum().to(dtype=image_outputs['image_projected'].dtype)
+            semantic_empty_clusters = semantic_cluster_counts.eq(0).sum().to(dtype=image_outputs['image_projected'].dtype)
+        else:
+            semantic_active_clusters = image_outputs['image_projected'].new_zeros(())
+            semantic_empty_clusters = image_outputs['image_projected'].new_zeros(())
+        scalar_metrics.update(
+            {
+                'prototype_method_role_semantic_structure': image_outputs['image_projected'].new_tensor(
+                    float(self.prototype_method_role == 'semantic_structure')
+                ),
+                'prototype_semantic_enabled': image_outputs['image_projected'].new_tensor(float(self.prototype_semantic_enabled)),
+                'semantic_structure_enabled': image_outputs['image_projected'].new_tensor(float(self.semantic_structure_enabled)),
+                'prototype_source_recomputed': image_outputs['image_projected'].new_tensor(
+                    float(context.get('prototype_source_type') == 'recomputed_kmeans')
+                ),
+                'semantic_recompute_count': context.get('semantic_recompute_count', image_outputs['image_projected'].new_zeros(())),
+                'semantic_recompute_last_epoch': context.get('semantic_recompute_last_epoch', image_outputs['image_projected'].new_full((), -1.0)),
+                'semantic_recompute_last_step': context.get('semantic_recompute_last_step', image_outputs['image_projected'].new_full((), -1.0)),
+                'semantic_recompute_triggered': context.get('semantic_recompute_triggered', image_outputs['image_projected'].new_zeros(())),
+                'semantic_recompute_skipped_no_features': context.get('semantic_recompute_skipped_no_features', image_outputs['image_projected'].new_zeros(())),
+                'semantic_empty_cluster_reseed_events': context.get('semantic_empty_cluster_reseed_events', image_outputs['image_projected'].new_zeros(())),
+                'semantic_active_cluster_count': semantic_active_clusters.detach(),
+                'semantic_empty_cluster_count': semantic_empty_clusters.detach(),
+            }
         )
+        prototype_usage_enabled = True
+        if self.semantic_ramp_use_prototype and self._semantic_mode_enabled():
+            prototype_usage_enabled = self._semantic_schedule_started(epoch=epoch, current_step=current_step)
+        scalar_metrics['prototype_ramp_use_enabled'] = image_outputs['image_projected'].new_tensor(
+            float(prototype_usage_enabled)
+        ).detach()
+
+        surrogate_pairwise_logits = None
+        semantic_target_prototypes = (
+            context['base_prototypes']
+            if self.prototype_use_base_for_semantic_targets
+            else context['contextualized_prototypes']
+        )
+        semantic_target_features, semantic_anchor_feature_source = self._prepare_semantic_anchor_features(
+            semantic_target_prototypes,
+            target_feature_dim=exact_outputs['text_projected'].size(-1),
+        )
+        scalar_metrics.update(
+            {
+                'semantic_anchor_input_dim': semantic_target_prototypes.new_tensor(float(semantic_target_prototypes.size(-1))).detach(),
+                'semantic_anchor_feature_dim': semantic_target_features.new_tensor(float(semantic_target_features.size(-1))).detach(),
+                'semantic_anchor_space_projected': semantic_target_features.new_tensor(
+                    float(semantic_anchor_feature_source in {'prototype_projected', 'auto_projected_dim_fix'})
+                ).detach(),
+            }
+        )
+        ramp_scale = self._prototype_loss_scale(epoch=epoch, current_step=current_step)
+        loss_scales = self._resolve_loss_scales(
+            ramp_scale=ramp_scale,
+            prototype_usage_enabled=prototype_usage_enabled,
+        )
+        ramp_scale = loss_scales['prototype']
+        diag_loss_scale = loss_scales['diag']
+        semantic_pbt_loss_scale = loss_scales['semantic_pbt']
+        semantic_hardneg_margin_loss_scale = loss_scales['semantic_hardneg_margin']
+        semantic_hosthard_weighted_loss_scale = loss_scales['semantic_hosthard_weighted']
+        if not prototype_usage_enabled:
+            loss_outputs = self._zero_loss_outputs(image_outputs['image_projected'])
+        else:
+            loss_outputs = self.losses(
+                image_outputs['image_projected'],
+                surrogate_text_projected,
+                exact_outputs['text_projected'],
+                pids=pids,
+                prototypes=context['base_prototypes'],
+                routing_weights=image_outputs['routing_weights'],
+                surrogate_pairwise_logits=surrogate_pairwise_logits,
+                host_pairwise_logits=host_pairwise_logits,
+                semantic_image_student_embeddings=image_outputs['image_projected'],
+                semantic_text_student_embeddings=surrogate_text_projected,
+                semantic_text_teacher_embeddings=exact_outputs['text_projected'],
+                semantic_base_prototypes=semantic_target_features,
+                diag_loss_scale=diag_loss_scale,
+                semantic_pbt_loss_scale=semantic_pbt_loss_scale,
+                semantic_hardneg_margin_loss_scale=semantic_hardneg_margin_loss_scale,
+                semantic_hosthard_weighted_loss_scale=semantic_hosthard_weighted_loss_scale,
+                return_debug=return_debug,
+                disable_proxy_losses=disable_proxy_losses,
+            )
         if collect_debug_diagnostics:
             scalar_metrics.update(loss_outputs.get('debug_metrics', {}))
 
         outputs = {
             'image_embedding': image_outputs['image_embedding'],
             'text_token_states': prepared_text['text_token_states'],
-            'prototypes': context['prototypes'],
+            'legacy_prototypes': context['legacy_prototypes'],
+            'base_prototypes': context['base_prototypes'],
+            'prototypes': context['base_prototypes'],
             'contextualized_prototypes': context['contextualized_prototypes'],
+            'routing_prototypes': context['routing_prototypes'],
             'routing_weights': image_outputs['routing_weights'],
             'summary': image_outputs['summary'],
             'token_valid_mask': exact_outputs['token_valid_mask'],
@@ -1131,14 +1507,17 @@ class PrototypeConditionedTextHead(nn.Module):
             'image_projected': image_outputs['image_projected'],
             'image_projected_raw': image_outputs['image_projected_raw'],
             'image_proxy_features': image_outputs['image_proxy_features'],
+            'semantic_image_feature': image_outputs['image_projected'],
             'surrogate_text_projected': surrogate_text_projected,
             'surrogate_text_projected_raw': surrogate_text_projector_debug['projected_features_raw'],
+            'semantic_text_student_feature': surrogate_text_projected,
             'exact_text_projected': exact_outputs['text_projected'],
             'exact_text_projected_raw': exact_outputs['text_projected_raw'],
+            'semantic_text_teacher_feature': exact_outputs['text_projected'],
             'alpha': image_outputs['routing_weights'],
             'beta': exact_outputs['token_weights'],
             'Q': image_outputs['summary'],
-            'Theta_v': context['prototypes'],
+            'Theta_v': context['base_prototypes'],
             'Theta_tilde': context['contextualized_prototypes'],
             'T_pool': surrogate_pooled_text,
             'T_exact_pool': exact_outputs['pooled_text'],
@@ -1150,11 +1529,24 @@ class PrototypeConditionedTextHead(nn.Module):
             'Z_t_exact': exact_outputs['text_projected'],
             'Z_t_exact_raw': exact_outputs['text_projected_raw'],
             'surrogate_pairwise_logits': surrogate_pairwise_logits,
+            'prototype_source_type': context.get('prototype_source_type', 'learnable_legacy'),
+            'semantic_cluster_counts': context.get('semantic_cluster_counts'),
+            'prototype_loss_scale': image_outputs['image_projected'].new_tensor(float(ramp_scale)),
+            'prototype_loss_ramp_scale': image_outputs['image_projected'].new_tensor(float(ramp_scale)),
+            'loss_diag_scale': image_outputs['image_projected'].new_tensor(float(diag_loss_scale)),
+            'loss_semantic_pbt_scale': image_outputs['image_projected'].new_tensor(float(semantic_pbt_loss_scale)),
+            'loss_semantic_hardneg_margin_scale': image_outputs['image_projected'].new_tensor(
+                float(semantic_hardneg_margin_loss_scale)
+            ),
+            'loss_semantic_hosthard_weighted_scale': image_outputs['image_projected'].new_tensor(
+                float(semantic_hosthard_weighted_loss_scale)
+            ),
+            # Backward-compatible alias for existing logs/consumers.
+            'semantic_loss_scale': image_outputs['image_projected'].new_tensor(float(semantic_pbt_loss_scale)),
             'losses': loss_outputs,
             'metrics': scalar_metrics,
         }
         outputs['debug'] = dict(scalar_metrics)
-        outputs['debug'].update(image_path_debug_extras)
         if return_debug:
             outputs['debug'].update(
                 {

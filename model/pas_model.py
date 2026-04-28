@@ -7,18 +7,15 @@ from torch.utils.data import DataLoader
 import torch
 import torch.nn as nn
 
-from .fusion import ResidualScoreFusion
 from .hosts.itself import attach_itself_clip_text_intermediates, get_original_itself_components
 from .interfaces import EncoderOutput
 from .prototype import TokenMaskBuilder, build_prototype_head, init_mode_requires_data
 from .host_heads import build_host_head
 from utils.precision import (
     build_autocast_context,
-    canonicalize_amp_dtype,
-    canonicalize_backbone_precision,
-    canonicalize_prototype_precision,
     precision_to_torch_dtype,
 )
+from utils.freeze_schedule import set_group_requires_grad
 
 
 def build_CLIP_from_openai_pretrained(pretrain_choice, img_size, stride_size):
@@ -58,8 +55,8 @@ class PASModel(nn.Module):
         self.prototype_dim = getattr(args, 'prototype_dim', self.embed_dim)
         self.use_custom_projector = bool(getattr(args, 'use_custom_projector', True))
         self.retrieval_mode = str(getattr(args, 'retrieval_mode', 'surrogate_i2t')).lower()
-        self.backbone_precision = canonicalize_backbone_precision(getattr(args, 'backbone_precision', 'fp16'))
-        self.prototype_precision = canonicalize_prototype_precision(getattr(args, 'prototype_precision', 'fp32'))
+        self.backbone_precision = 'fp16'
+        self.prototype_precision = 'fp16'
         self.return_debug_outputs = bool(getattr(args, 'return_debug_outputs', False))
         self.itself_return_all = bool(getattr(args, 'itself_return_all', False)) and self.host_type == 'itself'
         self.itself_average_attn_weights = bool(getattr(args, 'itself_average_attn_weights', True))
@@ -71,16 +68,16 @@ class PASModel(nn.Module):
         self.use_prototype_branch = bool(getattr(args, 'use_prototype_branch', default_use_prototype_branch))
         self.use_prototype_bank = bool(getattr(args, 'use_prototype_bank', True)) if self.use_prototype_branch else False
         self.use_image_conditioned_pooling = bool(getattr(args, 'use_image_conditioned_pooling', True)) if self.use_prototype_branch else False
-        default_fusion_enabled = self.use_prototype_branch
-        self.fusion_enabled = bool(getattr(args, 'fusion_enabled', default_fusion_enabled)) and self.use_prototype_branch
-        self.fusion_coefficient_source = str(getattr(args, 'fusion_coefficient_source', 'fixed')).lower()
-        (
-            self.fusion_lambda_host,
-            self.fusion_lambda_prototype,
-            self.fusion_legacy_coefficient_mode,
-        ) = self._resolve_fusion_weights_from_args()
-        # Backward-compatible diagnostic alias retained for existing logs.
-        self.fusion_coefficient = self.fusion_lambda_prototype
+        self.prototype_method_role = str(getattr(args, 'prototype_method_role', 'semantic_structure')).lower()
+        self.prototype_semantic_enabled = bool(getattr(args, 'prototype_semantic_enabled', self.prototype_method_role == 'semantic_structure'))
+        self.semantic_structure_enabled = bool(getattr(args, 'semantic_structure_enabled', self.prototype_semantic_enabled))
+        self.prototype_inference_mode = 'host_only'
+        self.fusion_enabled = False
+        self.fusion_coefficient_source = 'fixed'
+        self.fusion_lambda_host = 1.0
+        self.fusion_lambda_prototype = 0.0
+        self.fusion_legacy_coefficient_mode = False
+        self.fusion_coefficient = 0.0
         explicit_stage = getattr(args, 'training_stage', None)
         self.training_stage = 'joint' if explicit_stage is None else str(explicit_stage).lower()
         if self.host_type == 'itself':
@@ -110,12 +107,7 @@ class PASModel(nn.Module):
                 text_adapter=text_adapter,
                 prototype_init_features=prototype_init_features,
             )
-        self.fusion_module = ResidualScoreFusion(
-            enabled=self.fusion_enabled,
-            lambda_host=self.fusion_lambda_host,
-            lambda_prototype=self.fusion_lambda_prototype,
-            coefficient_source=self.fusion_coefficient_source,
-        )
+        self.fusion_module = None
         self._log_runtime_mode_summary()
         self._apply_freeze_policy()
 
@@ -128,53 +120,20 @@ class PASModel(nn.Module):
                 f'Got {pretrain_choice!r}.'
             )
 
-    def _resolve_fusion_weights_from_args(self) -> Tuple[float, float, bool]:
-        raw_lambda_host = getattr(self.args, 'fusion_lambda_host', None)
-        raw_lambda_prototype = getattr(self.args, 'fusion_lambda_prototype', None)
-        raw_legacy_coefficient = getattr(self.args, 'fusion_coefficient', None)
-
-        explicit_lambda_host = raw_lambda_host is not None
-        explicit_lambda_prototype = raw_lambda_prototype is not None
-        if explicit_lambda_host or explicit_lambda_prototype:
-            lambda_host = float(raw_lambda_host) if explicit_lambda_host else (1.0 - float(raw_lambda_prototype))
-            lambda_prototype = float(raw_lambda_prototype) if explicit_lambda_prototype else (1.0 - lambda_host)
-            return lambda_host, lambda_prototype, False
-
-        if raw_legacy_coefficient is None:
-            raw_legacy_coefficient = 1.0 if self.use_prototype_branch else 0.0
-        return 1.0, float(raw_legacy_coefficient), True
-
-    def _validate_fusion_weights(self) -> None:
-        for field_name, value in (
-            ('fusion.lambda_host', self.fusion_lambda_host),
-            ('fusion.lambda_prototype', self.fusion_lambda_prototype),
-        ):
-            if value < 0.0 or value > 1.0:
-                raise ValueError(f'{field_name} must be within [0, 1], got {value}.')
-
-        if not self.fusion_legacy_coefficient_mode:
-            pair_sum = self.fusion_lambda_host + self.fusion_lambda_prototype
-            if abs(pair_sum - 1.0) > 1e-6:
-                raise ValueError(
-                    'fusion.lambda_host + fusion.lambda_prototype must equal 1.0 '
-                    f'(tolerance=1e-6), got {pair_sum}.'
-                )
-
     def _log_runtime_mode_summary(self):
         logger = logging.getLogger('pas.model')
         logger.info(
-            'Runtime mode: training_mode=%s host_type=%s host_loss=%s prototype_branch=%s prototype_bank=%s image_conditioned_pooling=%s fusion_enabled=%s fusion_lambda_host=%s fusion_lambda_prototype=%s fusion_source=%s legacy_fusion_coefficient_mode=%s',
+            'Runtime mode: training_mode=%s host_type=%s host_loss=%s prototype_branch=%s prototype_bank=%s image_conditioned_pooling=%s prototype_method_role=%s prototype_semantic_enabled=%s semantic_structure_enabled=%s prototype_inference_mode=%s',
             self.training_mode,
             self.host_type,
             self.use_host_loss,
             self.use_prototype_branch,
             self.use_prototype_bank,
             self.use_image_conditioned_pooling,
-            self.fusion_enabled,
-            self.fusion_lambda_host,
-            self.fusion_lambda_prototype,
-            self.fusion_coefficient_source,
-            self.fusion_legacy_coefficient_mode,
+            self.prototype_method_role,
+            self.prototype_semantic_enabled,
+            self.semantic_structure_enabled,
+            self.prototype_inference_mode,
         )
 
     def _validate_backbone_contract(self, base_cfg):
@@ -195,11 +154,16 @@ class PASModel(nn.Module):
 
     def _validate_configuration(self):
         model_logger = logging.getLogger('pas.model')
-        self._validate_fusion_weights()
         if self.training_mode not in {'pas', 'vanilla_clip'}:
             raise ValueError(f"model.training_mode must be one of ['pas', 'vanilla_clip']; got {self.training_mode!r}.")
         if self.host_type not in {'clip', 'itself'}:
             raise ValueError(f"host.type must be one of ['clip', 'itself']; got {self.host_type!r}.")
+        if self.prototype_method_role != 'semantic_structure':
+            raise ValueError(
+                'model.prototype_method_role=retrieval_branch is removed. PrototypePlugin is structure-only.'
+            )
+        if self.prototype_inference_mode != 'host_only':
+            raise ValueError('model.prototype_inference_mode is removed; host_only is the only supported mode.')
         if self.training_mode == 'vanilla_clip' and self.host_type != 'clip':
             raise ValueError('model.training_mode=vanilla_clip requires host.type=clip.')
         if self.training_mode == 'vanilla_clip':
@@ -215,8 +179,6 @@ class PASModel(nn.Module):
                 raise ValueError('model.training_mode=vanilla_clip requires loss.retrieval_mode=clip_bidirectional.')
             if not self.use_host_loss:
                 raise ValueError('model.training_mode=vanilla_clip requires objectives.use_host_loss=true.')
-            if str(getattr(self.args, 'retrieval_scorer', 'exact')).lower() != 'exact':
-                raise ValueError('model.training_mode=vanilla_clip requires evaluation.retrieval_scorer=exact.')
             incompatible_flags = {
                 'loss.use_loss_proxy_image': bool(getattr(self.args, 'use_loss_proxy_image', False)),
                 'loss.use_loss_proxy_text': bool(getattr(self.args, 'use_loss_proxy_text', False)),
@@ -236,8 +198,7 @@ class PASModel(nn.Module):
                     'model.training_mode=vanilla_clip does not support prototype/auxiliary losses. '
                     f'Disable: {enabled_incompatible}.'
                 )
-        elif self.retrieval_mode == 'clip_bidirectional':
-            raise ValueError('loss.retrieval_mode=clip_bidirectional is only supported when model.training_mode=vanilla_clip.')
+
         if self.use_prototype_branch and self.use_prototype_bank and not self.use_image_conditioned_pooling:
             raise ValueError(
                 'use_prototype_bank=true requires use_image_conditioned_pooling=true. '
@@ -246,11 +207,6 @@ class PASModel(nn.Module):
 
         if self.training_stage == 'stage0' and self.use_prototype_branch:
             raise ValueError('training.stage=stage0 is reserved for host-only baselines and requires model.use_prototype_branch=false.')
-        retrieval_scorer = str(getattr(self.args, 'retrieval_scorer', 'exact')).lower()
-        if (not self.use_prototype_branch or not self.use_prototype_bank) and retrieval_scorer == 'approximate':
-            model_logger.warning(
-                'evaluation.retrieval_scorer=approximate requires a live prototype bank; evaluation may fall back to exact scoring.'
-            )
         if not bool(getattr(self.args, 'normalize_projector_outputs', True)):
             model_logger.warning(
                 'model.normalize_projector_outputs=false is accepted for ablation bookkeeping. The runtime will continue '
@@ -276,17 +232,6 @@ class PASModel(nn.Module):
                 'special_token_ids must be configured explicitly so token masking does not rely on hardcoded '
                 'tokenizer assumptions.'
             )
-        if self.backbone_precision == 'fp16' and bool(getattr(self.args, 'amp', False)):
-            if canonicalize_amp_dtype(getattr(self.args, 'amp_dtype', 'fp16')) != 'fp16':
-                raise ValueError('model.backbone_precision=fp16 requires training.amp_dtype=fp16 when AMP is enabled.')
-        if self.prototype_precision == 'fp16' and bool(getattr(self.args, 'amp', False)):
-            if canonicalize_amp_dtype(getattr(self.args, 'amp_dtype', 'fp16')) != 'fp16':
-                raise ValueError('model.prototype_precision=fp16 requires training.amp_dtype=fp16 when AMP is enabled.')
-        if bool(getattr(self.args, 'training', True)) and self.backbone_precision == 'fp16':
-            if (not bool(getattr(self.args, 'freeze_image_backbone', True)) or not bool(getattr(self.args, 'freeze_text_backbone', True))) and not bool(getattr(self.args, 'amp', False)):
-                raise ValueError('Unfrozen fp16 backbone training requires training.amp=true so the backbone is updated under proper AMP scaling.')
-        if bool(getattr(self.args, 'training', True)) and self.prototype_precision == 'fp16' and not bool(getattr(self.args, 'amp', False)):
-            raise ValueError('model.prototype_precision=fp16 requires training.amp=true so prototype modules are updated under proper AMP scaling.')
         legacy_retrieval_flags = {
             'use_loss_ret_exact': 'Legacy exact retrieval training is removed. Use loss.use_loss_ret for row-wise surrogate image-to-text retrieval only.',
             'use_loss_ret_exact_image': 'Legacy exact image-side retrieval training is removed. The only valid retrieval loss is row-wise surrogate image-to-text retrieval.',
@@ -295,8 +240,8 @@ class PASModel(nn.Module):
             'lambda_ret_exact_image': 'Legacy exact image-side retrieval weighting is removed. Use loss.lambda_ret for surrogate row-wise retrieval.',
             'lambda_ret_exact_text': 'Legacy text-side retrieval weighting is removed. Column-wise text retrieval is invalid for image-conditioned text embeddings.',
             'ret_exact_temperature': 'Legacy exact retrieval temperature is removed. model.temperature defines the surrogate retrieval temperature.',
-            'freeze_prototype': 'training.freeze_prototype was replaced by training.freeze_prototype_side.',
-            'freeze_proxy': 'training.freeze_proxy was replaced by training.freeze_prototype_side.',
+            'freeze_prototype': 'training.freeze_prototype was replaced by explicit module freeze flags (training.freeze_prototype_bank/training.freeze_prototype_projector/training.freeze_routing/training.freeze_fusion).',
+            'freeze_proxy': 'training.freeze_proxy was replaced by explicit module freeze flags (training.freeze_prototype_bank/training.freeze_prototype_projector/training.freeze_routing/training.freeze_fusion).',
         }
         for attr_name, message in legacy_retrieval_flags.items():
             if not hasattr(self.args, attr_name):
@@ -327,25 +272,61 @@ class PASModel(nn.Module):
     def _apply_freeze_policy(self):
         self.freeze_image_backbone = bool(getattr(self.args, 'freeze_image_backbone', True))
         self.freeze_text_backbone = bool(getattr(self.args, 'freeze_text_backbone', True))
-        self.freeze_host_projectors = bool(getattr(self.args, 'freeze_host_projectors', False))
-        self.freeze_prototype_side = bool(getattr(self.args, 'freeze_prototype_side', False))
 
-        if self.freeze_image_backbone:
-            self._freeze_module(self.base_model.visual)
-        if self.freeze_text_backbone:
-            self._freeze_module(self.base_model.transformer)
-            self._freeze_module(self.base_model.token_embedding)
-            self.base_model.positional_embedding.requires_grad = False
-            self.base_model.ln_final.weight.requires_grad = False
-            self.base_model.ln_final.bias.requires_grad = False
-            self.base_model.text_projection.requires_grad = False
-        if self.freeze_host_projectors:
-            if hasattr(self.host_head, 'freeze_trainable_head'):
-                self.host_head.freeze_trainable_head()
-            else:
-                self._freeze_module(self.host_head)
-        if self.freeze_prototype_side and self.prototype_head is not None:
-            self._freeze_module(self.prototype_head)
+        self.freeze_host_backbone = bool(
+            getattr(
+                self.args,
+                'freeze_host_backbone',
+                self.freeze_image_backbone and self.freeze_text_backbone,
+            )
+        )
+        self.freeze_host_retrieval = bool(
+            getattr(
+                self.args,
+                'freeze_host_retrieval',
+                getattr(self.args, 'freeze_host_projectors', False),
+            )
+        )
+        self.freeze_fusion = bool(getattr(self.args, 'freeze_fusion', getattr(self.args, 'freeze_prototype_side', False)))
+        self.freeze_prototype_bank = bool(getattr(self.args, 'freeze_prototype_bank', getattr(self.args, 'freeze_prototype_side', False)))
+        self.freeze_prototype_projector = bool(
+            getattr(self.args, 'freeze_prototype_projector', getattr(self.args, 'freeze_prototype_side', False))
+        )
+        self.freeze_routing = bool(getattr(self.args, 'freeze_routing', getattr(self.args, 'freeze_prototype_side', False)))
+
+        # Backward-compatible aliases (no longer authoritative).
+        self.freeze_host_projectors = self.freeze_host_retrieval
+        self.freeze_prototype_side = bool(
+            self.freeze_fusion
+            and self.freeze_prototype_bank
+            and self.freeze_prototype_projector
+            and self.freeze_routing
+        )
+
+        if self.freeze_host_backbone:
+            set_group_requires_grad(self, 'host_backbone', False)
+        else:
+            if self.freeze_image_backbone:
+                self._freeze_module(self.base_model.visual)
+            if self.freeze_text_backbone:
+                self._freeze_module(self.base_model.transformer)
+                self._freeze_module(self.base_model.token_embedding)
+                self.base_model.positional_embedding.requires_grad = False
+                self.base_model.ln_final.weight.requires_grad = False
+                self.base_model.ln_final.bias.requires_grad = False
+                self.base_model.text_projection.requires_grad = False
+
+        if self.freeze_host_retrieval:
+            set_group_requires_grad(self, 'host_retrieval', False)
+
+        if self.freeze_fusion:
+            set_group_requires_grad(self, 'fusion', False)
+        if self.freeze_prototype_bank:
+            set_group_requires_grad(self, 'prototype_bank', False)
+        if self.freeze_prototype_projector:
+            set_group_requires_grad(self, 'prototype_projector', False)
+        if self.freeze_routing:
+            set_group_requires_grad(self, 'routing', False)
 
     def _encode_image_intermediates(self, image: torch.Tensor, return_all: bool, average_attn_weights: bool) -> Dict[str, Optional[torch.Tensor]]:
         if hasattr(self.base_model, 'encode_image_intermediates'):
@@ -666,6 +647,13 @@ class PASModel(nn.Module):
             'loss_proxy_text': zero,
             'loss_proxy_text_exact': zero,
             'loss_ret': zero,
+            'loss_semantic_pbt': zero,
+            'loss_semantic_hardneg_margin': zero,
+            'loss_semantic_hardneg_margin_image': zero,
+            'loss_semantic_hardneg_margin_text': zero,
+            'loss_semantic_hosthard_weighted': zero,
+            'loss_semantic_hosthard_weighted_image': zero,
+            'loss_semantic_hosthard_weighted_text': zero,
             'loss_align': zero,
             'loss_dir': zero,
             'loss_gap': zero,
@@ -679,6 +667,9 @@ class PASModel(nn.Module):
             'loss_proxy_text_exact_weighted': zero,
             'loss_proxy_weighted': zero,
             'loss_ret_weighted': zero,
+            'loss_semantic_pbt_weighted': zero,
+            'loss_semantic_hardneg_margin_weighted': zero,
+            'loss_semantic_hosthard_weighted_weighted': zero,
             'loss_weight_ret': zero,
             'loss_weight_ret_weighted': zero,
             'loss_align_weighted': zero,
@@ -698,6 +689,24 @@ class PASModel(nn.Module):
             'use_loss_proxy_text_exact': zero,
             'use_loss_ret': zero,
             'lambda_ret': zero,
+            'use_loss_semantic_pbt': zero,
+            'lambda_semantic_pbt': zero,
+            'use_loss_semantic_hardneg_margin': zero,
+            'lambda_semantic_hardneg_margin': zero,
+            'semantic_hardneg_margin': zero,
+            'semantic_hardneg_eps': zero,
+            'use_loss_semantic_hosthard_weighted': zero,
+            'lambda_semantic_hosthard_weighted': zero,
+            'semantic_hosthard_margin_ref': zero,
+            'semantic_hosthard_tau': zero,
+            'semantic_hosthard_eps': zero,
+            'semantic_hosthard_normalize_weights': zero,
+            'prototype_loss_scale': zero,
+            'prototype_loss_ramp_scale': zero,
+            'loss_diag_scale': zero,
+            'loss_semantic_pbt_scale': zero,
+            'loss_semantic_hosthard_weighted_scale': zero,
+            'semantic_loss_scale': zero,
             'use_loss_weight_ret': zero,
             'lambda_weight_ret': zero,
             'weight_ret_margin_delta': zero,
@@ -843,24 +852,7 @@ class PASModel(nn.Module):
         return outputs
 
     def encode_text_basis_for_retrieval(self, text: torch.Tensor) -> Dict[str, torch.Tensor]:
-        if self.prototype_head is None or not self.use_prototype_bank:
-            raise RuntimeError('encode_text_basis_for_retrieval is unavailable when model.use_prototype_bank=false. Use evaluation.retrieval_scorer=exact.')
-        text_output = self.extract_text_features(text)
-        host_text = self.host_head.encode_text_branch(text_output, text.long(), return_debug=False)
-        context = self.prototype_head.get_prototype_context(return_debug=False)
-        basis_outputs = self.prototype_head.build_text_basis_bank(
-            text_token_states=self._cast_to_prototype_dtype(self._resolve_text_states(text_output)),
-            token_ids=text.long(),
-            contextualized_prototypes=self._cast_to_prototype_dtype(context['contextualized_prototypes']),
-            attention_mask=text_output.token_mask,
-            special_token_positions=text_output.special_token_positions,
-            return_debug=False,
-        )
-        return {
-            'host_text_features': host_text,
-            'host_text_projected': host_text['text_projected'],
-            'basis_bank': basis_outputs['basis_bank'],
-        }
+        raise RuntimeError('encode_text_basis_for_retrieval is removed. Retrieval scoring is host-only exact.')
 
     def _compute_host_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
         similarity = self.host_head.compute_similarity_matrix(image_features, text_features)
@@ -868,82 +860,18 @@ class PASModel(nn.Module):
             raise FloatingPointError('Host retrieval similarity contains NaN or Inf values.')
         return similarity.float()
 
-    def fuse_retrieval_similarity(
-        self,
-        host_similarity: torch.Tensor,
-        prototype_similarity: Optional[torch.Tensor] = None,
-        lambda_host: Optional[float] = None,
-        lambda_prototype: Optional[float] = None,
-    ) -> torch.Tensor:
-        similarity = self.fusion_module(
-            host_similarity=host_similarity,
-            prototype_similarity=prototype_similarity,
-            lambda_host=lambda_host,
-            lambda_prototype=lambda_prototype,
-        )
-        if not torch.isfinite(similarity).all():
-            raise FloatingPointError('Retrieval similarity contains NaN or Inf values.')
-        return similarity.float()
-
-    def compute_retrieval_similarity_components(
-        self,
-        image_features: Dict[str, torch.Tensor],
-        text_features: Dict[str, torch.Tensor],
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        host_similarity = self._compute_host_similarity(image_features, text_features)
-        prototype_similarity = None
-        if self.prototype_head is not None and 'text_token_states' in text_features:
-            prototype_similarity = self.prototype_head.compute_pairwise_similarity(
-                image_projected=self._cast_to_prototype_dtype(image_features.get('prototype_image_projected', image_features.get('host_image_projected', image_features['image_projected']))),
-                summaries=self._cast_to_prototype_dtype(image_features.get('prototype_summary', image_features['summary'])),
-                text_token_states=self._cast_to_prototype_dtype(text_features['text_token_states']),
-                token_ids=text_features['token_ids'],
-                attention_mask=text_features.get('attention_mask'),
-                special_token_positions=text_features.get('special_token_positions'),
-                image_chunk_size=self.prototype_eval_image_chunk_size,
-                text_chunk_size=self.prototype_eval_text_chunk_size,
-            ).float()
-        return host_similarity.float(), prototype_similarity.float() if isinstance(prototype_similarity, torch.Tensor) else None
-
     def compute_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_features: Dict[str, torch.Tensor]) -> torch.Tensor:
-        host_similarity, prototype_similarity = self.compute_retrieval_similarity_components(
-            image_features=image_features,
-            text_features=text_features,
-        )
-        return self.fuse_retrieval_similarity(host_similarity, prototype_similarity)
+        return self._compute_host_similarity(image_features=image_features, text_features=text_features)
 
     def compute_approximate_retrieval_similarity_components(
         self,
         image_features: Dict[str, torch.Tensor],
         text_basis_features: Dict[str, torch.Tensor],
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self.prototype_head is None or not self.use_prototype_bank:
-            raise RuntimeError('compute_approximate_retrieval_similarity is unavailable when model.use_prototype_bank=false. Use evaluation.retrieval_scorer=exact.')
-        host_similarity = self._compute_host_similarity(
-            image_features,
-            text_basis_features.get('host_text_features', {
-                'text_projected': text_basis_features['host_text_projected'],
-                'host_text_projected': text_basis_features['host_text_projected'],
-            }),
-        )
-        prototype_similarity = self.prototype_head.compute_approximate_pairwise_similarity(
-            image_projected=self._cast_to_prototype_dtype(image_features.get('prototype_image_projected', image_features.get('host_image_projected', image_features['image_projected']))),
-            routing_weights=self._cast_to_prototype_dtype(image_features['routing_weights']),
-            basis_bank=self._cast_to_prototype_dtype(text_basis_features['basis_bank']),
-            image_chunk_size=self.prototype_eval_image_chunk_size,
-            text_chunk_size=self.prototype_eval_text_chunk_size,
-        ).float()
-        return host_similarity.float(), prototype_similarity.float()
+        raise RuntimeError('Approximate prototype retrieval scoring is removed. Retrieval is host-only exact.')
 
     def compute_approximate_retrieval_similarity(self, image_features: Dict[str, torch.Tensor], text_basis_features: Dict[str, torch.Tensor]) -> torch.Tensor:
-        host_similarity, prototype_similarity = self.compute_approximate_retrieval_similarity_components(
-            image_features=image_features,
-            text_basis_features=text_basis_features,
-        )
-        similarity = self.fuse_retrieval_similarity(host_similarity, prototype_similarity)
-        if not torch.isfinite(similarity).all():
-            raise FloatingPointError('Approximate retrieval similarity contains NaN or Inf values.')
-        return similarity.float()
+        raise RuntimeError('Approximate prototype retrieval scoring is removed. Retrieval is host-only exact.')
 
     def _build_debug_outputs(
         self,
@@ -956,10 +884,6 @@ class PASModel(nn.Module):
         debug.update(prototype_outputs.get('metrics', {}))
         debug.update(
             {
-                'fusion_coefficient': torch.tensor(self.fusion_coefficient, device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
-                'fusion_lambda_host': torch.tensor(self.fusion_lambda_host, device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
-                'fusion_lambda_prototype': torch.tensor(self.fusion_lambda_prototype, device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
-                'fusion_enabled': torch.tensor(float(self.fusion_enabled), device=host_outputs['image_projected'].device, dtype=host_outputs['image_projected'].dtype),
                 'image_global': image_output.projected_pooled.detach(),
                 'text_tokens': self._resolve_text_states(text_output).detach(),
                 'token_mask': text_output.token_mask.detach(),
@@ -1054,8 +978,15 @@ class PASModel(nn.Module):
                 groups['other'].append((name, parameter))
         return groups
 
-    def forward(self, batch, epoch=None, current_step=None, return_debug: Optional[bool] = None, disable_proxy_losses: bool = False):
-        del epoch
+    def forward(
+        self,
+        batch,
+        epoch=None,
+        current_step=None,
+        total_steps=None,
+        return_debug: Optional[bool] = None,
+        disable_proxy_losses: bool = False,
+    ):
         images = batch['images']
         caption_ids = batch['caption_ids']
         pids = batch.get('pids')
@@ -1087,6 +1018,7 @@ class PASModel(nn.Module):
             pids=pids,
             return_debug=should_return_debug,
             current_step=current_step,
+            total_steps=total_steps,
         )
         host_losses = host_outputs['losses']
 
@@ -1117,6 +1049,9 @@ class PASModel(nn.Module):
                 'surrogate_pairwise_logits': None,
             }
         else:
+            host_pairwise_logits_for_prototype = host_outputs.get('surrogate_pairwise_logits')
+            if isinstance(host_pairwise_logits_for_prototype, torch.Tensor) and self.host_type == 'itself':
+                host_pairwise_logits_for_prototype = host_pairwise_logits_for_prototype.t().contiguous()
             prototype_outputs = self.prototype_head(
                 image_embeddings=self._cast_to_prototype_dtype(image_output.projected_pooled),
                 image_local_tokens=self._cast_to_prototype_dtype(image_output.projected_tokens),
@@ -1125,7 +1060,9 @@ class PASModel(nn.Module):
                 pids=pids,
                 attention_mask=text_output.token_mask,
                 special_token_positions=text_output.special_token_positions,
-                host_pairwise_logits=host_outputs.get('surrogate_pairwise_logits'),
+                host_pairwise_logits=host_pairwise_logits_for_prototype,
+                epoch=epoch,
+                current_step=current_step,
                 return_debug=should_return_debug,
                 disable_proxy_losses=disable_proxy_losses,
             )
@@ -1150,6 +1087,31 @@ class PASModel(nn.Module):
             'loss_proxy_text': prototype_losses['loss_proxy_text'],
             'loss_proxy_text_exact': prototype_losses['loss_proxy_text_exact'],
             'loss_ret': prototype_losses['loss_ret'],
+            'loss_semantic_pbt': prototype_losses.get('loss_semantic_pbt', host_losses['loss_total'].new_zeros(())),
+            'loss_semantic_hardneg_margin': prototype_losses.get(
+                'loss_semantic_hardneg_margin',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'loss_semantic_hardneg_margin_image': prototype_losses.get(
+                'loss_semantic_hardneg_margin_image',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'loss_semantic_hardneg_margin_text': prototype_losses.get(
+                'loss_semantic_hardneg_margin_text',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'loss_semantic_hosthard_weighted': prototype_losses.get(
+                'loss_semantic_hosthard_weighted',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'loss_semantic_hosthard_weighted_image': prototype_losses.get(
+                'loss_semantic_hosthard_weighted_image',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'loss_semantic_hosthard_weighted_text': prototype_losses.get(
+                'loss_semantic_hosthard_weighted_text',
+                host_losses['loss_total'].new_zeros(()),
+            ),
             'loss_align': prototype_losses['loss_align'],
             'loss_dir': prototype_losses['loss_dir'],
             'loss_gap': prototype_losses['loss_gap'],
@@ -1163,6 +1125,15 @@ class PASModel(nn.Module):
             'loss_proxy_text_exact_weighted': prototype_losses['loss_proxy_text_exact_weighted'],
             'loss_proxy_weighted': prototype_losses['loss_proxy_weighted'],
             'loss_ret_weighted': prototype_losses['loss_ret_weighted'],
+            'loss_semantic_pbt_weighted': prototype_losses.get('loss_semantic_pbt_weighted', host_losses['loss_total'].new_zeros(())),
+            'loss_semantic_hardneg_margin_weighted': prototype_losses.get(
+                'loss_semantic_hardneg_margin_weighted',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'loss_semantic_hosthard_weighted_weighted': prototype_losses.get(
+                'loss_semantic_hosthard_weighted_weighted',
+                host_losses['loss_total'].new_zeros(()),
+            ),
             'loss_weight_ret': prototype_losses['loss_weight_ret'],
             'loss_weight_ret_weighted': prototype_losses['loss_weight_ret_weighted'],
             'loss_align_weighted': prototype_losses['loss_align_weighted'],
@@ -1182,6 +1153,66 @@ class PASModel(nn.Module):
             'use_loss_proxy_text_exact': prototype_losses['use_loss_proxy_text_exact'],
             'use_loss_ret': metric_losses['use_loss_ret'],
             'lambda_ret': metric_losses['lambda_ret'],
+            'use_loss_semantic_pbt': prototype_losses.get('use_loss_semantic_pbt', host_losses['loss_total'].new_zeros(())),
+            'lambda_semantic_pbt': prototype_losses.get('lambda_semantic_pbt', host_losses['loss_total'].new_zeros(())),
+            'use_loss_semantic_hardneg_margin': prototype_losses.get(
+                'use_loss_semantic_hardneg_margin',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'lambda_semantic_hardneg_margin': prototype_losses.get(
+                'lambda_semantic_hardneg_margin',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'use_loss_semantic_hosthard_weighted': prototype_losses.get(
+                'use_loss_semantic_hosthard_weighted',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'lambda_semantic_hosthard_weighted': prototype_losses.get(
+                'lambda_semantic_hosthard_weighted',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hardneg_margin': prototype_losses.get(
+                'semantic_hardneg_margin',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hardneg_eps': prototype_losses.get(
+                'semantic_hardneg_eps',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hosthard_margin_ref': prototype_losses.get(
+                'semantic_hosthard_margin_ref',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hosthard_tau': prototype_losses.get(
+                'semantic_hosthard_tau',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hosthard_eps': prototype_losses.get(
+                'semantic_hosthard_eps',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'semantic_hosthard_normalize_weights': prototype_losses.get(
+                'semantic_hosthard_normalize_weights',
+                host_losses['loss_total'].new_zeros(()),
+            ),
+            'prototype_loss_scale': prototype_losses.get(
+                'prototype_loss_scale',
+                prototype_losses.get('semantic_loss_scale', host_losses['loss_total'].new_zeros(())),
+            ),
+            'prototype_loss_ramp_scale': prototype_losses.get(
+                'prototype_loss_ramp_scale',
+                prototype_losses.get('prototype_loss_scale', host_losses['loss_total'].new_zeros(())),
+            ),
+            'loss_diag_scale': prototype_losses.get('loss_diag_scale', host_losses['loss_total'].new_ones(())),
+            'loss_semantic_pbt_scale': prototype_losses.get(
+                'loss_semantic_pbt_scale',
+                prototype_losses.get('semantic_loss_scale', host_losses['loss_total'].new_ones(())),
+            ),
+            'loss_semantic_hosthard_weighted_scale': prototype_losses.get(
+                'loss_semantic_hosthard_weighted_scale',
+                prototype_losses.get('semantic_loss_scale', host_losses['loss_total'].new_ones(())),
+            ),
+            'semantic_loss_scale': prototype_losses.get('semantic_loss_scale', host_losses['loss_total'].new_zeros(())),
             'use_loss_weight_ret': prototype_losses['use_loss_weight_ret'],
             'lambda_weight_ret': prototype_losses['lambda_weight_ret'],
             'weight_ret_margin_delta': prototype_losses['weight_ret_margin_delta'],
@@ -1208,9 +1239,6 @@ class PASModel(nn.Module):
             'logit_scale': metric_losses['logit_scale'].detach(),
             'host_retrieval_temperature': host_losses['retrieval_temperature'].detach(),
             'host_logit_scale': host_losses['logit_scale'].detach(),
-            'fusion_coefficient': host_losses['loss_total'].new_tensor(self.fusion_coefficient),
-            'fusion_lambda_host': host_losses['loss_total'].new_tensor(self.fusion_lambda_host),
-            'fusion_lambda_prototype': host_losses['loss_total'].new_tensor(self.fusion_lambda_prototype),
             'alpha': prototype_outputs['routing_weights'].detach(),
             'z_v': prototype_outputs.get('image_projected', host_outputs['image_projected']),
             'z_t_hat_diag': prototype_outputs['surrogate_text_projected'],
@@ -1220,9 +1248,10 @@ class PASModel(nn.Module):
             'debug': dict(host_outputs.get('metrics', {})),
         }
         outputs['debug'].update(prototype_outputs.get('metrics', {}))
-        outputs['debug']['fusion_coefficient'] = self.fusion_coefficient
-        outputs['debug']['fusion_lambda_host'] = self.fusion_lambda_host
-        outputs['debug']['fusion_lambda_prototype'] = self.fusion_lambda_prototype
+        outputs['debug']['prototype_method_role_semantic_structure'] = float(self.prototype_method_role == 'semantic_structure')
+        outputs['debug']['prototype_semantic_enabled'] = float(self.prototype_semantic_enabled)
+        outputs['debug']['semantic_structure_enabled'] = float(self.semantic_structure_enabled)
+        outputs['debug']['prototype_inference_host_only'] = float(self.prototype_inference_mode == 'host_only')
         outputs['debug']['host_loss_total'] = host_losses['loss_total'].detach()
         outputs['debug']['host_loss_ret'] = host_losses['loss_ret'].detach()
         outputs['debug']['host_loss_cid'] = host_losses.get('loss_cid', host_losses['loss_total'].new_zeros(())).detach()
@@ -1242,16 +1271,20 @@ Model = PASModel
 
 def build_model(args, num_classes, train_loader=None):
     model = PASModel(args, num_classes=num_classes, train_loader=train_loader)
-    if model.backbone_precision == 'fp16':
-        convert_weights(model.base_model)
+    use_original_itself_host_impl = (
+        str(getattr(args, 'host_type', 'clip')).lower() == 'itself'
+        and bool(getattr(args, 'itself_use_original_impl', True))
+    )
+    convert_weights(model.base_model)
+
+    # `host_retrieval` belongs to the host side and follows `backbone_precision`.
+    if use_original_itself_host_impl:
+        convert_weights(model.host_head)
     else:
-        model.base_model.float()
-    if model.prototype_precision == 'fp16':
         model.host_head.half()
-        if model.prototype_head is not None:
-            model.prototype_head.half()
-    else:
-        model.host_head.float()
-        if model.prototype_head is not None:
-            model.prototype_head.float()
+
+    # Prototype-side groups (`prototype_bank`, `prototype_projector`, `routing`, `fusion`)
+    # follow `prototype_precision`.
+    if model.prototype_head is not None:
+        model.prototype_head.half()
     return model
