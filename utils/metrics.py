@@ -13,6 +13,7 @@ from utils.metric_logging import build_validation_debug_metrics, build_validatio
 
 SUPPORTED_RETRIEVAL_METRICS = ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum')
 BEST_ROW_TASK_NAME = 'best-row-t2i'
+DEFAULT_ITSELF_ABLATION_ALPHAS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32)
 
 
 def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
@@ -245,7 +246,10 @@ class Evaluator:
             getattr(args, 'itself_lambda_ablation_include_default', True)
         )
         configured_alphas = getattr(args, 'itself_lambda_ablation_alphas', None)
-        self.itself_lambda_ablation_alphas = [float(alpha) for alpha in configured_alphas] if configured_alphas else []
+        if configured_alphas in (None, []):
+            self.itself_lambda_ablation_alphas = list(DEFAULT_ITSELF_ABLATION_ALPHAS)
+        else:
+            self.itself_lambda_ablation_alphas = [float(alpha) for alpha in configured_alphas]
 
     def _concat_feature_batches(self, batches):
         first = batches[0]
@@ -387,14 +391,14 @@ class Evaluator:
         text_ids: torch.Tensor,
         image_ids: torch.Tensor,
     ):
-        rows = [get_metrics(similarity=similarity_default, qids=text_ids, gids=image_ids, name=BEST_ROW_TASK_NAME)]
+        rows = []
         global_image = image_features.get('global_image_embedding') if isinstance(image_features, dict) else None
         global_text = text_features.get('global_text_embedding') if isinstance(text_features, dict) else None
         grab_image = image_features.get('grab_image_embedding') if isinstance(image_features, dict) else None
         grab_text = text_features.get('grab_text_embedding') if isinstance(text_features, dict) else None
 
         if not (isinstance(global_image, torch.Tensor) and isinstance(global_text, torch.Tensor)):
-            return rows
+            return [get_metrics(similarity=similarity_default, qids=text_ids, gids=image_ids, name=BEST_ROW_TASK_NAME)]
 
         sims_global = self._normalize_similarity(global_text, global_image).float().cpu()
         rows.append(get_metrics(similarity=sims_global, qids=text_ids, gids=image_ids, name='global-t2i'))
@@ -405,8 +409,26 @@ class Evaluator:
         sims_grab = self._normalize_similarity(grab_text, grab_image).float().cpu()
         rows.append(get_metrics(similarity=sims_grab, qids=text_ids, gids=image_ids, name='grab-t2i'))
 
-        # Static alpha-combination sweeps are intentionally removed.
-        # BEST_ROW_TASK_NAME will be rebound to the best-performing row each eval epoch.
+        mix_alphas = list(self.itself_lambda_ablation_alphas)
+        if self.itself_lambda_ablation_include_default:
+            alpha_default = float(getattr(self.args, 'itself_score_weight_global', 0.68))
+            if 0.0 <= alpha_default <= 1.0:
+                mix_alphas.append(alpha_default)
+
+        seen = set()
+        for alpha in mix_alphas:
+            rounded = round(float(alpha), 6)
+            if rounded in seen:
+                continue
+            seen.add(rounded)
+            alpha = float(alpha)
+            if alpha < 0.0 or alpha > 1.0:
+                continue
+            sims_mix = (alpha * sims_global) + ((1.0 - alpha) * sims_grab)
+            task_name = f'global+grab({alpha:.2f}'.rstrip('0').rstrip('.') + ')-t2i'
+            rows.append(get_metrics(similarity=sims_mix, qids=text_ids, gids=image_ids, name=task_name))
+
+        # The old static host row is removed; BEST_ROW_TASK_NAME is rebound to best row each eval epoch.
         return rows
 
     def eval(self, model):
