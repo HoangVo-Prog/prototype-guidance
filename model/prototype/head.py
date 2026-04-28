@@ -957,6 +957,11 @@ class PrototypeConditionedTextHead(nn.Module):
             if needs_init:
                 if not self.defer_prototype_init_until_semantic_start:
                     self.prototype_bank.initialize_if_needed()
+                elif epoch is None and current_step is None:
+                    # Eval/inference calls may not provide semantic schedule context.
+                    # Keep deferred semantic recompute behavior, but ensure retrieval routing
+                    # never consumes an all-zero deferred bank.
+                    self.prototype_bank.initialize_if_needed()
                 elif (epoch is not None or current_step is not None) and self._semantic_schedule_started(
                     epoch=epoch,
                     current_step=current_step,
