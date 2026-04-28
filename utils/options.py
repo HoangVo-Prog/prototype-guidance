@@ -108,7 +108,7 @@ def build_parser():
     parser.add_argument('--lr_ablation_base_lrs', '--lr_ablation.base_lrs', dest='lr_ablation_base_lrs', default='')
     parser.add_argument('--lr_ablation_num_epochs', '--lr_ablation.num_epochs', dest='lr_ablation_num_epochs', type=int, default=2)
     parser.add_argument('--lr_ablation_selection_metric', '--lr_ablation.selection_metric', dest='lr_ablation_selection_metric', type=str, default='val_r1')
-    parser.add_argument('--lr_ablation_selection_task', '--lr_ablation.selection_task', dest='lr_ablation_selection_task', type=str, default='host-t2i')
+    parser.add_argument('--lr_ablation_selection_task', '--lr_ablation.selection_task', dest='lr_ablation_selection_task', type=str, default='best-row-t2i')
     parser.add_argument('--lr_ablation_save_each_run', '--lr_ablation.save_each_run', dest='lr_ablation_save_each_run', type=_str2bool, nargs='?', const=True, default=True)
     parser.add_argument(
         '--lr_ablation_restore_initial_state_each_run',
@@ -493,7 +493,7 @@ def _finalize_args(args):
         raise ValueError('lr_ablation.base_lrs must be a comma-separated list of floats.') from exc
     args.lr_ablation_num_epochs = max(int(getattr(args, 'lr_ablation_num_epochs', 2)), 1)
     args.lr_ablation_selection_metric = str(getattr(args, 'lr_ablation_selection_metric', 'val_r1') or 'val_r1').strip().lower()
-    args.lr_ablation_selection_task = str(getattr(args, 'lr_ablation_selection_task', 'host-t2i') or 'host-t2i').strip()
+    args.lr_ablation_selection_task = str(getattr(args, 'lr_ablation_selection_task', 'best-row-t2i') or 'best-row-t2i').strip()
     args.lr_ablation_save_each_run = bool(getattr(args, 'lr_ablation_save_each_run', True))
     args.lr_ablation_restore_initial_state_each_run = bool(
         getattr(args, 'lr_ablation_restore_initial_state_each_run', True)

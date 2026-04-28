@@ -501,7 +501,7 @@ def _collect_eval_rows(evaluator, top1_score):
             rows.append(normalized)
     if rows:
         return rows
-    top1_row_name = str(getattr(evaluator, 'latest_metrics', {}).get('val/top1_row', '') or 'host-t2i')
+    top1_row_name = str(getattr(evaluator, 'latest_metrics', {}).get('val/top1_row', '') or 'best-row-t2i')
     return [{
         'task': top1_row_name,
         'R1': float(top1_score),
@@ -709,7 +709,7 @@ def _run_lr_ablation(
         raise ValueError('lr_ablation.base_lrs must contain at least one base LR.')
     num_epochs = int(getattr(args, 'lr_ablation_num_epochs', 2))
     selection_metric = str(getattr(args, 'lr_ablation_selection_metric', 'val_r1') or 'val_r1').strip().lower()
-    selection_task = str(getattr(args, 'lr_ablation_selection_task', 'host-t2i') or 'host-t2i').strip()
+    selection_task = str(getattr(args, 'lr_ablation_selection_task', 'best-row-t2i') or 'best-row-t2i').strip()
     save_each_run = bool(getattr(args, 'lr_ablation_save_each_run', True))
     restore_initial_state_each_run = bool(getattr(args, 'lr_ablation_restore_initial_state_each_run', True))
     write_summary_json = bool(getattr(args, 'lr_ablation_write_summary_json', True))
@@ -855,7 +855,7 @@ def _run_lr_ablation(
                 for loss_key, loss_value in train_losses.items():
                     wandb_metrics[f'lr_ablation/{lr_key}/train/{loss_key}'] = float(loss_value)
                 for row in rows:
-                    task_name = str(row.get('task', 'host-t2i')).replace('/', '_')
+                    task_name = str(row.get('task', 'best-row-t2i')).replace('/', '_')
                     for metric_name in ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum'):
                         metric_value = _get_metric(row, metric_name, None)
                         wandb_metrics[f'lr_ablation/{lr_key}/val/{task_name}/{metric_name}'] = float(metric_value)

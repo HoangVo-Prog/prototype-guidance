@@ -113,7 +113,7 @@ lr_ablation:
   base_lrs: [5.0e-6, 1.0e-5, 2.0e-5]
   num_epochs: 2
   selection_metric: val_r1
-  selection_task: host-t2i
+  selection_task: best-row-t2i
   save_each_run: true
   restore_initial_state_each_run: true
   write_summary_json: true

@@ -12,7 +12,7 @@ from utils.metric_logging import build_validation_debug_metrics, build_validatio
 
 
 SUPPORTED_RETRIEVAL_METRICS = ('R1', 'R5', 'R10', 'mAP', 'mINP', 'rSum')
-DEFAULT_ITSELF_ABLATION_ALPHAS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32)
+BEST_ROW_TASK_NAME = 'best-row-t2i'
 
 
 def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
@@ -245,10 +245,7 @@ class Evaluator:
             getattr(args, 'itself_lambda_ablation_include_default', True)
         )
         configured_alphas = getattr(args, 'itself_lambda_ablation_alphas', None)
-        if configured_alphas in (None, []):
-            self.itself_lambda_ablation_alphas = list(DEFAULT_ITSELF_ABLATION_ALPHAS)
-        else:
-            self.itself_lambda_ablation_alphas = [float(alpha) for alpha in configured_alphas]
+        self.itself_lambda_ablation_alphas = [float(alpha) for alpha in configured_alphas] if configured_alphas else []
 
     def _concat_feature_batches(self, batches):
         first = batches[0]
@@ -382,10 +379,6 @@ class Evaluator:
         image_embeddings = F.normalize(image_embeddings.float(), p=2, dim=1)
         return text_embeddings @ image_embeddings.t()
 
-    @staticmethod
-    def _format_alpha(alpha: float) -> str:
-        return f'{alpha:.2f}'.rstrip('0').rstrip('.')
-
     def _build_itself_ablation_rows(
         self,
         similarity_default: torch.Tensor,
@@ -394,7 +387,7 @@ class Evaluator:
         text_ids: torch.Tensor,
         image_ids: torch.Tensor,
     ):
-        rows = [get_metrics(similarity=similarity_default, qids=text_ids, gids=image_ids, name='host-t2i')]
+        rows = [get_metrics(similarity=similarity_default, qids=text_ids, gids=image_ids, name=BEST_ROW_TASK_NAME)]
         global_image = image_features.get('global_image_embedding') if isinstance(image_features, dict) else None
         global_text = text_features.get('global_text_embedding') if isinstance(text_features, dict) else None
         grab_image = image_features.get('grab_image_embedding') if isinstance(image_features, dict) else None
@@ -412,24 +405,8 @@ class Evaluator:
         sims_grab = self._normalize_similarity(grab_text, grab_image).float().cpu()
         rows.append(get_metrics(similarity=sims_grab, qids=text_ids, gids=image_ids, name='grab-t2i'))
 
-        mix_alphas = list(self.itself_lambda_ablation_alphas)
-        if self.itself_lambda_ablation_include_default:
-            alpha_default = float(getattr(self.args, 'itself_score_weight_global', 0.68))
-            if 0.0 <= alpha_default <= 1.0:
-                mix_alphas.append(alpha_default)
-
-        seen = set()
-        for alpha in mix_alphas:
-            rounded = round(float(alpha), 6)
-            if rounded in seen:
-                continue
-            seen.add(rounded)
-            alpha = float(alpha)
-            if alpha < 0.0 or alpha > 1.0:
-                continue
-            sims_mix = (alpha * sims_global) + ((1.0 - alpha) * sims_grab)
-            task_name = f'global+grab({self._format_alpha(alpha)})-t2i'
-            rows.append(get_metrics(similarity=sims_mix, qids=text_ids, gids=image_ids, name=task_name))
+        # Static alpha-combination sweeps are intentionally removed.
+        # BEST_ROW_TASK_NAME will be rebound to the best-performing row each eval epoch.
         return rows
 
     def eval(self, model):
@@ -443,28 +420,34 @@ class Evaluator:
                 image_ids=image_ids,
             )
         else:
-            metric_rows = [get_metrics(similarity=similarity, qids=text_ids, gids=image_ids, name='host-t2i')]
+            metric_rows = [get_metrics(similarity=similarity, qids=text_ids, gids=image_ids, name=BEST_ROW_TASK_NAME)]
         best_row = max(metric_rows, key=lambda row: float(row['R1']))
-        metrics = next((row for row in metric_rows if row['task'] == 'host-t2i'), best_row)
+        metrics = dict(best_row)
+        metrics['task'] = BEST_ROW_TASK_NAME
+        metrics['source_task'] = best_row['task']
+
+        row_by_task = {str(row.get('task', '')): dict(row) for row in metric_rows}
+        row_by_task[BEST_ROW_TASK_NAME] = dict(metrics)
+        metric_rows_with_host = list(row_by_task.values())
 
         authority_context: Dict[str, object] = {
-            'display_row': best_row['task'],
-            'source_row': best_row['task'],
+            'display_row': BEST_ROW_TASK_NAME,
+            'source_row': str(best_row['task']),
             'mismatch': False,
             'selected_source_role': 'host',
-            'candidates': {'host': best_row['task']},
-            'row_roles': {row['task']: 'host' for row in metric_rows},
+            'candidates': {'host': BEST_ROW_TASK_NAME},
+            'row_roles': {str(row['task']): 'host' for row in metric_rows_with_host},
             'row_metrics': {
                 row['task']: {
                     metric_name: float(row[metric_name])
                     for metric_name in SUPPORTED_RETRIEVAL_METRICS
                 }
-                for row in metric_rows
+                for row in metric_rows_with_host
             },
         }
         self.latest_authority = authority_context
         self.latest_eval_rows = []
-        for row in metric_rows:
+        for row in metric_rows_with_host:
             row_copy = {
                 str(metric_key): (float(metric_value) if metric_key in SUPPORTED_RETRIEVAL_METRICS else metric_value)
                 for metric_key, metric_value in row.items()
@@ -473,7 +456,7 @@ class Evaluator:
             self.latest_eval_rows.append(row_copy)
 
         table = PrettyTable(['task'] + list(self.requested_metrics))
-        for row in metric_rows:
+        for row in metric_rows_with_host:
             table.add_row([row['task']] + [row[metric_name] for metric_name in self.requested_metrics])
         for metric_name in self.requested_metrics:
             table.custom_format[metric_name] = lambda _, value: f'{value:.2f}'
@@ -481,13 +464,13 @@ class Evaluator:
         retrieval_metrics = {metric_name: best_row[metric_name] for metric_name in self.requested_metrics}
         self.latest_metrics = build_validation_retrieval_metrics(retrieval_metrics)
         self.latest_metrics['val/top1'] = best_row['R1']
-        self.latest_metrics['val/top1_row'] = best_row['task']
+        self.latest_metrics['val/top1_row'] = BEST_ROW_TASK_NAME
         self.latest_metrics['val/top1_source_row'] = best_row['task']
-        self.latest_metrics['val/top1_display_row'] = best_row['task']
+        self.latest_metrics['val/top1_display_row'] = BEST_ROW_TASK_NAME
         self.latest_metrics['val/authority/selected_source_role'] = 'host'
-        self.latest_metrics['val/authority/selected_authority_row'] = best_row['task']
+        self.latest_metrics['val/authority/selected_authority_row'] = BEST_ROW_TASK_NAME
         self.latest_metrics['val/authority/display_source_mismatch'] = 0.0
-        self.latest_metrics['val/authority/host_candidate_row'] = best_row['task']
+        self.latest_metrics['val/authority/host_candidate_row'] = BEST_ROW_TASK_NAME
         self.latest_metrics['val/authority/prototype_candidate_row'] = None
         self.latest_metrics.update(debug_metrics)
 
