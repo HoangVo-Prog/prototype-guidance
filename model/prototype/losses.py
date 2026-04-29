@@ -594,6 +594,7 @@ class PrototypeLosses(nn.Module):
         semantic_info: Dict[str, torch.Tensor],
         host_pairwise_logits: Optional[torch.Tensor],
         host_global_pairwise_logits: Optional[torch.Tensor],
+        pids: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         image_probs = semantic_info.get('image_student_probs')
         text_probs = semantic_info.get('text_student_probs')
@@ -633,6 +634,10 @@ class PrototypeLosses(nn.Module):
                 'margin_host_global_mean': zero.detach(),
                 'bridge_weight_mean': zero.detach(),
                 'bridge_loss_mean': zero.detach(),
+                'valid_i2t_frac': zero.detach(),
+                'valid_t2i_frac': zero.detach(),
+                'same_id_i2t_rate': zero.detach(),
+                'same_id_t2i_rate': zero.detach(),
             }
 
         if image_probs.ndim != 2 or text_probs.ndim != 2 or text_targets.ndim != 2 or image_targets.ndim != 2:
@@ -648,23 +653,47 @@ class PrototypeLosses(nn.Module):
                 f'got {tuple(text_probs.shape)} and {tuple(image_targets.shape)}.'
             )
 
+        if pids.ndim != 1 or pids.numel() != batch_size:
+            raise ValueError(
+                f'Semantic hard-negative margin requires pids with shape [B], got {tuple(pids.shape)} for batch {batch_size}.'
+            )
+
         # Host score is used only for discrete hardest-negative index selection.
         host_scores = host_pairwise_logits.detach().to(device=image_probs.device, dtype=image_probs.dtype)
-        diag_mask = ~torch.eye(batch_size, device=host_scores.device, dtype=torch.bool)
-        masked = host_scores.masked_fill(~diag_mask, float('-inf'))
-        hardest_neg_caption = masked.argmax(dim=1)
-        hardest_neg_image = masked.argmax(dim=0)
+        labels = pids.to(device=host_scores.device, dtype=torch.long)
+        same_identity = labels.view(batch_size, 1).eq(labels.view(1, batch_size))
+        valid_neg = ~same_identity
+
+        has_valid_i2t = valid_neg.any(dim=1)
+        has_valid_t2i = valid_neg.any(dim=0)
+        if host_scores.dtype in (torch.float16, torch.bfloat16):
+            neg_inf = -1e4
+        else:
+            neg_inf = -1e9
+        masked_scores = host_scores.masked_fill(~valid_neg, neg_inf)
+        hardest_neg_caption = masked_scores.argmax(dim=1)
+        hardest_neg_image = masked_scores.argmax(dim=0)
 
         log_p_i_from_t = torch.log(image_probs.clamp_min(self.semantic_hardneg_eps))
         log_p_t_from_i = torch.log(text_probs.clamp_min(self.semantic_hardneg_eps))
 
-        pos_img = (text_targets * log_p_i_from_t).sum(dim=-1)
-        neg_img = (text_targets.index_select(0, hardest_neg_caption) * log_p_i_from_t).sum(dim=-1)
-        loss_img_sem = F.relu(self.semantic_hardneg_margin - pos_img + neg_img)
+        pos_img_all = (text_targets * log_p_i_from_t).sum(dim=-1)
+        neg_img_all = (text_targets.index_select(0, hardest_neg_caption) * log_p_i_from_t).sum(dim=-1)
+        pos_img = pos_img_all[has_valid_i2t]
+        neg_img = neg_img_all[has_valid_i2t]
+        if has_valid_i2t.any():
+            loss_img_sem = F.relu(self.semantic_hardneg_margin - pos_img + neg_img)
+        else:
+            loss_img_sem = image_probs.new_zeros((0,))
 
-        pos_txt = (image_targets * log_p_t_from_i).sum(dim=-1)
-        neg_txt = (image_targets.index_select(0, hardest_neg_image) * log_p_t_from_i).sum(dim=-1)
-        loss_txt_sem = F.relu(self.semantic_hardneg_margin - pos_txt + neg_txt)
+        pos_txt_all = (image_targets * log_p_t_from_i).sum(dim=-1)
+        neg_txt_all = (image_targets.index_select(0, hardest_neg_image) * log_p_t_from_i).sum(dim=-1)
+        pos_txt = pos_txt_all[has_valid_t2i]
+        neg_txt = neg_txt_all[has_valid_t2i]
+        if has_valid_t2i.any():
+            loss_txt_sem = F.relu(self.semantic_hardneg_margin - pos_txt + neg_txt)
+        else:
+            loss_txt_sem = image_probs.new_zeros((0,))
 
         bridge_loss_img = torch.zeros_like(loss_img_sem)
         bridge_loss_txt = torch.zeros_like(loss_txt_sem)
@@ -681,46 +710,88 @@ class PrototypeLosses(nn.Module):
         ):
             host_global_scores = host_global_pairwise_logits.to(device=image_probs.device, dtype=image_probs.dtype)
             row_index = torch.arange(batch_size, device=host_global_scores.device)
-            host_global_pos = host_global_scores.diagonal()
-            host_global_neg_img = host_global_scores[row_index, hardest_neg_caption]
-            host_global_neg_txt = host_global_scores[hardest_neg_image, row_index]
-            host_global_neg = 0.5 * (host_global_neg_img + host_global_neg_txt)
-            host_global_margin_img = host_global_pos - host_global_neg_img
-            host_global_margin_txt = host_global_pos - host_global_neg_txt
-            host_global_margin = 0.5 * (host_global_margin_img + host_global_margin_txt)
+            host_global_pos_all = host_global_scores.diagonal()
+            host_global_neg_img_all = host_global_scores[row_index, hardest_neg_caption]
+            host_global_neg_txt_all = host_global_scores[hardest_neg_image, row_index]
+            host_global_margin_img_all = host_global_pos_all - host_global_neg_img_all
+            host_global_margin_txt_all = host_global_pos_all - host_global_neg_txt_all
 
-            semantic_gap_img = (pos_img - neg_img).detach()
-            semantic_gap_txt = (pos_txt - neg_txt).detach()
-            bridge_weight_img = torch.sigmoid((self.semantic_hardneg_margin - semantic_gap_img) / self.semantic_hardneg_host_global_tau)
-            bridge_weight_txt = torch.sigmoid((self.semantic_hardneg_margin - semantic_gap_txt) / self.semantic_hardneg_host_global_tau)
-            bridge_weight = 0.5 * (bridge_weight_img + bridge_weight_txt)
+            if has_valid_i2t.any():
+                host_global_pos = host_global_pos_all[has_valid_i2t]
+                host_global_neg_img = host_global_neg_img_all[has_valid_i2t]
+                host_global_margin_img = host_global_margin_img_all[has_valid_i2t]
+                semantic_gap_img = (pos_img - neg_img).detach()
+                bridge_weight_img = torch.sigmoid((self.semantic_hardneg_margin - semantic_gap_img) / self.semantic_hardneg_host_global_tau)
+                bridge_loss_img = bridge_weight_img * F.relu(self.semantic_hardneg_margin - host_global_margin_img)
+            if has_valid_t2i.any():
+                host_global_neg_txt = host_global_neg_txt_all[has_valid_t2i]
+                host_global_margin_txt = host_global_margin_txt_all[has_valid_t2i]
+                semantic_gap_txt = (pos_txt - neg_txt).detach()
+                bridge_weight_txt = torch.sigmoid((self.semantic_hardneg_margin - semantic_gap_txt) / self.semantic_hardneg_host_global_tau)
+                bridge_loss_txt = bridge_weight_txt * F.relu(self.semantic_hardneg_margin - host_global_margin_txt)
+            if has_valid_i2t.any() and has_valid_t2i.any():
+                bridge_weight = 0.5 * (bridge_weight_img + bridge_weight_txt)
+                host_global_neg = 0.5 * (host_global_neg_img + host_global_neg_txt)
+                host_global_margin = 0.5 * (host_global_margin_img + host_global_margin_txt)
+            elif has_valid_i2t.any():
+                bridge_weight = bridge_weight_img
+                host_global_neg = host_global_neg_img
+                host_global_margin = host_global_margin_img
+            elif has_valid_t2i.any():
+                bridge_weight = bridge_weight_txt
+                host_global_neg = host_global_neg_txt
+                host_global_margin = host_global_margin_txt
 
-            bridge_loss_img = bridge_weight_img * F.relu(self.semantic_hardneg_margin - host_global_margin_img)
-            bridge_loss_txt = bridge_weight_txt * F.relu(self.semantic_hardneg_margin - host_global_margin_txt)
+        if loss_img_sem.numel() > 0:
+            loss_img = (
+                loss_img_sem
+                + self.semantic_hardneg_host_global_weight * bridge_loss_img
+            ).mean()
+        else:
+            loss_img = image_probs.new_zeros(())
+        if loss_txt_sem.numel() > 0:
+            loss_txt = (
+                loss_txt_sem
+                + self.semantic_hardneg_host_global_weight * bridge_loss_txt
+            ).mean()
+        else:
+            loss_txt = image_probs.new_zeros(())
+        bridge_loss_img_mean = bridge_loss_img.mean() if bridge_loss_img.numel() > 0 else image_probs.new_zeros(())
+        bridge_loss_txt_mean = bridge_loss_txt.mean() if bridge_loss_txt.numel() > 0 else image_probs.new_zeros(())
+        bridge_loss_mean = 0.5 * (bridge_loss_img_mean + bridge_loss_txt_mean)
 
-        loss_img = (
-            loss_img_sem
-            + self.semantic_hardneg_host_global_weight * bridge_loss_img
-        ).mean()
-        loss_txt = (
-            loss_txt_sem
-            + self.semantic_hardneg_host_global_weight * bridge_loss_txt
-        ).mean()
-        bridge_loss_mean = 0.5 * (bridge_loss_img.mean() + bridge_loss_txt.mean())
+        selected_i = has_valid_i2t.nonzero(as_tuple=False).squeeze(-1)
+        selected_j = hardest_neg_caption[selected_i]
+        selected_k = has_valid_t2i.nonzero(as_tuple=False).squeeze(-1)
+        selected_i_txt = hardest_neg_image[selected_k]
+        same_id_i2t_rate = (
+            labels[selected_i].eq(labels[selected_j]).float().mean()
+            if selected_i.numel() > 0
+            else image_probs.new_zeros(())
+        )
+        same_id_t2i_rate = (
+            labels[selected_k].eq(labels[selected_i_txt]).float().mean()
+            if selected_k.numel() > 0
+            else image_probs.new_zeros(())
+        )
 
         return {
             'loss': 0.5 * (loss_img + loss_txt),
             'loss_image': loss_img,
             'loss_text': loss_txt,
-            'pos_img_mean': pos_img.mean().detach(),
-            'neg_img_mean': neg_img.mean().detach(),
-            'pos_txt_mean': pos_txt.mean().detach(),
-            'neg_txt_mean': neg_txt.mean().detach(),
-            'pos_host_global_mean': host_global_pos.mean().detach(),
-            'neg_host_global_mean': host_global_neg.mean().detach(),
-            'margin_host_global_mean': host_global_margin.mean().detach(),
-            'bridge_weight_mean': bridge_weight.mean().detach(),
+            'pos_img_mean': (pos_img.mean() if pos_img.numel() > 0 else image_probs.new_zeros(())).detach(),
+            'neg_img_mean': (neg_img.mean() if neg_img.numel() > 0 else image_probs.new_zeros(())).detach(),
+            'pos_txt_mean': (pos_txt.mean() if pos_txt.numel() > 0 else image_probs.new_zeros(())).detach(),
+            'neg_txt_mean': (neg_txt.mean() if neg_txt.numel() > 0 else image_probs.new_zeros(())).detach(),
+            'pos_host_global_mean': (host_global_pos.mean() if host_global_pos.numel() > 0 else image_probs.new_zeros(())).detach(),
+            'neg_host_global_mean': (host_global_neg.mean() if host_global_neg.numel() > 0 else image_probs.new_zeros(())).detach(),
+            'margin_host_global_mean': (host_global_margin.mean() if host_global_margin.numel() > 0 else image_probs.new_zeros(())).detach(),
+            'bridge_weight_mean': (bridge_weight.mean() if bridge_weight.numel() > 0 else image_probs.new_zeros(())).detach(),
             'bridge_loss_mean': bridge_loss_mean.detach(),
+            'valid_i2t_frac': has_valid_i2t.float().mean().detach(),
+            'valid_t2i_frac': has_valid_t2i.float().mean().detach(),
+            'same_id_i2t_rate': same_id_i2t_rate.detach(),
+            'same_id_t2i_rate': same_id_t2i_rate.detach(),
         }
 
     def _semantic_hosthard_weighted_loss(
@@ -958,6 +1029,7 @@ class PrototypeLosses(nn.Module):
                     semantic_info=semantic_info,
                     host_pairwise_logits=host_pairwise_logits_ref,
                     host_global_pairwise_logits=host_global_pairwise_logits_ref,
+                    pids=pids_for_metrics,
                 )
                 loss_semantic_hardneg_margin = hardneg_info['loss']
                 loss_semantic_hardneg_margin_image = hardneg_info['loss_image']
@@ -977,6 +1049,10 @@ class PrototypeLosses(nn.Module):
                     'margin_host_global_mean': zero.detach(),
                     'bridge_weight_mean': zero.detach(),
                     'bridge_loss_mean': zero.detach(),
+                    'valid_i2t_frac': zero.detach(),
+                    'valid_t2i_frac': zero.detach(),
+                    'same_id_i2t_rate': zero.detach(),
+                    'same_id_t2i_rate': zero.detach(),
                 }
             else:
                 raise ValueError(
@@ -997,6 +1073,10 @@ class PrototypeLosses(nn.Module):
                 'margin_host_global_mean': zero.detach(),
                 'bridge_weight_mean': zero.detach(),
                 'bridge_loss_mean': zero.detach(),
+                'valid_i2t_frac': zero.detach(),
+                'valid_t2i_frac': zero.detach(),
+                'same_id_i2t_rate': zero.detach(),
+                'same_id_t2i_rate': zero.detach(),
             }
 
         if should_compute_semantic_hosthard_weighted:
@@ -1222,6 +1302,10 @@ class PrototypeLosses(nn.Module):
                 'sem_hardneg_margin_host_global_mean': hardneg_info['margin_host_global_mean'],
                 'sem_hardneg_bridge_weight_mean': hardneg_info['bridge_weight_mean'],
                 'sem_hardneg_bridge_loss_mean': hardneg_info['bridge_loss_mean'],
+                'sem_hardneg_valid_i2t_frac': hardneg_info['valid_i2t_frac'],
+                'sem_hardneg_valid_t2i_frac': hardneg_info['valid_t2i_frac'],
+                'sem_hardneg_same_id_i2t_rate': hardneg_info['same_id_i2t_rate'],
+                'sem_hardneg_same_id_t2i_rate': hardneg_info['same_id_t2i_rate'],
                 'semantic_hosthard_weight_mean': hosthard_info['weight_mean'],
                 'semantic_hosthard_weight_max': hosthard_info['weight_max'],
                 'semantic_hosthard_margin_row_mean': hosthard_info['margin_row_mean'],

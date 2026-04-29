@@ -81,6 +81,7 @@ class SemanticHardnegMarginTests(unittest.TestCase):
             semantic_info=semantic_info,
             host_pairwise_logits=host_scores,
             host_global_pairwise_logits=None,
+            pids=torch.arange(4, dtype=torch.long),
         )
 
         torch.testing.assert_close(outputs['loss_semantic_hardneg_margin'], manual['loss'])
@@ -218,6 +219,51 @@ class SemanticHardnegMarginTests(unittest.TestCase):
             'loss_semantic_hardneg_margin_text',
         ):
             self.assertIn(key, TRAIN_LOSS_KEYS)
+
+    def test_identity_aware_hardneg_mining_masks_same_identity(self):
+        labels = torch.tensor([1, 1, 2, 3], dtype=torch.long)
+        host_scores = torch.tensor(
+            [
+                [1.0, 9.0, 3.0, 2.0],
+                [8.0, 1.0, 4.0, 5.0],
+                [6.0, 7.0, 1.0, 2.0],
+                [5.0, 4.0, 3.0, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+        same_identity = labels.view(-1, 1).eq(labels.view(1, -1))
+        masked = host_scores.masked_fill(same_identity, -1e9)
+        hardest_neg_caption = masked.argmax(dim=1)
+        hardest_neg_image = masked.argmax(dim=0)
+
+        self.assertTrue(torch.equal(hardest_neg_caption, torch.tensor([2, 3, 1, 0], dtype=torch.long)))
+        self.assertTrue(torch.equal(hardest_neg_image, torch.tensor([2, 2, 1, 1], dtype=torch.long)))
+        self.assertTrue(bool(labels.eq(labels[hardest_neg_caption]).logical_not().all().item()))
+        self.assertTrue(bool(labels.eq(labels[hardest_neg_image]).logical_not().all().item()))
+
+    def test_all_same_identity_batch_reports_zero_and_no_same_id_mining(self):
+        losses = self._build_losses()
+        x = torch.randn(2, 4)
+        base_prototypes = torch.randn(2, 4)
+        host_scores = torch.tensor([[1.0, 9.0], [8.0, 1.0]], dtype=torch.float32)
+        labels = torch.tensor([1, 1], dtype=torch.long)
+        outputs = losses(
+            x,
+            x,
+            x,
+            pids=labels,
+            host_pairwise_logits=host_scores,
+            semantic_image_student_embeddings=x,
+            semantic_text_student_embeddings=x,
+            semantic_text_teacher_embeddings=x,
+            semantic_base_prototypes=base_prototypes,
+        )
+        debug = outputs['debug_metrics']
+        self.assertEqual(float(outputs['loss_semantic_hardneg_margin'].item()), 0.0)
+        self.assertEqual(float(debug['sem_hardneg_valid_i2t_frac'].item()), 0.0)
+        self.assertEqual(float(debug['sem_hardneg_valid_t2i_frac'].item()), 0.0)
+        self.assertEqual(float(debug['sem_hardneg_same_id_i2t_rate'].item()), 0.0)
+        self.assertEqual(float(debug['sem_hardneg_same_id_t2i_rate'].item()), 0.0)
 
 
 if __name__ == '__main__':

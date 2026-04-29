@@ -2265,3 +2265,505 @@ Thus, under the integrated formulation:
   
 
 4. The prototype subsystem is primarily a training time semantic regularizer rather than a second deployed scoring path.
+
+---
+
+### 26. SPB-K: Sufficient Prototype Basis K Selection
+
+#### 26.1 Motivation: prototype number as semantic basis width
+
+The number of prototypes is not merely the number of K-Means clusters. In the present architecture, the same quantity also controls the width of the prototype-conditioned text basis bank. For a caption $c_j$, the prototype text branch constructs
+
+$$
+B_j(K)=
+\begin{bmatrix}
+b_{j,1} \\
+b_{j,2} \\
+\vdots \\
+b_{j,K}
+\end{bmatrix}
+\in \mathbb{R}^{K\times D},
+$$
+
+where $b_{j,k}$ is the text basis vector induced by the $k$-th text-side semantic anchor. The image branch produces a routing distribution
+
+$$
+\alpha_i^K\in\Delta^{K-1},
+$$
+
+and the image-conditioned surrogate text object is written as
+
+$$
+\hat t_{j\mid i,K}^{\mathrm{proto}}
+=
+\sum_{k=1}^{K}\alpha_{i,k}^{K} b_{j,k}.
+$$
+
+Therefore, changing $K$ changes more than the semantic partition. It changes the routing simplex, the image-conditioned summary, the number of caption basis rows, the surrogate text construction path, the diagonal fidelity geometry, and the support structure used by Prototype Back Translation. A larger $K$ does not simply mean a stronger model. It may introduce redundant basis rows, low-support clusters, unstable routing, and noisy translated centroids.
+
+This means that $K$ should be selected according to the role prototypes play in Version 3. The prototype branch is a training-time semantic structure module, not an auxiliary retrieval scorer. The correct question is not:
+
+> How many semantic clusters exist in the dataset?
+
+The better question is:
+
+> How many prototype-conditioned text bases are sufficient for stable image-conditioned surrogate text construction?
+
+SPB-K, or **Sufficient Prototype Basis K selection**, answers this question directly.
+
+---
+
+#### 26.2 Definition of $K$ under SPB-K
+
+Under SPB-K, $K$ is the **semantic basis width** of the prototype-mediated surrogate construction module. It has two linked meanings.
+
+First, $K$ is the number of detached semantic anchors induced by K-Means:
+
+$$
+P_r^I(K)=\operatorname{KMeans}_{K}\big(\operatorname{sg}(\nu^I)\big),
+$$
+
+$$
+P_r^T(K)=\operatorname{KMeans}_{K}\big(\operatorname{sg}(\nu^{T,\mathrm{exact}})\big),
+$$
+
+where $r$ denotes the prototype recomputation step and $\operatorname{sg}(\cdot)$ denotes stop-gradient. The image-side anchors define routing over semantic structure, and the text-side anchors define prototype-conditioned views of each caption.
+
+Second, $K$ is the number of rows in the caption-specific basis bank:
+
+$$
+B_j(K)\in\mathbb{R}^{K\times D}.
+$$
+
+This bank is mixed by image routing to produce the surrogate text object. Thus, $K$ controls both the resolution of detached semantic anchors and the width of the basis through which image-conditioned information is written into text.
+
+A good $K$ should be large enough to provide expressive semantic bases, but small enough to avoid over-fragmented anchors and redundant basis rows. The desired value is the smallest basis width that is sufficient for the surrogate construction role.
+
+---
+
+#### 26.3 Principle: smallest sufficient semantic basis
+
+SPB-K follows a smallest-sufficient-width principle:
+
+> Select the smallest feasible $K$ whose no-gradient diagonal calibration fidelity is statistically indistinguishable from the best candidate.
+
+The principle intentionally favors sufficiency over maximal granularity. If $K=64$ is only marginally better than $K=32$, or not better at all, then $K=32$ should be preferred because it gives a simpler and more stable basis bank. This is not a preference for a smaller model. It follows from the architecture: additional prototypes are useful only if the additional basis rows improve surrogate construction while remaining well used and well supported.
+
+The selector is intended to run once per dataset after a short warm-up. Once selected,
+
+$$
+K^\star
+$$
+
+is fixed for the remaining training process. Periodic recomputation still updates the detached anchor locations, but it does not repeatedly change the number of anchors:
+
+$$
+P_r^I=\operatorname{KMeans}_{K^\star}\big(\operatorname{sg}(\nu^I)\big),
+$$
+
+$$
+P_r^T=\operatorname{KMeans}_{K^\star}\big(\operatorname{sg}(\nu^{T,\mathrm{exact}})\big).
+$$
+
+This keeps the method simple and paper-friendly: SPB-K adapts the dataset-level semantic basis width, not the prototype count at every recomputation.
+
+---
+
+#### 26.4 Candidate set
+
+SPB-K uses a small candidate set. For the current computational regime, the natural choice is
+
+$$
+\mathcal{K}=\{16,32,64\}.
+$$
+
+A smaller value such as $K=8$ can be included as a diagnostic, but the main method should remain simple. The candidate set should cover the plausible range where the basis bank is neither obviously under-complete nor obviously too expensive.
+
+For each $K\in\mathcal{K}$, the model temporarily instantiates candidate detached prototypes, constructs the corresponding routing distributions and text basis banks, and evaluates the diagonal surrogate construction without gradient updates. This is not a validation-set retrieval search. It does not use Rank-1, mAP, prototype retrieval similarity, or host failure cases to choose $K$.
+
+---
+
+#### 26.5 Diagonal calibration fidelity
+
+The main calibration metric is the existing diagonal fidelity objective. This is the right signal because the surrogate text object remains central to the method, and diagonal fidelity measures whether the surrogate object is semantically tied to the exact diagonal teacher.
+
+For candidate $K$, the prototype branch constructs
+
+$$
+\hat z_{i\mid i,K}^{t,\mathrm{proto}}
+=
+g_t^{\mathrm{proto}}\big(\hat t_{i\mid i,K}^{\mathrm{proto}}\big),
+$$
+
+and the exact diagonal teacher
+
+$$
+z_{i\mid i,K}^{t,\mathrm{exact}}
+=
+g_t^{\mathrm{proto}}\big(t_{i\mid i,K}^{\mathrm{exact}}\big).
+$$
+
+The diagonal relation matrix is
+
+$$
+M_{ik}^{K}
+=
+\cos\left(
+\hat z_{i\mid i,K}^{t,\mathrm{proto}},
+\operatorname{sg}\left(z_{k\mid k,K}^{t,\mathrm{exact}}\right)
+\right).
+$$
+
+Using the same symmetric diagonal relation objective as in training, define the no-gradient calibration loss:
+
+$$
+\mathcal{L}_{\mathrm{diag}}^{\mathrm{cal}}(K)
+=
+\mathcal{L}_{\mathrm{diag-rel}}^{\mathrm{sym}}(K).
+$$
+
+Across calibration mini-batches,
+
+$$
+\mu_K=\operatorname{mean}\left(\mathcal{L}_{\mathrm{diag}}^{\mathrm{cal}}(K)\right),
+$$
+
+and
+
+$$
+SE_K=
+\frac{\operatorname{std}\left(\mathcal{L}_{\mathrm{diag}}^{\mathrm{cal}}(K)\right)}
+{\sqrt{B_{\mathrm{cal}}}},
+$$
+
+where $B_{\mathrm{cal}}$ is the number of calibration batches. A smaller $\mu_K$ means the $K$-wide basis bank constructs a surrogate text object that is more faithful to the exact diagonal teacher.
+
+This criterion is aligned with the architecture because it evaluates the quality of the training-time construction path. It does not evaluate a prototype retrieval score.
+
+---
+
+#### 26.6 Routing usage
+
+Diagonal fidelity alone is not enough. A large $K$ may give similar calibration loss while using only a small subset of its basis rows. Such a candidate should not be preferred, because the nominal basis width is not actually being used.
+
+For candidate $K$, let $\alpha_i^K$ be the image routing distribution. Define the mean routing mass
+
+$$
+\bar\alpha^K
+=
+\frac{1}{N_{\mathrm{cal}}}\sum_i\alpha_i^K.
+$$
+
+The active basis count is
+
+$$
+A(K)=\exp\left(H(\bar\alpha^K)\right),
+$$
+
+where
+
+$$
+H(\bar\alpha^K)
+=
+-
+\sum_{k=1}^{K}\bar\alpha_k^K\log \bar\alpha_k^K.
+$$
+
+The normalized routing usage is
+
+$$
+U(K)=\frac{A(K)}{K}.
+$$
+
+A candidate is feasible only if
+
+$$
+U(K)\geq \rho,
+$$
+
+with a typical default
+
+$$
+\rho=0.5.
+$$
+
+This rejects a large basis bank whose effective routing behavior is much smaller than its nominal width.
+
+---
+
+#### 26.7 Cluster support
+
+SPB-K also requires the detached K-Means anchors to have enough support. This matters because prototypes define assignments, soft prototype targets, and PBT translated centroids. Tiny clusters can produce noisy centroids and unstable structural supervision.
+
+For image-side assignments, let $n_k^I$ be the number of samples assigned to image prototype $k$. Define
+
+$$
+\operatorname{p10}^I(K)
+=
+\operatorname{quantile}_{0.10}\left(\{n_k^I\}_{k=1}^{K}\right).
+$$
+
+If text-side assignments are available, define
+
+$$
+\operatorname{p10}^T(K)
+=
+\operatorname{quantile}_{0.10}\left(\{n_k^T\}_{k=1}^{K}\right).
+$$
+
+A candidate is support-feasible only if
+
+$$
+\operatorname{p10}^I(K)\geq s_{\min},
+$$
+
+and, when text-side statistics exist,
+
+$$
+\operatorname{p10}^T(K)\geq s_{\min}.
+$$
+
+A practical value is
+
+$$
+s_{\min}=4.
+$$
+
+This condition is intentionally simple. It only removes candidates whose anchors are too poorly supported to serve as stable routing, basis, and PBT structures.
+
+---
+
+#### 26.8 Feasible set and selection rule
+
+The feasible candidate set is
+
+$$
+\mathcal{F}
+=
+\left\{
+K\in\mathcal{K}:
+U(K)\geq\rho,
+\operatorname{p10}^I(K)\geq s_{\min},
+\operatorname{p10}^T(K)\geq s_{\min}\ \text{if available}
+\right\}.
+$$
+
+If no candidate is feasible, SPB-K keeps the current configured value:
+
+$$
+K^\star=K_{\mathrm{current}}.
+$$
+
+This fallback avoids changing training when the calibration evidence is unreliable.
+
+If feasible candidates exist, define
+
+$$
+K_{\mathrm{best}}
+=
+\arg\min_{K\in\mathcal{F}}\mu_K.
+$$
+
+With the one-standard-error rule, define
+
+$$
+\theta=
+\mu_{K_{\mathrm{best}}}+SE_{K_{\mathrm{best}}}.
+$$
+
+Then choose
+
+$$
+K^\star
+=
+\min\left\{
+K\in\mathcal{F}:\mu_K\leq\theta
+\right\}.
+$$
+
+In words:
+
+> Choose the smallest feasible basis width whose diagonal calibration fidelity is statistically tied with the best feasible candidate.
+
+If the one-standard-error rule is disabled, choose
+
+$$
+K^\star=K_{\mathrm{best}}.
+$$
+
+The one-standard-error rule is preferred because it matches the purpose of SPB-K: find a sufficient semantic basis width, not the largest stable cluster count.
+
+---
+
+#### 26.9 Expected behavior and interpretation
+
+SPB-K explains why a moderate value such as $K=32$ can outperform $K=64$.
+
+When $K$ is too small, the basis bank may be under-complete. Many distinct appearance or caption patterns must share too few basis rows. Routing usage may be high, but diagonal calibration fidelity can be weak because the surrogate text object lacks sufficient semantic degrees of freedom.
+
+When $K$ is too large, the basis bank may become over-fragmented. Additional rows may attend to similar caption tokens, receive low routing mass, or depend on low-support clusters. Calibration fidelity may saturate or degrade, while routing usage and cluster support decline.
+
+A typical pattern is:
+
+| Candidate $K$ | Expected behavior | Interpretation |
+|---:|---|---|
+| 16 | high usage, weaker diagonal fidelity | basis may be insufficient |
+| 32 | strong fidelity, healthy usage, adequate support | sufficient semantic basis width |
+| 64 | similar or worse fidelity, lower usage, lower support | redundant or fragmented basis bank |
+
+If $K=64$ is only marginally better than $K=32$ in calibration fidelity, SPB-K chooses $K=32$. The goal is not to maximize the number of prototypes. The goal is to identify the smallest sufficient semantic basis.
+
+---
+
+#### 26.10 Relationship to periodic prototype recomputation
+
+SPB-K and periodic prototype recomputation solve different problems.
+
+Periodic recomputation updates the locations of the detached anchors as the representation space evolves:
+
+$$
+P_r^I, P_r^T \quad \text{change over training}.
+$$
+
+SPB-K chooses the dataset-level basis width:
+
+$$
+K^\star \quad \text{is selected once and then held fixed}.
+$$
+
+After selection, subsequent recomputation uses the selected width but still recomputes the anchors from detached features:
+
+$$
+P_r^I=\operatorname{KMeans}_{K^\star}\big(\operatorname{sg}(\nu^I)\big),
+$$
+
+$$
+P_r^T=\operatorname{KMeans}_{K^\star}\big(\operatorname{sg}(\nu^{T,\mathrm{exact}})\big).
+$$
+
+Thus, prototypes remain detached K-Means anchors, not learnable parameters updated directly by SGD. SPB-K changes only how the dataset-level width is chosen.
+
+---
+
+#### 26.11 Training and inference separation
+
+SPB-K is strictly training-time. It does not create a prototype retrieval score and does not alter the deployed retrieval path.
+
+At inference, the retrieval score remains the host score:
+
+$$
+s_{ij}^{\mathrm{host}}
+=
+\lambda_s s_{ij}^{\mathrm{global,host}}
++
+(1-\lambda_s)s_{ij}^{\mathrm{local,host}}.
+$$
+
+There is no inference-time query-prototype similarity, no prototype-enhanced ranking score, and no host-prototype score fusion:
+
+$$
+s_{ij}^{\mathrm{final}}
+\neq
+s_{ij}^{\mathrm{host}}+\lambda s_{ij}^{\mathrm{proto}}.
+$$
+
+The selected $K^\star$ only determines the width of the training-time prototype-mediated surrogate construction and semantic regularization pathway. The deployed retrieval scorer remains host-only.
+
+---
+
+#### 26.12 Distinction from density-based adaptive cluster estimation
+
+Density-based adaptive prototype methods estimate the number of prototypes by identifying density modes in feature space. Such methods answer:
+
+> How many prominent feature-density modes exist?
+
+SPB-K answers a different question:
+
+> How many prototype-conditioned text bases are sufficient for stable surrogate construction?
+
+This distinction matters because a dataset may contain many density modes while the basis bank needs only a smaller number of stable bases. Conversely, compact text distributions may still require enough basis rows to express image-conditioned surrogate variation.
+
+Density-based selection can remain a diagnostic or appendix-level comparison. The main method should be SPB-K because it is tied to the actual objects used by the model: routing weights, basis rows, diagonal surrogate embeddings, exact diagonal teachers, and supported detached anchors.
+
+| Method type | Main question | Role of prototypes | Inference behavior |
+|---|---|---|---|
+| Density-based adaptive clustering | How many density modes exist? | feature-space cluster centers | may support retrieval refinement in other methods |
+| SPB-K | How many text bases are sufficient? | training-time semantic basis and structure anchors | no prototype scoring; host-only retrieval |
+
+---
+
+#### 26.13 Paper-ready formulation
+
+The method can be written as follows:
+
+> The number of prototypes controls not only the number of K-Means anchors, but also the width of the prototype-conditioned text basis bank used to construct the image-conditioned surrogate text object. Therefore, a larger $K$ is not necessarily better: it may introduce redundant basis rows, low-support clusters, unstable routing, and noisy PBT centroids. We propose Sufficient Prototype Basis K selection, or SPB-K, to choose the dataset-level prototype width. After a short warm-up, each candidate $K$ is evaluated without gradient by instantiating detached K-Means anchors and measuring diagonal calibration fidelity between the surrogate text object and the exact diagonal teacher. A candidate is feasible only if its routing usage is non-degenerate and its image/text cluster supports are sufficient. Among feasible candidates, we choose the smallest $K$ whose diagonal calibration loss is within one standard error of the best candidate. The selected $K$ is then fixed for all subsequent prototype recomputations. This adapts the semantic basis width of the training-time geometry regularizer without introducing prototype-based inference scoring.
+
+The one-sentence framing is:
+
+> SPB-K adapts the sufficient semantic basis width of the prototype-mediated surrogate construction module, not the capacity of a retrieval expert.
+
+---
+
+#### 26.14 Recommended experimental reporting
+
+The main empirical claim should be that $K$ has a sufficiency point rather than a monotonic scaling behavior. The main comparison should use the fixed grid
+
+$$
+K\in\{16,32,64\}
+$$
+
+and compare it with SPB-K.
+
+For each dataset, report the final retrieval performance using the host-only inference score. The retrieval metrics should evaluate the selected model, but they should not be used to select $K$. The selection itself should be justified by:
+
+1. diagonal calibration loss $\mu_K$,
+2. standard error $SE_K$,
+3. routing usage $U(K)$,
+4. active basis count $A(K)$,
+5. image-side p10 cluster support,
+6. text-side p10 cluster support when available,
+7. selected value $K^\star$.
+
+A concise reporting table can show why the selected value is sufficient:
+
+| $K$ | Diagonal calibration loss | Routing usage | Image p10 support | Text p10 support | Feasible | Selected |
+|---:|---:|---:|---:|---:|:---:|:---:|
+| 16 | higher | high | high | high | yes | no |
+| 32 | near best | healthy | adequate | adequate | yes | yes |
+| 64 | best or tied | lower | lower | lower | yes/no | no |
+
+This table supports the methodological claim that SPB-K chooses a sufficient basis width rather than a larger prototype count.
+
+---
+
+#### 26.15 Failure cases and safeguards
+
+SPB-K is simple, but several cases should be monitored.
+
+If selection is performed too early, the semantic features may not yet be meaningful. A short warm-up should be used before calibration.
+
+If all candidates have similar diagonal fidelity, the one-standard-error rule will choose the smallest feasible value. This is acceptable when routing usage and support are healthy, but it should be reported transparently.
+
+If a larger $K$ gives better diagonal fidelity but much worse routing usage or support, it should be rejected because the basis bank is structurally degenerate.
+
+If no candidate satisfies the feasibility constraints, the method should retain the current configured value of $K$. This prevents unreliable calibration from disrupting training.
+
+If the routing temperature or basis construction mechanism changes substantially, SPB-K should be re-evaluated because the meaning of routing usage may change.
+
+---
+
+#### 26.16 Final interpretation
+
+SPB-K is the main adaptive $K$ mechanism for the current Version 3 geometry regularizer.
+
+It is simple by design. It does not try to discover all semantic modes in the dataset. It does not use prototypes as inference-time retrieval anchors. It does not introduce a second decision path. It does not cluster host failures. It does not repair host boundaries through residual supervision.
+
+Instead, it selects
+
+$$
+K^\star
+=
+\text{the smallest feasible semantic basis width statistically tied with the best diagonal calibration fidelity}.
+$$
+
+This is aligned with the architecture because the prototype subsystem is a training-time semantic structure module. Its role is to provide detached anchors, routing distributions, text basis banks, surrogate text construction, diagonal fidelity, and PBT semantic regularization. The selected $K^\star$ determines the sufficient width of that semantic basis system, while the deployed retrieval scorer remains the host alone.
