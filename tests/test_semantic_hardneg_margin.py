@@ -175,39 +175,56 @@ class SemanticHardnegMarginTests(unittest.TestCase):
         losses = self._build_losses()
         x = torch.randn(3, 4)
         host_scores = torch.randn(3, 3)
-        with self.assertRaisesRegex(ValueError, 'requires semantic student probabilities/targets'):
-            losses(
-                x,
-                x,
-                x,
-                pids=torch.arange(3, dtype=torch.long),
-                host_pairwise_logits=host_scores,
-                semantic_image_student_embeddings=None,
-                semantic_text_student_embeddings=None,
-                semantic_text_teacher_embeddings=None,
-                semantic_base_prototypes=None,
-            )
-
-    def test_host_global_bridge_propagates_gradients(self):
-        losses = self._build_losses()
-        x = torch.randn(4, 4)
-        base_prototypes = torch.randn(3, 4)
-        host_scores = torch.randn(4, 4, requires_grad=True)
-        host_global_scores = torch.randn(4, 4, requires_grad=True)
-
         outputs = losses(
             x,
             x,
             x,
-            pids=torch.arange(4, dtype=torch.long),
+            pids=torch.arange(3, dtype=torch.long),
+            host_pairwise_logits=host_scores,
+            semantic_image_student_embeddings=None,
+            semantic_text_student_embeddings=None,
+            semantic_text_teacher_embeddings=None,
+            semantic_base_prototypes=None,
+        )
+        self.assertEqual(float(outputs['loss_semantic_hardneg_margin'].item()), 0.0)
+        self.assertEqual(float(outputs['debug_metrics']['semantic_pbt_valid_cluster_count'].item()), 0.0)
+
+    def test_host_global_bridge_propagates_gradients(self):
+        losses = self._build_losses(
+            semantic_hardneg_margin=0.5,
+            semantic_hardneg_target_sim_skip_threshold=0.95,
+        )
+        semantic_info = {
+            'image_student_probs': torch.tensor(
+                [[0.6, 0.3, 0.1], [0.1, 0.8, 0.1], [0.2, 0.1, 0.7], [0.7, 0.2, 0.1]], dtype=torch.float32
+            ),
+            'text_student_probs': torch.tensor(
+                [[0.7, 0.2, 0.1], [0.2, 0.7, 0.1], [0.1, 0.2, 0.7], [0.6, 0.3, 0.1]], dtype=torch.float32
+            ),
+            'text_targets': torch.tensor(
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.6, 0.4, 0.0]], dtype=torch.float32
+            ),
+            'image_targets': torch.tensor(
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.5, 0.5, 0.0]], dtype=torch.float32
+            ),
+        }
+        host_scores = torch.tensor(
+            [
+                [1.0, 9.0, 1.0, 1.0],
+                [1.0, 1.0, 9.0, 1.0],
+                [1.0, 1.0, 1.0, 9.0],
+                [9.0, 1.0, 1.0, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+        host_global_scores = torch.randn(4, 4, requires_grad=True)
+        info = losses._semantic_hardneg_margin_loss(
+            semantic_info=semantic_info,
             host_pairwise_logits=host_scores,
             host_global_pairwise_logits=host_global_scores,
-            semantic_image_student_embeddings=x,
-            semantic_text_student_embeddings=x,
-            semantic_text_teacher_embeddings=x,
-            semantic_base_prototypes=base_prototypes,
+            pids=torch.arange(4, dtype=torch.long),
         )
-        outputs['loss_semantic_hardneg_margin_weighted'].backward()
+        info['loss'].backward()
         self.assertIsNone(host_scores.grad)
         self.assertIsNotNone(host_global_scores.grad)
         self.assertGreater(float(host_global_scores.grad.abs().sum().item()), 0.0)
@@ -241,6 +258,24 @@ class SemanticHardnegMarginTests(unittest.TestCase):
         self.assertTrue(bool(labels.eq(labels[hardest_neg_caption]).logical_not().all().item()))
         self.assertTrue(bool(labels.eq(labels[hardest_neg_image]).logical_not().all().item()))
 
+    def test_identity_aware_row_and_column_mining_helper(self):
+        losses = self._build_losses()
+        labels = torch.tensor([1, 1, 2, 3], dtype=torch.long)
+        scores = torch.tensor(
+            [
+                [1.0, 9.0, 3.0, 2.0],
+                [8.0, 1.0, 4.0, 5.0],
+                [6.0, 7.0, 1.0, 2.0],
+                [5.0, 4.0, 3.0, 1.0],
+            ],
+            dtype=torch.float32,
+        )
+        mined = losses._mine_identity_aware_hard_negatives(scores, labels)
+        self.assertTrue(torch.equal(mined['hardneg_j'], torch.tensor([2, 3, 1, 0], dtype=torch.long)))
+        self.assertTrue(torch.equal(mined['hardneg_k'], torch.tensor([2, 2, 1, 1], dtype=torch.long)))
+        self.assertTrue(bool(mined['has_valid_i2t'].all().item()))
+        self.assertTrue(bool(mined['has_valid_t2i'].all().item()))
+
     def test_all_same_identity_batch_reports_zero_and_no_same_id_mining(self):
         losses = self._build_losses()
         x = torch.randn(2, 4)
@@ -264,6 +299,86 @@ class SemanticHardnegMarginTests(unittest.TestCase):
         self.assertEqual(float(debug['sem_hardneg_valid_t2i_frac'].item()), 0.0)
         self.assertEqual(float(debug['sem_hardneg_same_id_i2t_rate'].item()), 0.0)
         self.assertEqual(float(debug['sem_hardneg_same_id_t2i_rate'].item()), 0.0)
+
+    def test_identity_aware_positive_aggregation_counts_same_id(self):
+        losses = self._build_losses()
+        labels = torch.tensor([1, 1, 2, 3], dtype=torch.long)
+        same_identity = labels[:, None].eq(labels[None, :])
+        phi = torch.tensor(
+            [
+                [2.0, 4.0, -1.0, -3.0],
+                [1.0, 3.0, -2.0, -4.0],
+                [-2.0, -2.5, 5.0, 0.1],
+                [-1.0, -3.0, 0.2, 6.0],
+            ],
+            dtype=torch.float32,
+        )
+        agg = losses._masked_logmeanexp(phi, same_identity, dim=1)
+        expected_0 = torch.logsumexp(torch.tensor([2.0, 4.0]), dim=0) - torch.log(torch.tensor(2.0))
+        expected_1 = torch.logsumexp(torch.tensor([1.0, 3.0]), dim=0) - torch.log(torch.tensor(2.0))
+        self.assertAlmostEqual(float(agg[0].item()), float(expected_0.item()), places=6)
+        self.assertAlmostEqual(float(agg[1].item()), float(expected_1.item()), places=6)
+        self.assertAlmostEqual(float(agg[2].item()), 5.0, places=6)
+        self.assertAlmostEqual(float(agg[3].item()), 6.0, places=6)
+
+    def test_same_prototype_skip_affects_eligibility(self):
+        losses = self._build_losses(semantic_hardneg_margin=0.1)
+        semantic_info = {
+            'image_student_probs': torch.tensor(
+                [[0.6, 0.3, 0.1], [0.2, 0.7, 0.1], [0.2, 0.2, 0.6]], dtype=torch.float32
+            ),
+            'text_student_probs': torch.tensor(
+                [[0.5, 0.4, 0.1], [0.3, 0.6, 0.1], [0.2, 0.3, 0.5]], dtype=torch.float32
+            ),
+            'text_targets': torch.tensor(
+                [[0.95, 0.04, 0.01], [0.94, 0.05, 0.01], [0.01, 0.05, 0.94]], dtype=torch.float32
+            ),
+            'image_targets': torch.tensor(
+                [[0.90, 0.09, 0.01], [0.01, 0.89, 0.10], [0.02, 0.88, 0.10]], dtype=torch.float32
+            ),
+        }
+        host_scores = torch.tensor(
+            [[1.0, 9.0, 2.0], [1.0, 1.0, 8.0], [7.0, 1.0, 1.0]], dtype=torch.float32
+        )
+        info = losses._semantic_hardneg_margin_loss(
+            semantic_info=semantic_info,
+            host_pairwise_logits=host_scores,
+            host_global_pairwise_logits=None,
+            pids=torch.tensor([1, 2, 3], dtype=torch.long),
+        )
+        self.assertGreater(float(info['skipped_same_proto_i2t_frac'].item()), 0.0)
+        self.assertGreater(float(info['skipped_same_proto_t2i_frac'].item()), 0.0)
+
+    def test_near_target_similarity_skip_threshold(self):
+        losses = self._build_losses(semantic_hardneg_margin=0.1, semantic_hardneg_target_sim_skip_threshold=0.95)
+        base_info = {
+            'image_student_probs': torch.tensor([[0.6, 0.3, 0.1], [0.2, 0.7, 0.1]], dtype=torch.float32),
+            'text_student_probs': torch.tensor([[0.5, 0.4, 0.1], [0.3, 0.6, 0.1]], dtype=torch.float32),
+            'text_targets': torch.tensor([[0.8, 0.2, 0.0], [0.79, 0.21, 0.0]], dtype=torch.float32),
+            'image_targets': torch.tensor([[0.8, 0.2, 0.0], [0.79, 0.21, 0.0]], dtype=torch.float32),
+        }
+        host_scores = torch.tensor([[1.0, 9.0], [8.0, 1.0]], dtype=torch.float32)
+        labels = torch.tensor([1, 2], dtype=torch.long)
+        info_hi = losses._semantic_hardneg_margin_loss(
+            semantic_info=base_info,
+            host_pairwise_logits=host_scores,
+            host_global_pairwise_logits=None,
+            pids=labels,
+        )
+        self.assertGreater(float(info_hi['skipped_target_sim_i2t_frac'].item()), 0.0)
+        self.assertGreater(float(info_hi['skipped_target_sim_t2i_frac'].item()), 0.0)
+
+        low_sim_info = dict(base_info)
+        low_sim_info['text_targets'] = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=torch.float32)
+        low_sim_info['image_targets'] = torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=torch.float32)
+        info_lo = losses._semantic_hardneg_margin_loss(
+            semantic_info=low_sim_info,
+            host_pairwise_logits=host_scores,
+            host_global_pairwise_logits=None,
+            pids=labels,
+        )
+        self.assertEqual(float(info_lo['skipped_target_sim_i2t_frac'].item()), 0.0)
+        self.assertEqual(float(info_lo['skipped_target_sim_t2i_frac'].item()), 0.0)
 
 
 if __name__ == '__main__':
