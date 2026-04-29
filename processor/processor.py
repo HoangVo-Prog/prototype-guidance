@@ -394,11 +394,25 @@ def _maybe_recompute_prototypes_from_deterministic_cache(model, train_loader, ar
     if bool(getattr(args, 'repro_proto_eval_mode_recompute', True)):
         runtime_model.eval()
     ids, feats = [], []
+    def _extract_projected_pooled_images(images_tensor: torch.Tensor) -> torch.Tensor:
+        if hasattr(runtime_model, 'extract_image_features'):
+            image_out = runtime_model.extract_image_features(images_tensor)
+            return image_out.projected_pooled
+        if hasattr(runtime_model, 'host_core') and hasattr(runtime_model.host_core, 'extract_image_features'):
+            image_out = runtime_model.host_core.extract_image_features(images_tensor)
+            return image_out.projected_pooled
+        raise AttributeError(f'{type(runtime_model).__name__} has no supported image-feature extractor.')
+
+    def _cast_proto_dtype(x: torch.Tensor) -> torch.Tensor:
+        if hasattr(runtime_model, '_cast_to_prototype_dtype'):
+            return runtime_model._cast_to_prototype_dtype(x)
+        return x
+
     with torch.no_grad():
         for batch in proto_loader:
             images = batch['images'].to(device)
-            image_out = runtime_model.extract_image_features(images)
-            image_emb = runtime_model._cast_to_prototype_dtype(image_out.projected_pooled)
+            projected_pooled = _extract_projected_pooled_images(images)
+            image_emb = _cast_proto_dtype(projected_pooled)
             semantic_features = proto_head.image_adapter(image_emb.detach()).detach().float().cpu()
             sample_ids = batch.get('index', batch.get('image_ids'))
             ids.append(sample_ids.detach().cpu().reshape(-1))
