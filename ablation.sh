@@ -28,29 +28,16 @@ run_cmd() {
 run_cmd \
     python /home/vhoang/prototype-guidance/train.py \
     --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
-    --lambda_semantic_pbt 20.0 \
-    --epochs 20 \
-    --lambda_semantic_hardneg_margin 100.0 \
-    --semantic_recompute_interval 2.0 \
-    --semantic_recompute_start_epoch 0 \
     --semantic_loss_ramp_start_epoch 0
 
 run_cmd \
     python /home/vhoang/prototype-guidance/train.py \
     --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
-    --lambda_semantic_pbt 20.0 \
-    --epochs 20 \
-    --lambda_semantic_hardneg_margin 500.0 \
-    --semantic_recompute_interval 2.0 \
-    --semantic_recompute_start_epoch 0 \
-    --semantic_loss_ramp_start_epoch 0
+    --use_loss_semantic_hardneg_margin false \
+    --lambda_semantic_hardneg_margin 0.0 
 
 run_cmd \
     python /home/vhoang/prototype-guidance/train.py \
     --config_file /home/vhoang/prototype-guidance/configs/semantic_structure/itself.yaml \
-    --lambda_semantic_pbt 20.0 \
-    --epochs 20 \
-    --lambda_semantic_hardneg_margin 1000.0 \
-    --semantic_recompute_interval 2.0 \
-    --semantic_recompute_start_epoch 0 \
-    --semantic_loss_ramp_start_epoch 0
+    --semantic_recompute_start_epoch 3 \
+    --semantic_loss_ramp_start_epoch 3

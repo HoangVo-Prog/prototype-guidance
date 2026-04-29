@@ -24,9 +24,9 @@ class LRSchedulerWithWarmup(_LRScheduler):
                 "Milestones should be a list of"
                 " increasing integers. Got {}".format(milestones),
             )
-        if mode not in ("step", "exp", "poly", "cosine", "linear"):
+        if mode not in ("step", "exp", "poly", "cosine", "linear", "horizontal"):
             raise ValueError(
-                "Only 'step', 'exp', 'poly' or 'cosine' learning rate scheduler accepted"
+                "Only 'step', 'exp', 'poly', 'cosine', 'linear' or 'horizontal' learning rate scheduler accepted"
                 "got {}".format(mode)
             )
         if warmup_method not in ("constant", "linear"):
@@ -60,7 +60,8 @@ class LRSchedulerWithWarmup(_LRScheduler):
                 base_lr * self.gamma ** bisect_right(self.milestones, self.last_epoch)
                 for base_lr in self.base_lrs
             ]
-
+        if self.mode == "horizontal":
+            return list(self.base_lrs)
         epoch_ratio = (self.last_epoch - self.warmup_epochs) / (
             self.total_epochs - self.warmup_epochs
         )

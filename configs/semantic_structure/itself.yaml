@@ -145,7 +145,7 @@ text_pooling:
 
 training:
   batch_size: 256
-  epochs: 15
+  epochs: 25
   log_period: 50
   eval_frequency: 1
   early_stopping_enabled: true
@@ -212,7 +212,7 @@ optimizer:
   warmup_factor: 0.1
   warmup_epochs: 5
   warmup_method: linear
-  scheduler: cosine
+  scheduler: horizontal
   target_lr: 0.0
   power: 0.9
 
