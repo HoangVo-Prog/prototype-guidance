@@ -46,6 +46,7 @@ from utils.metrics_prototype import (
     resolve_prototype_bank_tensor,
 )
 from utils.precision import build_autocast_context, build_grad_scaler, is_cuda_device
+from utils.repro import array_hash, tensor_hash
 
 
 METER_KEYS = ('loss_total',) + tuple(key for key in TRACKED_SCALAR_KEYS if key != 'loss_total')
@@ -359,6 +360,75 @@ def _collect_loss_grad_norm_metrics(outputs, parameters):
 
 def _unwrap_model(model):
     return model.module if hasattr(model, 'module') else model
+
+
+def _set_epoch_on_loader_sampler(train_loader, epoch, logger=None, enabled: bool = True):
+    if not enabled:
+        return
+    sampler = getattr(train_loader, 'sampler', None)
+    if sampler is not None and hasattr(sampler, 'set_epoch'):
+        sampler.set_epoch(int(epoch))
+        if logger is not None:
+            logger.debug('REPRO_DEBUG sampler.set_epoch epoch=%d sampler=%s', int(epoch), type(sampler).__name__)
+        return
+    batch_sampler = getattr(train_loader, 'batch_sampler', None)
+    nested_sampler = getattr(batch_sampler, 'sampler', None) if batch_sampler is not None else None
+    if nested_sampler is not None and hasattr(nested_sampler, 'set_epoch'):
+        nested_sampler.set_epoch(int(epoch))
+        if logger is not None:
+            logger.debug('REPRO_DEBUG batch_sampler.sampler.set_epoch epoch=%d sampler=%s', int(epoch), type(nested_sampler).__name__)
+
+
+def _maybe_recompute_prototypes_from_deterministic_cache(model, train_loader, args, epoch, current_step, logger):
+    if not (bool(getattr(args, 'repro_enabled', False)) and bool(getattr(args, 'repro_proto_deterministic_recompute', True))):
+        return
+    proto_loader = getattr(train_loader, 'proto_recompute_loader', None)
+    if proto_loader is None:
+        return
+    runtime_model = _unwrap_model(model)
+    proto_head = getattr(runtime_model, 'prototype_head', None)
+    if proto_head is None:
+        return
+    device = next(runtime_model.parameters()).device
+    was_training = runtime_model.training
+    if bool(getattr(args, 'repro_proto_eval_mode_recompute', True)):
+        runtime_model.eval()
+    ids, feats = [], []
+    with torch.no_grad():
+        for batch in proto_loader:
+            images = batch['images'].to(device)
+            image_out = runtime_model.extract_image_features(images)
+            image_emb = runtime_model._cast_to_prototype_dtype(image_out.projected_pooled)
+            semantic_features = proto_head.image_adapter(image_emb.detach()).detach().float().cpu()
+            sample_ids = batch.get('index', batch.get('image_ids'))
+            ids.append(sample_ids.detach().cpu().reshape(-1))
+            feats.append(semantic_features)
+    if was_training:
+        runtime_model.train()
+    if not feats:
+        return
+    ids_tensor = torch.cat(ids, dim=0)
+    feat_tensor = torch.cat(feats, dim=0)
+    if bool(getattr(args, 'repro_proto_sort_cache_by_id', True)):
+        order = torch.argsort(ids_tensor, stable=True)
+        ids_tensor = ids_tensor.index_select(0, order)
+        feat_tensor = feat_tensor.index_select(0, order)
+    proto_head.get_prototype_context(
+        return_debug=False,
+        epoch=epoch,
+        current_step=current_step,
+        semantic_recompute_features=feat_tensor.to(device=device),
+        semantic_recompute_ids=ids_tensor.to(device=device),
+    )
+    if bool(getattr(args, 'repro_proto_hash_logging', True)):
+        logger.info(
+            'REPRO_DEBUG proto_cache step=%d n=%d ids_hash=%s feat_hash=%s first10_ids=%s',
+            int(current_step),
+            int(ids_tensor.numel()),
+            tensor_hash(ids_tensor, name='proto_ids'),
+            tensor_hash(feat_tensor, name='proto_feats'),
+            ids_tensor[:10].tolist(),
+        )
 
 
 def _normalize_adaptive_k_candidates(raw_candidates) -> List[int]:
@@ -1258,6 +1328,11 @@ def _do_train_runtime(
             'runtime_mode': str(resolved_runtime_mode),
             'resume_source_path': str(getattr(args, 'resume_ckpt_file', '') or ''),
         }
+        prototype_runtime_state = None
+        if bool(getattr(args, 'repro_enabled', False)) and bool(getattr(args, 'repro_save_proto_runtime_state', True)):
+            runtime_model = _unwrap_model(model)
+            if hasattr(runtime_model, 'get_prototype_runtime_state'):
+                prototype_runtime_state = runtime_model.get_prototype_runtime_state()
         checkpointer.save_training_checkpoint(
             name=name,
             epoch=int(epoch_completed),
@@ -1274,6 +1349,7 @@ def _do_train_runtime(
             config_snapshot=config_snapshot if isinstance(config_snapshot, dict) else None,
             include_rng_state=True,
             additional_training_state=additional_state,
+            prototype_runtime_state=prototype_runtime_state,
         )
 
     def _run_validation(eval_epoch: int) -> float:
@@ -1378,6 +1454,12 @@ def _do_train_runtime(
             }
 
     for epoch in range(start_epoch, num_epoch + 1):
+        _set_epoch_on_loader_sampler(
+            train_loader,
+            epoch,
+            logger=logger,
+            enabled=bool(getattr(args, 'repro_enabled', False)) and bool(getattr(args, 'repro_sampler_set_epoch', True)),
+        )
         _log_scheduler_section_c(logger, optimizer, scheduler, epoch_label=f'epoch_start_{epoch}')
         active_phase = get_active_phase(freeze_schedule_phases, epoch)
         if active_phase is not None and active_phase.name != active_freeze_phase_name:
@@ -1467,6 +1549,14 @@ def _do_train_runtime(
             epoch=epoch,
             current_step=current_steps,
             total_training_steps=total_training_steps,
+            logger=logger,
+        )
+        _maybe_recompute_prototypes_from_deterministic_cache(
+            model=model,
+            train_loader=train_loader,
+            args=args,
+            epoch=epoch,
+            current_step=current_steps,
             logger=logger,
         )
 

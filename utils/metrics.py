@@ -16,9 +16,16 @@ BEST_ROW_TASK_NAME = 'best-row-t2i'
 DEFAULT_ITSELF_ABLATION_ALPHAS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.68, 0.32)
 
 
-def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
+def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True, stable_tiebreak: bool = False):
     if get_mAP:
-        indices = torch.argsort(similarity, dim=1, descending=True)
+        if stable_tiebreak:
+            score = similarity.float()
+            gids = g_pids.to(device=score.device, dtype=score.dtype).view(1, -1)
+            tie_eps = torch.finfo(score.dtype).eps * 8.0
+            stable_score = score - (gids * tie_eps)
+            indices = torch.argsort(stable_score, dim=1, descending=True, stable=True)
+        else:
+            indices = torch.argsort(similarity, dim=1, descending=True)
     else:
         _, indices = torch.topk(similarity, k=max_rank, dim=1, largest=True, sorted=True)
     pred_labels = g_pids[indices.cpu()]
@@ -44,8 +51,15 @@ def rank(similarity, q_pids, g_pids, max_rank=10, get_mAP=True):
     return all_cmc, mAP, mINP, indices
 
 
-def get_metrics(similarity, qids, gids, name):
-    t2i_cmc, t2i_mAP, t2i_mINP, _ = rank(similarity=similarity, q_pids=qids, g_pids=gids, max_rank=10, get_mAP=True)
+def get_metrics(similarity, qids, gids, name, stable_tiebreak: bool = False):
+    t2i_cmc, t2i_mAP, t2i_mINP, _ = rank(
+        similarity=similarity,
+        q_pids=qids,
+        g_pids=gids,
+        max_rank=10,
+        get_mAP=True,
+        stable_tiebreak=stable_tiebreak,
+    )
     t2i_cmc, t2i_mAP, t2i_mINP = t2i_cmc.numpy(), t2i_mAP.numpy(), t2i_mINP.numpy()
 
     def _cmc_at(rank_index: int) -> float:
@@ -442,7 +456,15 @@ class Evaluator:
                 image_ids=image_ids,
             )
         else:
-            metric_rows = [get_metrics(similarity=similarity, qids=text_ids, gids=image_ids, name=BEST_ROW_TASK_NAME)]
+            metric_rows = [
+                get_metrics(
+                    similarity=similarity,
+                    qids=text_ids,
+                    gids=image_ids,
+                    name=BEST_ROW_TASK_NAME,
+                    stable_tiebreak=bool(getattr(self.args, 'repro_stable_eval_tiebreak', False)),
+                )
+            ]
         best_row = max(metric_rows, key=lambda row: float(row['R1']))
         metrics = dict(best_row)
         metrics['task'] = BEST_ROW_TASK_NAME

@@ -158,6 +158,7 @@ class Checkpointer:
         config_snapshot: Optional[Dict[str, Any]] = None,
         include_rng_state: bool = True,
         additional_training_state: Optional[Dict[str, Any]] = None,
+        prototype_runtime_state: Optional[Dict[str, Any]] = None,
     ) -> str:
         if not self.save_dir:
             return ""
@@ -212,6 +213,8 @@ class Checkpointer:
             payload["scaler"] = scaler_state_dict
         if include_rng_state:
             payload["rng_state"] = self._capture_rng_state()
+        if isinstance(prototype_runtime_state, dict) and prototype_runtime_state:
+            payload["prototype_runtime_state"] = copy.deepcopy(prototype_runtime_state)
         if isinstance(config_snapshot, dict) and config_snapshot:
             payload["config_snapshot"] = copy.deepcopy(config_snapshot)
 
@@ -245,6 +248,12 @@ class Checkpointer:
         self.logger.info("Loading checkpoint from {}".format(f))
         checkpoint = self._load_file(f)
         self._load_model(checkpoint)
+        if isinstance(checkpoint.get("prototype_runtime_state"), dict) and hasattr(self.model, "load_prototype_runtime_state"):
+            try:
+                self.model.load_prototype_runtime_state(checkpoint.get("prototype_runtime_state"))
+                self.logger.info("Restored prototype runtime state from checkpoint.")
+            except Exception as exc:
+                warnings.append(f"prototype_runtime_state_restore_failed:{exc}")
         return checkpoint
 
     def resume_training(

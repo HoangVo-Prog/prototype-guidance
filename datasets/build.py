@@ -10,6 +10,7 @@ import random
 from utils.comm import get_world_size
 import numpy as np
 from .bases import ImageDataset, TextDataset, ImageTextDataset
+from utils.repro import make_torch_generator, seed_worker
 
 from .cuhkpedes import CUHKPEDES
 from .icfgpedes import ICFGPEDES
@@ -128,8 +129,16 @@ def build_dataloader(args, tranforms=None):
                             train_transforms,
                         text_length=args.text_length)
 
+        reproducible = bool(getattr(args, 'repro_enabled', False))
+        use_gen = reproducible and bool(getattr(args, 'repro_dataloader_generator', True))
+        use_worker_seed = reproducible and bool(getattr(args, 'repro_dataloader_worker_seed', True))
+        loader_generator = make_torch_generator(getattr(args, 'repro_seed', getattr(args, 'seed', 0))) if use_gen else None
+        worker_init = seed_worker if use_worker_seed else None
         if args.sampler == 'identity':
-            sampler_seed = None if _use_legacy_joint_sampler(args) else getattr(args, 'seed', 0)
+            if reproducible:
+                sampler_seed = int(getattr(args, 'repro_seed', getattr(args, 'seed', 0)))
+            else:
+                sampler_seed = None if _use_legacy_joint_sampler(args) else getattr(args, 'seed', 0)
             if args.distributed:
                 logger.info('using ddp random identity sampler')
                 logger.info('DISTRIBUTED TRAIN START')
@@ -141,7 +150,9 @@ def build_dataloader(args, tranforms=None):
                 train_loader = DataLoader(train_set,
                                           batch_sampler=batch_sampler,
                                           num_workers=num_workers,
-                                          collate_fn=collate)
+                                          collate_fn=collate,
+                                          worker_init_fn=worker_init,
+                                          generator=loader_generator)
             else:
                 logger.info(
                     f'using random identity sampler: batch_size: {args.batch_size}, id: {args.batch_size // args.num_instance}, instance: {args.num_instance}'
@@ -153,7 +164,9 @@ def build_dataloader(args, tranforms=None):
                                               args.num_instance,
                                               seed=sampler_seed),
                                           num_workers=num_workers,
-                                          collate_fn=collate)
+                                          collate_fn=collate,
+                                          worker_init_fn=worker_init,
+                                          generator=loader_generator)
         elif args.sampler == 'random':
             # TODO add distributed condition
             logger.info('using random sampler')
@@ -161,7 +174,9 @@ def build_dataloader(args, tranforms=None):
                                       batch_size=args.batch_size,
                                       shuffle=True,
                                       num_workers=num_workers,
-                                      collate_fn=collate)
+                                      collate_fn=collate,
+                                      worker_init_fn=worker_init,
+                                      generator=loader_generator)
         else:
             logger.error('unsupported sampler! expected softmax or triplet but got {}'.format(args.sampler))
 
@@ -208,6 +223,25 @@ def build_dataloader(args, tranforms=None):
                     collate_fn=collate,
                 )
         train_loader.eval_loss_loader = eval_loss_loader
+        if reproducible and bool(getattr(args, 'repro_proto_deterministic_recompute', True)):
+            proto_args = copy.copy(args)
+            proto_args.txt_aug = False
+            proto_args.img_aug = False
+            proto_set = ImageTextDataset(
+                dataset.train,
+                proto_args,
+                val_transforms,
+                text_length=args.text_length,
+            )
+            train_loader.proto_recompute_loader = DataLoader(
+                proto_set,
+                batch_size=args.batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+                collate_fn=collate,
+                worker_init_fn=worker_init,
+                generator=loader_generator,
+            )
 
         return train_loader, val_img_loader, val_txt_loader, num_classes
 

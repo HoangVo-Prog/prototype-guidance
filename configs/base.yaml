@@ -10,6 +10,27 @@ experiment:
   seed: 1
   local_rank: 0
 
+repro:
+  enabled: false
+  seed:
+  deterministic_algorithms: false
+  deterministic_warn_only: true
+  cudnn_benchmark: false
+  cudnn_deterministic: true
+  disable_tf32: true
+  dataloader_worker_seed: true
+  dataloader_generator: true
+  sampler_set_epoch: true
+  proto_deterministic_recompute: true
+  proto_eval_mode_recompute: true
+  proto_deterministic_transform: true
+  proto_sort_cache_by_id: true
+  proto_hash_logging: true
+  save_proto_runtime_state: true
+  stable_hardneg_tiebreak: true
+  hardneg_gap_logging: true
+  stable_eval_tiebreak: true
+
 model:
   name: ITSELF
   variant: itself_base

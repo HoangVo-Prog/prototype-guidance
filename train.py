@@ -40,6 +40,7 @@ from utils.logger import setup_logger
 from utils.metrics import Evaluator as PASEvaluator
 from utils.modular_checkpoint import ModularCheckpointManager
 from utils.options import get_args
+from utils.repro import resolve_repro_seed, set_reproducibility
 
 warnings.filterwarnings('ignore')
 
@@ -1013,10 +1014,15 @@ if __name__ == '__main__':
         print(f'Launched PAS training in background with PID {pid}. Log: {log_path}')
         raise SystemExit(0)
 
-    set_seed(
-        args.seed + get_rank(),
-        cudnn_benchmark=_is_joint_training_with_prototype(args),
-    )
+    if bool(getattr(args, 'repro_enabled', False)):
+        resolved_seed = resolve_repro_seed(args, args.seed)
+        args.repro_seed = int(resolved_seed)
+        set_reproducibility(args, int(resolved_seed) + get_rank())
+    else:
+        set_seed(
+            args.seed + get_rank(),
+            cudnn_benchmark=_is_joint_training_with_prototype(args),
+        )
 
     num_gpus = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1
     args.distributed = num_gpus > 1

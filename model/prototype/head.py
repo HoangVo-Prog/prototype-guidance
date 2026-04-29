@@ -3,6 +3,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import logging
+from utils.repro import tensor_hash
 
 from .aggregator import PrototypeAggregator
 from .contextualizer import PrototypeContextualizer
@@ -810,10 +812,14 @@ class PrototypeConditionedTextHead(nn.Module):
         *,
         num_clusters: int,
         max_iters: int = 15,
+        sample_ids: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         detached = features.detach().float()
         if detached.ndim != 2 or detached.size(0) <= 0:
             raise ValueError('Semantic recompute features must have shape [B, D] with B > 0.')
+        if isinstance(sample_ids, torch.Tensor) and sample_ids.numel() == detached.size(0):
+            order = torch.argsort(sample_ids.detach().to(device=detached.device).reshape(-1), stable=True)
+            detached = detached.index_select(0, order)
         detached = F.normalize(detached, dim=-1)
         num_samples, feature_dim = detached.shape
         cluster_count = int(max(1, num_clusters))
@@ -860,6 +866,7 @@ class PrototypeConditionedTextHead(nn.Module):
         self,
         *,
         features: Optional[torch.Tensor],
+        sample_ids: Optional[torch.Tensor],
         epoch: Optional[int],
         current_step: Optional[int],
     ) -> Dict[str, torch.Tensor]:
@@ -878,6 +885,7 @@ class PrototypeConditionedTextHead(nn.Module):
                 features=features,
                 num_clusters=self.active_num_prototypes,
                 max_iters=max(int(getattr(self.prototype_bank, 'init_max_iters', 15)), 1),
+                sample_ids=sample_ids,
             )
             centers = recomputed['centers'].to(
                 device=self.semantic_base_prototypes_cache.device,
@@ -911,6 +919,14 @@ class PrototypeConditionedTextHead(nn.Module):
                 'semantic_empty_cluster_count': recomputed['empty_cluster_count'].detach(),
                 'semantic_empty_cluster_reseed_events': recomputed['empty_cluster_reseed_events'].detach(),
             }
+        )
+        logger = logging.getLogger('pas.train')
+        logger.info(
+            'REPRO_DEBUG proto_recompute count=%d step=%s centers_hash=%s assignments_hash=%s',
+            int(self._semantic_recompute_count),
+            str(current_step),
+            tensor_hash(centers, name='proto_centers'),
+            tensor_hash(recomputed['assignments'], name='proto_assignments'),
         )
         return diagnostics
 
@@ -951,6 +967,7 @@ class PrototypeConditionedTextHead(nn.Module):
         epoch: Optional[int] = None,
         current_step: Optional[int] = None,
         semantic_recompute_features: Optional[torch.Tensor] = None,
+        semantic_recompute_ids: Optional[torch.Tensor] = None,
     ) -> Dict[str, object]:
         if hasattr(self.prototype_bank, 'is_initialized') and hasattr(self.prototype_bank, 'initialize_if_needed'):
             needs_init = not bool(self.prototype_bank.is_initialized())
@@ -971,6 +988,7 @@ class PrototypeConditionedTextHead(nn.Module):
         self._ensure_semantic_cache_shape(self.active_num_prototypes)
         recompute_debug = self._maybe_refresh_semantic_anchor_cache(
             features=semantic_recompute_features,
+            sample_ids=semantic_recompute_ids,
             epoch=epoch,
             current_step=current_step,
         )
@@ -1493,13 +1511,20 @@ class PrototypeConditionedTextHead(nn.Module):
         current_step: Optional[int] = None,
         return_debug: bool = False,
         disable_proxy_losses: bool = False,
+        semantic_recompute_features_override: Optional[torch.Tensor] = None,
+        semantic_recompute_ids: Optional[torch.Tensor] = None,
     ) -> Dict[str, object]:
-        semantic_recompute_features = self.image_adapter(image_embeddings.detach())
+        semantic_recompute_features = (
+            semantic_recompute_features_override
+            if isinstance(semantic_recompute_features_override, torch.Tensor)
+            else self.image_adapter(image_embeddings.detach())
+        )
         context = self.get_prototype_context(
             return_debug=return_debug,
             epoch=epoch,
             current_step=current_step,
             semantic_recompute_features=semantic_recompute_features.detach(),
+            semantic_recompute_ids=semantic_recompute_ids,
         )
         image_outputs = self.encode_image_branch(
             image_embeddings,

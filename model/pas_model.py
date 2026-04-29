@@ -1015,6 +1015,8 @@ class PASModel(nn.Module):
         images = batch['images']
         caption_ids = batch['caption_ids']
         pids = batch.get('pids')
+        repro_semantic_features = batch.get('repro_semantic_recompute_features')
+        repro_semantic_ids = batch.get('repro_semantic_recompute_ids')
         proxy_losses_requested = self.prototype_head is not None and any(
             bool(getattr(self.args, attr_name, False))
             for attr_name in ('use_loss_proxy_image', 'use_loss_proxy_text', 'use_loss_proxy_text_exact')
@@ -1096,6 +1098,8 @@ class PASModel(nn.Module):
                 current_step=current_step,
                 return_debug=should_return_debug,
                 disable_proxy_losses=disable_proxy_losses,
+                semantic_recompute_features_override=repro_semantic_features,
+                semantic_recompute_ids=repro_semantic_ids,
             )
 
         prototype_losses = prototype_outputs['losses']
@@ -1303,6 +1307,19 @@ class PASModel(nn.Module):
         if should_return_debug:
             outputs['debug'] = self._build_debug_outputs(image_output, text_output, host_outputs, prototype_outputs)
         return outputs
+
+    def get_prototype_runtime_state(self):
+        if self.prototype_head is None:
+            return {}
+        if hasattr(self.prototype_head, 'export_adaptive_k_runtime_state'):
+            return self.prototype_head.export_adaptive_k_runtime_state()
+        return {}
+
+    def load_prototype_runtime_state(self, state):
+        if self.prototype_head is None or not isinstance(state, dict):
+            return
+        if hasattr(self.prototype_head, 'restore_adaptive_k_runtime_state'):
+            self.prototype_head.restore_adaptive_k_runtime_state(state)
 
 PrototypeGuidedRetrievalModel = PASModel
 Model = PASModel

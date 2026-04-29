@@ -13,6 +13,25 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('experiment', 'output_dir'): 'output_dir',
     ('experiment', 'seed'): 'seed',
     ('experiment', 'local_rank'): 'local_rank',
+    ('repro', 'enabled'): 'repro_enabled',
+    ('repro', 'seed'): 'repro_seed',
+    ('repro', 'deterministic_algorithms'): 'repro_deterministic_algorithms',
+    ('repro', 'deterministic_warn_only'): 'repro_deterministic_warn_only',
+    ('repro', 'cudnn_benchmark'): 'repro_cudnn_benchmark',
+    ('repro', 'cudnn_deterministic'): 'repro_cudnn_deterministic',
+    ('repro', 'disable_tf32'): 'repro_disable_tf32',
+    ('repro', 'dataloader_worker_seed'): 'repro_dataloader_worker_seed',
+    ('repro', 'dataloader_generator'): 'repro_dataloader_generator',
+    ('repro', 'sampler_set_epoch'): 'repro_sampler_set_epoch',
+    ('repro', 'proto_deterministic_recompute'): 'repro_proto_deterministic_recompute',
+    ('repro', 'proto_eval_mode_recompute'): 'repro_proto_eval_mode_recompute',
+    ('repro', 'proto_deterministic_transform'): 'repro_proto_deterministic_transform',
+    ('repro', 'proto_sort_cache_by_id'): 'repro_proto_sort_cache_by_id',
+    ('repro', 'proto_hash_logging'): 'repro_proto_hash_logging',
+    ('repro', 'save_proto_runtime_state'): 'repro_save_proto_runtime_state',
+    ('repro', 'stable_hardneg_tiebreak'): 'repro_stable_hardneg_tiebreak',
+    ('repro', 'hardneg_gap_logging'): 'repro_hardneg_gap_logging',
+    ('repro', 'stable_eval_tiebreak'): 'repro_stable_eval_tiebreak',
 
     ('model', 'name'): 'model_name',
     ('model', 'variant'): 'model_variant',
@@ -1499,7 +1518,4 @@ def dump_yaml_config(path: str, config_data: Dict[str, Any]) -> None:
         os.makedirs(directory, exist_ok=True)
     with open(path, 'w', encoding='utf-8') as handle:
         yaml.safe_dump(config_data, handle, default_flow_style=False, sort_keys=False)
-
-
-
 

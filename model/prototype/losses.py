@@ -671,6 +671,10 @@ class PrototypeLosses(nn.Module):
         else:
             neg_inf = -1e9
         masked_scores = host_scores.masked_fill(~valid_neg, neg_inf)
+        # Deterministic exact-tie break: prefer lower column/row index.
+        tie_eps = torch.finfo(masked_scores.dtype).eps * 8.0
+        idx = torch.arange(batch_size, device=masked_scores.device, dtype=masked_scores.dtype)
+        masked_scores = masked_scores - (idx.view(1, -1) * tie_eps)
         hardest_neg_caption = masked_scores.argmax(dim=1)
         hardest_neg_image = masked_scores.argmax(dim=0)
 
