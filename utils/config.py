@@ -402,6 +402,7 @@ READ_ALIAS_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
 
 SECTION_TEMPLATE = {
     'experiment': {},
+    'repro': {},
     'model': {},
     'host': {},
     'prototype': {},
