@@ -15,6 +15,7 @@ class LRSchedulerWithWarmup(_LRScheduler):
         warmup_epochs=10,
         warmup_method="linear",
         total_epochs=100,
+        lr_decay_epochs=None,
         target_lr=0,
         power=0.9,
         last_epoch=-1,
@@ -41,6 +42,7 @@ class LRSchedulerWithWarmup(_LRScheduler):
         self.warmup_epochs = warmup_epochs
         self.warmup_method = warmup_method
         self.total_epochs = total_epochs
+        self.lr_decay_epochs = total_epochs if lr_decay_epochs is None else int(lr_decay_epochs)
         self.target_lr = target_lr
         self.power = power
         super().__init__(optimizer, last_epoch)
@@ -80,7 +82,12 @@ class LRSchedulerWithWarmup(_LRScheduler):
                 for base_lr in self.base_lrs
             ]
         if self.mode == "cosine":
-            factor = 0.5 * (1 + cos(pi * epoch_ratio))
+            decay_end_epoch = max(self.warmup_epochs, int(self.lr_decay_epochs))
+            effective_epoch = min(self.last_epoch, decay_end_epoch)
+            decay_span = max(1, decay_end_epoch - self.warmup_epochs)
+            effective_ratio = (effective_epoch - self.warmup_epochs) / decay_span
+            effective_ratio = min(max(effective_ratio, 0.0), 1.0)
+            factor = 0.5 * (1 + cos(pi * effective_ratio))
             return [
                 self.target_lr + (base_lr - self.target_lr) * factor
                 for base_lr in self.base_lrs

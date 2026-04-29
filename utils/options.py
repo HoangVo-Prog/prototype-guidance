@@ -329,6 +329,7 @@ def build_parser():
     parser.add_argument('--warmup_epochs', type=int, default=5)
     parser.add_argument('--warmup_method', type=str, default='linear')
     parser.add_argument('--lr_scheduler', '--lrscheduler', dest='lrscheduler', type=str, default='cosine')
+    parser.add_argument('--lr_decay_epochs', type=int, default=None)
     parser.add_argument('--target_lr', type=float, default=0.0)
     parser.add_argument('--power', type=float, default=0.9)
 

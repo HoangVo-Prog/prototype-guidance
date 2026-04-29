@@ -563,6 +563,7 @@ def build_lr_scheduler(args, optimizer):
         warmup_epochs=args.warmup_epochs,
         warmup_method=args.warmup_method,
         total_epochs=args.num_epoch,
+        lr_decay_epochs=getattr(args, 'lr_decay_epochs', args.num_epoch),
         mode=args.lrscheduler,
         target_lr=args.target_lr,
         power=args.power,

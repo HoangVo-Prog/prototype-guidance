@@ -151,7 +151,7 @@ training:
   early_stopping_enabled: true
   early_stopping_metric: R1
   early_stopping_mode: max
-  early_stopping_patience: 5
+  early_stopping_patience: 8
   early_stopping_min_delta: 0.0
   early_stopping_start_epoch: 1
   early_stopping_monitored_bucket: host
@@ -212,7 +212,8 @@ optimizer:
   warmup_factor: 0.1
   warmup_epochs: 5
   warmup_method: linear
-  scheduler: horizontal
+  scheduler: cosine
+  lr_decay_epochs: 15
   target_lr: 0.0
   power: 0.9
 

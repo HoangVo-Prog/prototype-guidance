@@ -212,6 +212,7 @@ PRIMARY_CONFIG_KEY_MAP: Dict[Tuple[str, ...], str] = {
     ('optimizer', 'warmup_epochs'): 'warmup_epochs',
     ('optimizer', 'warmup_method'): 'warmup_method',
     ('optimizer', 'scheduler'): 'lrscheduler',
+    ('optimizer', 'lr_decay_epochs'): 'lr_decay_epochs',
     ('optimizer', 'target_lr'): 'target_lr',
     ('optimizer', 'power'): 'power',
 
