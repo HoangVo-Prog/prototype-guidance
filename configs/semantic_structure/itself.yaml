@@ -101,7 +101,7 @@ semantic_structure:
   pred_temperature: 0.07
   
   recompute_schedule: epoch
-  recompute_interval: 2
+  recompute_interval: 1
   min_cluster_count_for_pbt: 1.0
   empty_cluster_policy: skip
   text_teacher_source: exact_diagonal
@@ -165,7 +165,7 @@ training:
   early_stopping_enabled: true
   early_stopping_metric: R1
   early_stopping_mode: max
-  early_stopping_patience: 5
+  early_stopping_patience: 10
   early_stopping_min_delta: 0.0
   early_stopping_start_epoch: 10
   early_stopping_monitored_bucket: host
